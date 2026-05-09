@@ -52,11 +52,27 @@ function packAxis(view: DataView, offset: number, axis: SizingAxis): number {
   return o;
 }
 
-function packString(view: DataView, bytes: Uint8Array, o: number): number {
+function packString(
+  view: DataView,
+  bytes: Uint8Array,
+  o: number,
+  end: number,
+  context: string,
+): number {
+  let paddedLength = Math.ceil(bytes.length / 4) * 4;
+  let next = o + 4 + paddedLength;
+  if (next > end) {
+    throw new RangeError(
+      `clayterm transfer buffer capacity exceeded while packing ${context} ` +
+        `(${next} byte offset, ${end} byte limit). ` +
+        `Render a smaller visible slice or reduce frame content.`,
+    );
+  }
+
   view.setUint32(o, bytes.length, true);
   o += 4;
   new Uint8Array(view.buffer).set(bytes, o);
-  o += Math.ceil(bytes.length / 4) * 4;
+  o += paddedLength;
   return o;
 }
 
@@ -82,7 +98,7 @@ export function pack(
         o += 4;
 
         let bytes = encoder.encode(op.id);
-        o = packString(view, bytes, o);
+        o = packString(view, bytes, o, end, "element id");
 
         let mask = 0;
         if (op.layout) mask |= PROP_LAYOUT;
@@ -192,7 +208,7 @@ export function pack(
         o += 4;
 
         let str = encoder.encode(op.content);
-        o = packString(view, str, o);
+        o = packString(view, str, o, end, "text content");
         break;
       }
     }

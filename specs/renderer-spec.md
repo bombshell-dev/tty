@@ -721,6 +721,71 @@ and used in tests.
 array into the transfer encoding described in Section 12.1. Currently exported
 but not public API; its exposure is incidental to the module structure.
 
+### 12.6 Text measurement helpers
+
+The module may also expose pure TypeScript text-measurement helpers for callers
+that need pre-layout estimates without instantiating a `Term`:
+
+```ts
+interface WrapTextOptions {
+  mode?: "words" | "newlines" | "none";
+}
+
+interface WrappedLine {
+  text: string;
+  width: number;
+}
+
+measureCellWidth(text: string): number;
+wrapText(
+  text: string,
+  width: number,
+  options?: WrapTextOptions,
+): WrappedLine[];
+measureWrappedHeight(
+  text: string,
+  width: number,
+  options?: WrapTextOptions,
+): number;
+```
+
+The current intended behavior is:
+
+- `measureCellWidth()` returns the terminal cell width of the full string using
+  the same Unicode-width model described in Section 13.
+- `wrapText()` returns line records with both the emitted text and its measured
+  width.
+- `measureWrappedHeight()` returns the number of wrapped lines that `wrapText()`
+  would produce for the same inputs.
+- `mode: "words"` wraps on token boundaries while preserving explicit newline
+  breaks.
+- `mode: "newlines"` splits only on explicit `\n` characters and does not
+  perform width-based wrapping.
+- `mode: "none"` collapses explicit newlines and returns at most one line.
+- The helpers operate on JavaScript strings directly. They do not require the
+  caller's text to be copied into WASM linear memory or encoded into a full
+  UTF-8 byte buffer as a precondition for measurement.
+- Large-input behavior is bounded by host JavaScript memory, not by Clayterm's
+  WASM linear-memory capacity. Inputs materially larger than the renderer's
+  initial WASM memory footprint are intended to remain valid helper inputs.
+- `measureCellWidth()` and `measureWrappedHeight()` are intended to process
+  large inputs in a single pass over the string without allocating auxiliary
+  storage proportional to the UTF-8 byte length of the entire input.
+  `wrapText()` necessarily allocates output proportional to the number of
+  wrapped lines it returns, but it likewise should not require a second
+  full-input UTF-8 buffer.
+- Rendering oversized whole-document input remains constrained by the renderer's
+  transfer buffer. If a frame exceeds transfer-buffer capacity while packing
+  text, Clayterm MUST throw a descriptive `RangeError` identifying the capacity
+  failure and SHOULD direct callers to render a smaller visible slice or reduce
+  frame content. Clayterm MUST NOT expose only the raw host-level TypedArray
+  message `"offset is out of bounds"` for this condition.
+
+These helpers are independent of the renderer's frame lifecycle and perform no
+IO or WASM interaction. They exist as convenience APIs for higher-level
+frameworks and virtualized views that need width and height estimation before
+building directive arrays.
+
 ---
 
 ## 13. Implementation Notes
