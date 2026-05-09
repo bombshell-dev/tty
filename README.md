@@ -212,7 +212,8 @@ process.stdin.on("data", (buf) => {
 
 ## Development
 
-For local source builds, toolchain setup, and `clay` submodule instructions, see [BUILD.md](BUILD.md).
+For local source builds, toolchain setup, and `clay` submodule instructions, see
+[BUILD.md](BUILD.md).
 
 Quick local validation:
 
