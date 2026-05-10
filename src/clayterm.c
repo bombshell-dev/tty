@@ -560,13 +560,19 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       if (mask & PROP_FLOATING) {
         decl.floating.offset.x = rdf(buf, len, &i);
         decl.floating.offset.y = rdf(buf, len, &i);
+        decl.floating.expand.width = rdf(buf, len, &i);
+        decl.floating.expand.height = rdf(buf, len, &i);
         decl.floating.parentId = rd(buf, len, &i);
 
         uint32_t fc = rd(buf, len, &i);
         decl.floating.attachTo = fc & 0xff;
         decl.floating.attachPoints.element = (fc >> 8) & 0xff;
         decl.floating.attachPoints.parent = (fc >> 16) & 0xff;
-        decl.floating.zIndex = (int16_t)((fc >> 24) & 0xff);
+        decl.floating.pointerCaptureMode = (fc >> 24) & 0xff;
+
+        uint32_t fd = rd(buf, len, &i);
+        decl.floating.clipTo = fd & 0xff;
+        decl.floating.zIndex = (int16_t)(fd >> 8);
       }
 
       if (mask & PROP_TRANSITION) {

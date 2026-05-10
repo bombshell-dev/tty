@@ -168,12 +168,24 @@ export function pack(
           o += 4;
           view.setFloat32(o, f.y ?? 0, true);
           o += 4;
+          view.setFloat32(o, f.expand?.width ?? 0, true);
+          o += 4;
+          view.setFloat32(o, f.expand?.height ?? 0, true);
+          o += 4;
           view.setUint32(o, f.parent ?? 0, true);
           o += 4;
           view.setUint32(
             o,
-            (f.attachTo ?? 0) | ((f.attachPoints ?? 0) << 8) |
-              ((f.zIndex ?? 0) << 16),
+            encodeAttachTo(f.attachTo) |
+              (encodeAttachPoint(f.attachPoints?.element) << 8) |
+              (encodeAttachPoint(f.attachPoints?.parent) << 16) |
+              (encodePointerCaptureMode(f.pointerCaptureMode) << 24),
+            true,
+          );
+          o += 4;
+          view.setUint32(
+            o,
+            encodeClipTo(f.clipTo) | (((f.zIndex ?? 0) & 0xffff) << 8),
             true,
           );
           o += 4;
@@ -284,12 +296,79 @@ export interface OpenElement {
   floating?: {
     x?: number;
     y?: number;
+    expand?: { width?: number; height?: number };
     parent?: number;
-    attachTo?: number;
-    attachPoints?: number;
+    attachTo?: AttachTo;
+    attachPoints?: { element?: AttachPoint; parent?: AttachPoint };
+    pointerCaptureMode?: PointerCaptureMode;
+    clipTo?: ClipTo;
     zIndex?: number;
   };
   transition?: Transition;
+}
+
+export type AttachPoint =
+  | "left-top"
+  | "left-center"
+  | "left-bottom"
+  | "center-top"
+  | "center-center"
+  | "center-bottom"
+  | "right-top"
+  | "right-center"
+  | "right-bottom";
+
+export type AttachTo = "none" | "parent" | "element" | "root";
+
+export type PointerCaptureMode = "capture" | "passthrough";
+
+export type ClipTo = "none" | "attached-parent";
+
+const ATTACH_POINT: Record<AttachPoint, number> = {
+  "left-top": 0,
+  "left-center": 1,
+  "left-bottom": 2,
+  "center-top": 3,
+  "center-center": 4,
+  "center-bottom": 5,
+  "right-top": 6,
+  "right-center": 7,
+  "right-bottom": 8,
+};
+
+const ATTACH_TO: Record<AttachTo, number> = {
+  none: 0,
+  parent: 1,
+  element: 2,
+  root: 3,
+};
+
+const POINTER_CAPTURE_MODE: Record<PointerCaptureMode, number> = {
+  capture: 0,
+  passthrough: 1,
+};
+
+const CLIP_TO: Record<ClipTo, number> = {
+  none: 0,
+  "attached-parent": 1,
+};
+
+function encodeAttachPoint(value: AttachPoint | undefined): number {
+  return value === undefined ? 0 : ATTACH_POINT[value];
+}
+
+function encodeAttachTo(value: AttachTo | undefined): number {
+  return value === undefined ? 0 : ATTACH_TO[value];
+}
+
+function encodePointerCaptureMode(
+  value: PointerCaptureMode | undefined,
+): number {
+  return value === undefined ? 0 : POINTER_CAPTURE_MODE[value];
+}
+
+function encodeClipTo(value: ClipTo | undefined): number {
+  return value === undefined ? 0 : CLIP_TO[value];
 }
 
 export interface Text {

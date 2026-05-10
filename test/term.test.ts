@@ -191,6 +191,50 @@ describe("term", () => {
     });
   });
 
+  it("renders a floating frame with structured attach points", () => {
+    let out = print(
+      decode(
+        term.render([
+          open("root", {
+            layout: { width: fixed(40), height: fixed(10), direction: "ttb" },
+          }),
+          open("frame", {
+            layout: {
+              width: fixed(12),
+              height: fixed(5),
+              direction: "ttb",
+              padding: { left: 1, top: 1 },
+            },
+            border: {
+              color: rgba(255, 255, 255),
+              left: 1,
+              right: 1,
+              top: 1,
+              bottom: 1,
+            },
+            floating: {
+              x: 3,
+              y: 1,
+              attachTo: "root",
+              attachPoints: {
+                element: "center-center",
+                parent: "center-center",
+              },
+            },
+          }),
+          text("box"),
+          close(),
+          close(),
+        ]).output,
+      ),
+      40,
+      10,
+    );
+
+    expect(out).toContain("│box       │");
+    expect(out).toContain("┌──────────┐");
+  });
+
   describe("row offset", () => {
     it("renders two frames at the offset position", async () => {
       let term = await createTerm({ width: 20, height: 5 });

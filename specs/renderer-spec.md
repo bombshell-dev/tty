@@ -612,9 +612,57 @@ The `open()` constructor currently accepts the following property groups in its
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
 - **`clip`** — clip region configuration for scroll containers
-- **`floating`** — floating-element configuration (offset, parent reference,
-  attach points, z-index)
+- **`floating`** — floating-element configuration (offset, expansion, parent
+  reference, attach target, structured attach points, pointer capture mode, clip
+  target, z-index)
 - **`scroll`** — scroll container configuration
+
+The current floating surface is:
+
+```ts
+floating?: {
+  x?: number;
+  y?: number;
+  expand?: { width?: number; height?: number };
+  parent?: number;
+  attachTo?: "none" | "parent" | "element" | "root";
+  attachPoints?: {
+    element?:
+      | "left-top"
+      | "left-center"
+      | "left-bottom"
+      | "center-top"
+      | "center-center"
+      | "center-bottom"
+      | "right-top"
+      | "right-center"
+      | "right-bottom";
+    parent?:
+      | "left-top"
+      | "left-center"
+      | "left-bottom"
+      | "center-top"
+      | "center-center"
+      | "center-bottom"
+      | "right-top"
+      | "right-center"
+      | "right-bottom";
+  };
+  pointerCaptureMode?: "capture" | "passthrough";
+  clipTo?: "none" | "attached-parent";
+  zIndex?: number;
+}
+```
+
+The `floating` object configures Clay floating layout behavior. `x` and `y`
+provide the floating offset. `expand` expands the floating bounds. `parent`
+identifies the target element when `attachTo` is `"element"`. `attachTo` selects
+whether the element is attached to no target, its parent, an element, or the
+layout root. `attachPoints.element` describes the anchor on the floating
+element, and `attachPoints.parent` describes the anchor on the attached target.
+`pointerCaptureMode` controls whether the floating element captures pointer
+input or lets it pass through, `clipTo` controls inherited clipping, and
+`zIndex` controls floating order.
 
 The `text()` constructor currently accepts: `color`, `fontSize`,
 `letterSpacing`, `lineHeight`, and attribute flags (`bold`, `italic`,
