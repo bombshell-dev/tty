@@ -20,12 +20,20 @@ export interface Native {
   memory: WebAssembly.Memory;
   statePtr: number;
   opsBuf: number;
-  reduce(ct: number, buf: number, len: number, mode: number, row: number): void;
+  reduce(
+    ct: number,
+    buf: number,
+    len: number,
+    mode: number,
+    row: number,
+    deltaTime: number,
+  ): void;
   output(ct: number): number;
   length(ct: number): number;
   setPointer(x: number, y: number, down: boolean): void;
   getPointerOverIds(): string[];
   getElementBounds(id: string): BoundingBox | undefined;
+  animating(ct: number): number;
   errorCount(ct: number): number;
   errorType(ct: number, index: number): number;
   errorMessage(ct: number, index: number): string;
@@ -75,6 +83,7 @@ export async function createTermNative(
       len: number,
       mode: number,
       row: number,
+      deltaTime: number,
     ): void;
     output(ct: number): number;
     length(ct: number): number;
@@ -83,6 +92,7 @@ export async function createTermNative(
     pointer_over_id_string_length(index: number): number;
     pointer_over_id_string_ptr(index: number): number;
     get_element_bounds(name: number, len: number, out: number): number;
+    animating(ct: number): number;
     error_count(ct: number): number;
     error_type(ct: number, index: number): number;
     error_message_length(ct: number, index: number): number;
@@ -110,6 +120,7 @@ export async function createTermNative(
     reduce: ct.reduce,
     output: ct.output,
     length: ct.length,
+    animating: ct.animating as Native["animating"],
     setPointer(x: number, y: number, down: boolean) {
       let view = new DataView(memory.buffer);
       view.setFloat32(opsBuf, x, true);

@@ -1,3 +1,6 @@
+import type { Transition } from "./ops-transitions.ts";
+import { easingByte, propertyMask } from "./ops-transitions.ts";
+
 /* Command buffer opcodes — mirrors ops.h */
 const OP_OPEN_ELEMENT = 0x02;
 const OP_TEXT = 0x03;
@@ -10,6 +13,7 @@ const PROP_CORNER_RADIUS = 0x04;
 const PROP_BORDER = 0x08;
 const PROP_CLIP = 0x10;
 const PROP_FLOATING = 0x20;
+const PROP_TRANSITION = 0x40;
 
 const encoder = new TextEncoder();
 
@@ -91,6 +95,7 @@ export function pack(
         if (op.border) mask |= PROP_BORDER;
         if (op.clip) mask |= PROP_CLIP;
         if (op.floating) mask |= PROP_FLOATING;
+        if (op.transition) mask |= PROP_TRANSITION;
         view.setUint32(o, mask, true);
         o += 4;
 
@@ -172,6 +177,21 @@ export function pack(
             true,
           );
           o += 4;
+        }
+
+        if (op.transition) {
+          let t = op.transition;
+          let pmask = 0;
+          for (let name of t.properties) pmask |= propertyMask(name);
+
+          view.setFloat32(o, t.duration, true);
+          o += 4;
+          view.setUint16(o, pmask, true);
+          o += 2;
+          view.setUint8(o, easingByte(t.easing ?? "linear"));
+          o += 1;
+          view.setUint8(o, t.interactive ? 1 : 0);
+          o += 1;
         }
         break;
       }
@@ -269,6 +289,7 @@ export interface OpenElement {
     attachPoints?: number;
     zIndex?: number;
   };
+  transition?: Transition;
 }
 
 export interface Text {

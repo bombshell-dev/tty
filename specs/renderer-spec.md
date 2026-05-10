@@ -25,6 +25,9 @@ pointer event model and certain wrapper types — those are described in Section
 Input parsing is specified separately in the
 [Clayterm Input Specification](input-spec.md).
 
+Transitions are specified separately in the
+[Clayterm Transitions Specification](transitions-spec.md).
+
 ---
 
 ## 2. Scope

@@ -8,5 +8,6 @@
 #include "utf8.c"
 #include "wcwidth.c"
 #include "clayterm.c"
+#include "transitions.c"
 #include "trie.c"
 #include "input.c"
