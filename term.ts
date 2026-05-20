@@ -38,6 +38,59 @@ export interface ElementInfo {
   bounds: BoundingBox;
 }
 
+const WINDOWS_WRAP_DISABLE = new Uint8Array([0x1b, 0x5b, 0x3f, 0x37, 0x6c]);
+const WINDOWS_WRAP_ENABLE = new Uint8Array([0x1b, 0x5b, 0x3f, 0x37, 0x68]);
+
+function normalizeWindowsLineOutput(output: Uint8Array): Uint8Array {
+  // Windows fullscreen line-mode output needs an explicit home cursor move and
+  // CRLF row separators; bare LF can leave the cursor in the wrong column and
+  // visually clip later rows in some terminal stacks.
+  let extra = 0;
+  for (let i = 0; i < output.length; i++) {
+    if (output[i] === 0x0a && (i === 0 || output[i - 1] !== 0x0d)) {
+      extra++;
+    }
+  }
+
+  let prefix = new Uint8Array([
+    ...WINDOWS_WRAP_DISABLE,
+    0x1b,
+    0x5b,
+    0x48,
+  ]);
+  let suffix = WINDOWS_WRAP_ENABLE;
+  let normalized = new Uint8Array(
+    prefix.length + output.length + extra + suffix.length,
+  );
+  normalized.set(prefix, 0);
+
+  let offset = prefix.length;
+  for (let i = 0; i < output.length; i++) {
+    let byte = output[i];
+    if (byte === 0x0a && (i === 0 || output[i - 1] !== 0x0d)) {
+      normalized[offset++] = 0x0d;
+    }
+    normalized[offset++] = byte;
+  }
+
+  normalized.set(suffix, offset);
+
+  return normalized as Uint8Array;
+}
+
+function wrapWindowsFullscreenOutput(output: Uint8Array): Uint8Array {
+  // Disabling autowrap around a fullscreen frame avoids Windows terminal
+  // redraw quirks observed at the right edge.
+  // xterm defines CSI ? 7 h / CSI ? 7 l as auto-wrap on/off.
+  let wrapped = new Uint8Array(
+    WINDOWS_WRAP_DISABLE.length + output.length + WINDOWS_WRAP_ENABLE.length,
+  );
+  wrapped.set(WINDOWS_WRAP_DISABLE, 0);
+  wrapped.set(output, WINDOWS_WRAP_DISABLE.length);
+  wrapped.set(WINDOWS_WRAP_ENABLE, WINDOWS_WRAP_DISABLE.length + output.length);
+  return wrapped;
+}
+
 const ERROR_TYPES = [
   "TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED",
   "ARENA_CAPACITY_EXCEEDED",
@@ -84,6 +137,18 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       let len = pack(ops, memory.buffer, opsBuf, memory.buffer.byteLength);
       let mode = options?.mode === "line" ? 1 : 0;
       let row = options?.row ?? 1;
+      let autoLineMode = false;
+      let windowsFullscreen = row === 1 && Deno.build.os === "windows";
+
+      // Windows terminals have historically been less reliable with many
+      // absolute cursor CUP updates in full-screen diff mode. Use the
+      // line-oriented render path by default on Windows for fullscreen
+      // layouts to improve redraw reliability.
+      if (mode === 0 && options?.mode === undefined && windowsFullscreen) {
+        mode = 1;
+        autoLineMode = true;
+      }
+
       native.reduce(statePtr, opsBuf, len, mode, row);
 
       if (options?.pointer) {
@@ -91,11 +156,17 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         native.setPointer(x, y, down);
       }
 
-      let output = new Uint8Array(
+      let output: Uint8Array<ArrayBufferLike> = new Uint8Array(
         memory.buffer,
         native.output(statePtr),
         native.length(statePtr),
       );
+
+      if (autoLineMode) {
+        output = normalizeWindowsLineOutput(output);
+      } else if (windowsFullscreen) {
+        output = wrapWindowsFullscreenOutput(output);
+      }
 
       let current = new Set(
         options?.pointer ? native.getPointerOverIds() : [],

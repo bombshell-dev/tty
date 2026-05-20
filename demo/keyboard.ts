@@ -42,6 +42,7 @@ const highlight = rgba(255, 220, 80);
 
 const KEY_W = 5;
 const GAP = 1;
+const WRITE_CHUNK_SIZE = 1024;
 
 interface KeyDef {
   label: string;
@@ -59,6 +60,33 @@ function matches(k: KeyDef, event: InputEvent | PointerEvent): boolean {
 }
 
 const hovered = rgba(80, 80, 100);
+
+function writeOutput(output: Uint8Array): void {
+  if (Deno.build.os !== "windows") {
+    Deno.stdout.writeSync(output);
+    return;
+  }
+
+  // VS Code's Windows terminal path can corrupt large fullscreen writes from
+  // Deno, so flush complete rendered rows instead of one large write.
+  let start = 0;
+  let lastBreak = -1;
+
+  for (let i = 0; i < output.length; i++) {
+    if (output[i] === 0x0a) {
+      lastBreak = i + 1;
+    }
+
+    if (i - start + 1 >= WRITE_CHUNK_SIZE && lastBreak > start) {
+      Deno.stdout.writeSync(output.subarray(start, lastBreak));
+      start = lastBreak;
+    }
+  }
+
+  if (start < output.length) {
+    Deno.stdout.writeSync(output.subarray(start));
+  }
+}
 
 function key(ops: Op[], k: KeyDef, ctx: AppContext): void {
   let pressed = ctx.event && matches(k, ctx.event);
@@ -567,11 +595,12 @@ await main(function* () {
     ? Deno.consoleSize()
     : { columns: 80, rows: 24 };
 
-  Deno.stdin.setRaw(true);
+  if (Deno.stdin.isTerminal()) {
+    Deno.stdin.setRaw(true);
+  }
 
   let stdin = yield* useStdin();
   let input = useInput(stdin);
-
   let term = yield* until(createTerm({ width: columns, height: rows }));
 
   let tty = settings(alternateBuffer(), cursor(false));
@@ -584,13 +613,17 @@ await main(function* () {
   Deno.stdout.writeSync(flags.apply);
 
   yield* ensure(() => {
+    // Restore so Backspace and normal shell editing work after exit.
+    if (Deno.stdin.isTerminal()) {
+      Deno.stdin.setRaw(false);
+    }
     Deno.stdout.writeSync(flags.revert);
     Deno.stdout.writeSync(tty.revert);
   });
 
   let { output } = term.render(keyboard(context));
 
-  Deno.stdout.writeSync(output);
+  writeOutput(output);
 
   let pointer = {
     events: createChannel<PointerEvent, void>(),
@@ -640,7 +673,7 @@ await main(function* () {
       yield* pointer.events.send(event);
     }
 
-    Deno.stdout.writeSync(output);
+    writeOutput(output);
 
     yield* each.next();
   }

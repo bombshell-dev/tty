@@ -41,7 +41,12 @@ export async function createTermNative(
   let exports: Record<string, CallableFunction> = {};
 
   let instance = await WebAssembly.instantiate(compiled, {
-    env: { memory },
+    env: {
+      memory,
+      debugLog(_ptr: number, _len: number) {
+        // no-op debug logger for wasm imports
+      },
+    },
     clay: {
       measureTextFunction(
         ret: number,

@@ -177,7 +177,12 @@ export async function createInputNative(
   let memory = new WebAssembly.Memory({ initial: 4 });
 
   let instance = await WebAssembly.instantiate(compiled, {
-    env: { memory },
+    env: {
+      memory,
+      debugLog(_ptr: number, _len: number) {
+        // no-op debug logger for wasm imports
+      },
+    },
     clay: {
       measureTextFunction() {},
       queryScrollOffsetFunction(ret: number) {
