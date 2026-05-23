@@ -30,7 +30,7 @@ The build depends on the `clay` git submodule.
 Preferred fresh clone:
 
 ```sh
-git clone --recurse-submodules https://github.com/thefrontside/clayterm.git
+git clone --recurse-submodules https://github.com/bombshell-dev/clayterm.git
 cd clayterm
 ```
 
