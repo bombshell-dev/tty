@@ -17,6 +17,8 @@ char *output(struct Clayterm *ct);
 int length(struct Clayterm *ct);
 void measure(int ret, int txt);
 
+int get_scroll_delta(struct Clayterm *ct, const char *name, int name_len,
+                     float *out);
 int get_element_bounds(const char *name, int name_len, float *out);
 
 int pointer_over_count(void);

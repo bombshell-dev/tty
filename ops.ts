@@ -149,12 +149,18 @@ export function pack(
         }
 
         if (op.clip) {
-          view.setUint32(
-            o,
-            (op.clip.horizontal ? 1 : 0) | ((op.clip.vertical ? 1 : 0) << 8),
-            true,
-          );
+          let xm = op.clip.x !== undefined ? 1 : 0;
+          let ym = op.clip.y !== undefined ? 1 : 0;
+          view.setUint32(o, xm | (ym << 8), true);
           o += 4;
+          if (xm) {
+            view.setFloat32(o, op.clip.x!, true);
+            o += 4;
+          }
+          if (ym) {
+            view.setFloat32(o, op.clip.y!, true);
+            o += 4;
+          }
         }
 
         if (op.floating) {
@@ -260,7 +266,7 @@ export interface OpenElement {
     top?: number;
     bottom?: number;
   };
-  clip?: { horizontal?: boolean; vertical?: boolean };
+  clip?: { x?: number; y?: number };
   floating?: {
     x?: number;
     y?: number;

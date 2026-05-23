@@ -7,7 +7,9 @@
     "fmt:check": "deno fmt --check && clang-format --dry-run --Werror src/*.c src/*.h",
     "build:npm": "deno run -A tasks/build-npm.ts",
     "build:jsr": "deno run -A tasks/build-jsr.ts",
-    "demo": "deno run demo/keyboard.ts"
+    "demo": "deno run demo/keyboard.ts",
+    "demo:scroll": "deno run demo/scroll.ts",
+    "demo:colors": "deno run demo/colors.ts"
   },
   "imports": {
     "@std/testing": "jsr:@std/testing@1",

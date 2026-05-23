@@ -14,6 +14,16 @@
 - The workflow is: propose the spec change, wait for approval, then implement.
   Do not combine spec changes with implementation in a single step.
 
+- During implementation, the spec is the sole authority. Do not add APIs,
+  exports, parameters, or architectural elements that are not described in the
+  spec — even if an implementation plan or subagent recommends them. If the spec
+  is insufficient, update the spec first.
+
+- If an implementation requires changing any API boundary — public TS exports,
+  WASM exports, function signatures, the command protocol, or any interface that
+  crosses a module boundary — stop and consult the user before proceeding. Do
+  not rationalize changes as "internal." If it has a signature, it's an API.
+
 - The renderer and input parser are specified separately (`renderer-spec.md` and
   `input-spec.md`). They are architecturally independent. Do not introduce
   dependencies between them.
@@ -25,6 +35,10 @@
 
 Do not include any agent marketing material (e.g. "Generated with...",
 "Co-Authored-By: \<agent>") in commits, pull requests, issues, or comments.
+
+Before every commit, run `deno fmt` and `deno lint` and fix any issues. For C
+files, also run `clang-format -i src/*.c src/*.h`. Do not commit unformatted
+code.
 
 ## Rendering invariants
 

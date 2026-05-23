@@ -135,7 +135,22 @@ has already been extended with fields that are not yet mapped to the TS types).
 
 ---
 
-## 6. Deferred / Future Areas
+## 6. Integration with Rendering
+
+Input events produced by the parser can be passed directly to the renderer via
+`RenderOptions.event`. The renderer extracts pointer state from mouse events and
+scroll deltas from wheel events, removing the need for the caller to manually
+decompose input events into renderer-specific structures.
+
+See the [Scroll Specification](scroll-spec.md), Section 5 for details.
+
+This integration does not create an architectural dependency between the input
+parser and the renderer. The `InputEvent` type is the shared contract; neither
+module imports the other.
+
+---
+
+## 7. Deferred / Future Areas
 
 _These topics are explicitly excluded from this specification. Their omission is
 intentional, not an oversight._
@@ -153,7 +168,7 @@ decision is open.
 
 ---
 
-## Open Decisions
+## 8. Open Decisions
 
 1. **What are the normative Kitty progressive enhancement event types?** The
    C-side struct has been extended. The TypeScript types have not been updated.

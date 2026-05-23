@@ -1,4 +1,5 @@
 import { type Op, pack } from "./ops.ts";
+import type { InputEvent } from "./input.ts";
 import { type BoundingBox, createTermNative } from "./term-native.ts";
 
 export interface TermOptions {
@@ -20,11 +21,14 @@ export interface RenderOptions {
    */
   row?: number;
 
+  /** @deprecated Use `event` instead. */
   pointer?: {
     x: number;
     y: number;
     down: boolean;
   };
+
+  event?: InputEvent;
 }
 
 export type PointerEvent =
@@ -36,6 +40,7 @@ export type { BoundingBox };
 
 export interface ElementInfo {
   bounds: BoundingBox;
+  scrollDelta: { x: number; y: number };
 }
 
 const ERROR_TYPES = [
@@ -78,17 +83,54 @@ export async function createTerm(options: TermOptions): Promise<Term> {
   let prev = new Set<string>();
   let pressed = new Set<string>();
   let wasDown = false;
+  let pointerX = 0;
+  let pointerY = 0;
+  let pointerDown = false;
+  let hasPointer = false;
 
   return {
     render(ops: Op[], options?: RenderOptions): RenderResult {
+      let dx = 0;
+      let dy = 0;
+
+      if (options?.event) {
+        let ev = options.event;
+        if ("x" in ev && "y" in ev) {
+          pointerX = ev.x;
+          pointerY = ev.y;
+          hasPointer = true;
+        }
+        if (ev.type === "mousedown") {
+          pointerDown = true;
+        } else if (ev.type === "mouseup") {
+          pointerDown = false;
+        }
+        if (ev.type === "wheel") {
+          dy = ev.direction === "down" ? -1 : 1;
+        }
+      } else if (options?.pointer) {
+        pointerX = options.pointer.x;
+        pointerY = options.pointer.y;
+        pointerDown = options.pointer.down;
+        hasPointer = true;
+      } else {
+        hasPointer = false;
+      }
+
+      if (hasPointer) {
+        native.setPointer(pointerX, pointerY, pointerDown);
+      }
+      if (dx !== 0 || dy !== 0) {
+        native.updateScrollContainers(dx, dy);
+      }
+
       let len = pack(ops, memory.buffer, opsBuf, memory.buffer.byteLength);
       let mode = options?.mode === "line" ? 1 : 0;
       let row = options?.row ?? 1;
       native.reduce(statePtr, opsBuf, len, mode, row);
 
-      if (options?.pointer) {
-        let { x, y, down } = options.pointer;
-        native.setPointer(x, y, down);
+      if (hasPointer) {
+        native.setPointer(pointerX, pointerY, pointerDown);
       }
 
       let output = new Uint8Array(
@@ -98,9 +140,9 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       );
 
       let current = new Set(
-        options?.pointer ? native.getPointerOverIds() : [],
+        hasPointer ? native.getPointerOverIds() : [],
       );
-      let down = options?.pointer?.down ?? false;
+      let down = pointerDown;
       let events: PointerEvent[] = [];
 
       for (let id of current) {
@@ -132,11 +174,18 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       prev = current;
       wasDown = down;
 
+      let zero = { x: 0, y: 0 };
       let info: RenderInfo = {
         get(id: string): ElementInfo | undefined {
           let bounds = native.getElementBounds(id);
           if (bounds) {
-            return { bounds };
+            let scrollDelta = native.getScrollDelta(statePtr, id);
+            return {
+              bounds,
+              scrollDelta: scrollDelta.x === 0 && scrollDelta.y === 0
+                ? zero
+                : scrollDelta,
+            };
           }
           return undefined;
         },

@@ -37,6 +37,12 @@
 /* ── Instance state ───────────────────────────────────────────────── */
 
 #define MAX_ERRORS 32
+#define MAX_SCROLL_DELTAS 16
+
+struct ScrollDelta {
+  uint32_t id;
+  float dx, dy;
+};
 
 struct Clayterm {
   int w, h;
@@ -51,6 +57,9 @@ struct Clayterm {
   /* error collection */
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
+  /* scroll delta reporting */
+  struct ScrollDelta scroll_deltas[MAX_SCROLL_DELTAS];
+  int scroll_delta_count;
 };
 
 /* Memory layout inside the arena provided by the host:
@@ -470,6 +479,7 @@ struct Clayterm *init(void *mem, int w, int h) {
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
   int i = 0;
   ct->error_count = 0;
+  ct->scroll_delta_count = 0;
 
   Clay_BeginLayout();
 
@@ -537,10 +547,20 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
         decl.border.width.bottom = (bw >> 24) & 0xff;
       }
 
+      int clip_xmode = 0, clip_ymode = 0;
+      float clip_mx = 0, clip_my = 0;
       if (mask & PROP_CLIP) {
         uint32_t cl = rd(buf, len, &i);
-        decl.clip.horizontal = cl & 0xff;
-        decl.clip.vertical = (cl >> 8) & 0xff;
+        clip_xmode = cl & 0xff;
+        clip_ymode = (cl >> 8) & 0xff;
+        decl.clip.horizontal = (clip_xmode != 0);
+        decl.clip.vertical = (clip_ymode != 0);
+        if (clip_xmode)
+          clip_mx = rdf(buf, len, &i);
+        if (clip_ymode)
+          clip_my = rdf(buf, len, &i);
+        decl.clip.childOffset.x = clip_mx;
+        decl.clip.childOffset.y = clip_my;
       }
 
       if (mask & PROP_FLOATING) {
@@ -556,6 +576,25 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
       }
 
       Clay__ConfigureOpenElement(decl);
+
+      if ((clip_xmode || clip_ymode) && id_len > 0) {
+        Clay_String str = {.length = (int32_t)id_len, .chars = id_chars};
+        Clay_ElementId eid2 = Clay__HashString(str, 0);
+        Clay_ScrollContainerData sc = Clay_GetScrollContainerData(eid2);
+        if (sc.found && sc.scrollPosition) {
+          float dx = sc.scrollPosition->x - clip_mx;
+          float dy = sc.scrollPosition->y - clip_my;
+          if ((dx != 0 || dy != 0) &&
+              ct->scroll_delta_count < MAX_SCROLL_DELTAS) {
+            ct->scroll_deltas[ct->scroll_delta_count++] =
+                (struct ScrollDelta){.id = eid2.id, .dx = dx, .dy = dy};
+          }
+          if (clip_xmode)
+            sc.scrollPosition->x = clip_mx;
+          if (clip_ymode)
+            sc.scrollPosition->y = clip_my;
+        }
+      }
       break;
     }
 
@@ -643,6 +682,22 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
 char *output(struct Clayterm *ct) { return ct->out.data; }
 
 int length(struct Clayterm *ct) { return ct->out.length; }
+
+int get_scroll_delta(struct Clayterm *ct, const char *name, int name_len,
+                     float *out) {
+  Clay_String str = {.length = name_len, .chars = name};
+  Clay_ElementId eid = Clay__HashString(str, 0);
+  for (int j = 0; j < ct->scroll_delta_count; j++) {
+    if (ct->scroll_deltas[j].id == eid.id) {
+      out[0] = ct->scroll_deltas[j].dx;
+      out[1] = ct->scroll_deltas[j].dy;
+      return 1;
+    }
+  }
+  out[0] = 0;
+  out[1] = 0;
+  return 0;
+}
 
 int get_element_bounds(const char *name, int name_len, float *out) {
   Clay_String str = {.length = name_len, .chars = name};
