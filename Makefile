@@ -1,4 +1,4 @@
-CC = /usr/local/opt/llvm/bin/clang
+CC = clang
 WASM_OPT ?= wasm-opt
 TARGET = clayterm.wasm
 SRC = src/module.c

@@ -20,8 +20,9 @@ await build({
   typeCheck: false,
   compilerOptions: {
     lib: ["ESNext"],
-    target: "ES2020",
-    sourceMap: true,
+    target: "ES2022",
+    sourceMap: false,
+    declarationMap: false,
   },
   package: {
     name: "clayterm",
@@ -37,9 +38,10 @@ await build({
       url: "https://github.com/thefrontside/clayterm/issues",
     },
     engines: {
-      node: ">= 16",
+      node: ">= 22",
     },
     sideEffects: false,
+    files: ["esm"],
   },
 });
 

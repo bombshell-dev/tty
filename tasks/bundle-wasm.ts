@@ -16,4 +16,8 @@ export const compiled = await WebAssembly.compile(await new Response(stream).arr
 `;
 
 await Deno.writeTextFile("wasm.ts", source);
-console.log(`wrote wasm.ts (${wasm.length} → ${compressed.byteLength} bytes compressed, ${Math.round(compressed.byteLength / wasm.length * 100)}%)`);
+console.log(
+  `wrote wasm.ts (${wasm.length} → ${compressed.byteLength} bytes compressed, ${
+    Math.round(compressed.byteLength / wasm.length * 100)
+  }%)`,
+);
