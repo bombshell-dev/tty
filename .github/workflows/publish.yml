@@ -23,6 +23,9 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: install binaryen
+        run: sudo apt-get install -y binaryen
+
       - name: build wasm
         run: make
 
@@ -48,6 +51,9 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+
+      - name: install binaryen
+        run: sudo apt-get install -y binaryen
 
       - name: build wasm
         run: make
@@ -108,6 +114,9 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+
+      - name: install binaryen
+        run: sudo apt-get install -y binaryen
 
       - name: build wasm
         run: make
