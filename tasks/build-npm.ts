@@ -20,10 +20,8 @@ await build({
   typeCheck: false,
   compilerOptions: {
     lib: ["ESNext"],
-    target: "ES2022",
-    sourceMap: false,
-    declarationMap: false,
   },
+  skipSourceOutput: true,
   package: {
     name: "clayterm",
     version,
@@ -41,7 +39,7 @@ await build({
       node: ">= 22",
     },
     sideEffects: false,
-    files: ["esm"],
+    type: "module",
   },
 });
 
