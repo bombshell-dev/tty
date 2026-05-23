@@ -25,6 +25,9 @@
     "include": ["*.ts"],
     "exclude": ["!wasm.ts"]
   },
+  "compilerOptions": {
+    "types": ["npm:@types/node"]
+  },
   "fmt": {
     "exclude": ["clay", "build"]
   },
