@@ -15,7 +15,8 @@
     "@sinclair/typebox": "npm:@sinclair/typebox@^0.34",
     "dnt": "jsr:@deno/dnt@0.42.3",
     "effection": "npm:effection@^4.0.2",
-    "@std/encoding": "jsr:@std/encoding@1"
+    "@std/encoding": "jsr:@std/encoding@1",
+    "@types/node": "npm:@types/node@^22"
   },
   "exports": {
     ".": "./mod.ts",
@@ -26,7 +27,7 @@
     "exclude": ["!wasm.ts"]
   },
   "compilerOptions": {
-    "types": ["npm:@types/node"]
+    "types": ["@types/node"]
   },
   "fmt": {
     "exclude": ["clay", "build"]

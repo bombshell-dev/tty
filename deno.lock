@@ -126,6 +126,7 @@
       "jsr:@std/expect@1",
       "jsr:@std/testing@1",
       "npm:@sinclair/typebox@0.34",
+      "npm:@types/node@22",
       "npm:effection@^4.0.2"
     ]
   }
