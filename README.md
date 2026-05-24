@@ -1,5 +1,7 @@
 # clayterm
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/bombshell-dev/clayterm?utm_source=badge)
+
 A low-level, platform-independent terminal renderer and event parser for
 JavaScript. You can use clayterm directly, or as the foundation for your own
 framework.

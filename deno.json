@@ -26,11 +26,11 @@
     "exclude": ["!wasm.ts"]
   },
   "fmt": {
-    "exclude": ["clay", "build"]
+    "exclude": ["clay", "build", "bench", "node_modules"]
   },
   "lint": {
     "rules": { "exclude": ["prefer-const"] },
-    "exclude": ["clay", "build"],
+    "exclude": ["clay", "build", "bench", "node_modules"],
     "plugins": ["lint/prefer-let.ts"]
   }
 }

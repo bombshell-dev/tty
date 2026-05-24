@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@codspeed/vitest-plugin": "^5.4.0",
+    "vitest": "^4.1.7"
+  }
+}
