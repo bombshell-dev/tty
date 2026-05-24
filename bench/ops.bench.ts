@@ -1,4 +1,4 @@
-import { describe, bench } from "vitest";
+import { bench, describe } from "vitest";
 import { close, fixed, grow, open, pack, rgba, text } from "../ops.ts";
 import type { Op } from "../ops.ts";
 

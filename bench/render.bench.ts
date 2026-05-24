@@ -1,4 +1,4 @@
-import { describe, bench, beforeAll } from "vitest";
+import { beforeAll, bench, describe } from "vitest";
 import { createTerm, type Term } from "../term.ts";
 import { close, fixed, grow, open, rgba, text } from "../ops.ts";
 import type { Op } from "../ops.ts";

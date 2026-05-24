@@ -1,4 +1,4 @@
-import { describe, bench, beforeAll } from "vitest";
+import { beforeAll, bench, describe } from "vitest";
 import { createInput, type Input } from "../input.ts";
 
 function bytes(...values: number[]): Uint8Array {
