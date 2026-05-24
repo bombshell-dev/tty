@@ -8,7 +8,7 @@
     "build:npm": "deno run -A tasks/build-npm.ts",
     "build:jsr": "deno run -A tasks/build-jsr.ts",
     "demo": "deno run demo/keyboard.ts",
-    "bench": "deno run -A npm:vitest bench --run"
+    "bench": "deno run -A bench/mod.ts"
   },
   "imports": {
     "@std/testing": "jsr:@std/testing@1",
@@ -17,8 +17,8 @@
     "dnt": "jsr:@deno/dnt@0.42.3",
     "effection": "npm:effection@^4.0.2",
     "@std/encoding": "jsr:@std/encoding@1",
-    "@codspeed/vitest-plugin": "npm:@codspeed/vitest-plugin@^5.4.0",
-    "vitest": "npm:vitest@^4.1.7"
+    "@codspeed/tinybench-plugin": "npm:@codspeed/tinybench-plugin@^5.4.0",
+    "tinybench": "npm:tinybench@^6.0.2"
   },
   "exports": {
     ".": "./mod.ts",
