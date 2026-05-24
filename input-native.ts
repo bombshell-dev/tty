@@ -169,7 +169,7 @@ export interface InputNative {
   delay(st: number): number;
 }
 
-import { compiled } from "./wasm-input.ts";
+import { compiled } from "./input.wasm.ts";
 
 export async function createInputNative(
   escLatency: number,

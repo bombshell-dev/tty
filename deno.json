@@ -27,7 +27,7 @@
   },
   "publish": {
     "include": ["*.ts"],
-    "exclude": ["!wasm-layout.ts", "!wasm-input.ts"]
+    "exclude": ["!layout.wasm.ts", "!input.wasm.ts"]
   },
   "nodeModulesDir": "auto",
   "fmt": {

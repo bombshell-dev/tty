@@ -49,23 +49,23 @@ INPUT_LDFLAGS = $(LDFLAGS_COMMON) \
 
 DEPS = $(wildcard src/*.c src/*.h)
 
-all: clayterm-layout.wasm clayterm-input.wasm wasm-layout.ts wasm-input.ts
-	@echo "Built clayterm-layout.wasm ($$(wc -c < clayterm-layout.wasm) bytes raw, $$(gzip -c clayterm-layout.wasm | wc -c) bytes gzip)"
-	@echo "Built clayterm-input.wasm  ($$(wc -c < clayterm-input.wasm) bytes raw, $$(gzip -c clayterm-input.wasm | wc -c) bytes gzip)"
+all: layout.wasm input.wasm layout.wasm.ts input.wasm.ts
+	@echo "Built layout.wasm ($$(wc -c < layout.wasm) bytes raw, $$(gzip -c layout.wasm | wc -c) bytes gzip)"
+	@echo "Built input.wasm  ($$(wc -c < input.wasm) bytes raw, $$(gzip -c input.wasm | wc -c) bytes gzip)"
 
-clayterm-layout.wasm: $(DEPS)
+layout.wasm: $(DEPS)
 	$(CC) $(CFLAGS) $(LAYOUT_LDFLAGS) -o $@ src/module-layout.c
 
-clayterm-input.wasm: $(DEPS)
+input.wasm: $(DEPS)
 	$(CC) $(filter-out -DCLAY_IMPLEMENTATION -DCLAY_WASM, $(CFLAGS)) $(INPUT_LDFLAGS) -o $@ src/module-input.c
 
-wasm-layout.ts: clayterm-layout.wasm
-	deno run --allow-read --allow-write tasks/bundle-wasm.ts clayterm-layout.wasm wasm-layout.ts
+layout.wasm.ts: layout.wasm
+	deno run --allow-read --allow-write tasks/bundle-wasm.ts layout.wasm layout.wasm.ts
 
-wasm-input.ts: clayterm-input.wasm
-	deno run --allow-read --allow-write tasks/bundle-wasm.ts clayterm-input.wasm wasm-input.ts
+input.wasm.ts: input.wasm
+	deno run --allow-read --allow-write tasks/bundle-wasm.ts input.wasm input.wasm.ts
 
 clean:
-	rm -f clayterm.wasm clayterm-layout.wasm clayterm-input.wasm wasm.ts wasm-layout.ts wasm-input.ts
+	rm -f layout.wasm input.wasm layout.wasm.ts input.wasm.ts
 
 .PHONY: all clean

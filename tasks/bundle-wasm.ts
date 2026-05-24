@@ -1,6 +1,10 @@
 import { encodeBase64 } from "@std/encoding/base64";
 
-const [input = "clayterm.wasm", output = "wasm.ts"] = Deno.args;
+const [input, output] = Deno.args;
+if (!input || !output) {
+  console.error("Usage: bundle-wasm.ts <input.wasm> <output.ts>");
+  Deno.exit(1);
+}
 
 const wasm = await Deno.readFile(input);
 const base64 = encodeBase64(wasm);

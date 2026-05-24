@@ -31,7 +31,7 @@ export interface Native {
   errorMessage(ct: number, index: number): string;
 }
 
-import { compiled } from "./wasm-layout.ts";
+import { compiled } from "./layout.wasm.ts";
 
 export async function createTermNative(
   w: number,
