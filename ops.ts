@@ -2,6 +2,7 @@
 const OP_OPEN_ELEMENT = 0x02;
 const OP_TEXT = 0x03;
 const OP_CLOSE_ELEMENT = 0x04;
+const OP_SNAPSHOT = 0x05;
 
 /* Property group masks for OPEN_ELEMENT */
 const PROP_LAYOUT = 0x01;
@@ -192,6 +193,12 @@ export function pack(
         break;
       }
 
+      case OP_SNAPSHOT: {
+        new Uint8Array(mem).set(op.data, o);
+        o += op.data.length;
+        break;
+      }
+
       case OP_TEXT: {
         view.setUint32(o, OP_TEXT, true);
         o += 4;
@@ -297,7 +304,12 @@ export interface Text {
   attrs?: number;
 }
 
-export type Op = OpenElement | Text | CloseElement;
+interface Snapshot {
+  directive: typeof OP_SNAPSHOT;
+  data: Uint8Array;
+}
+
+export type Op = OpenElement | Text | CloseElement | Snapshot;
 
 export function open(
   id: string,
@@ -315,4 +327,43 @@ export function text(
 
 export function close(): CloseElement {
   return { directive: OP_CLOSE_ELEMENT };
+}
+
+function packSize(ops: Op[]): number {
+  let n = 0;
+  for (let op of ops) {
+    switch (op.directive) {
+      case OP_CLOSE_ELEMENT:
+        n += 4;
+        break;
+      case OP_SNAPSHOT:
+        n += op.data.length;
+        break;
+      case OP_OPEN_ELEMENT: {
+        n += 4; // opcode
+        n += 4 + Math.ceil(encoder.encode(op.id).length / 4) * 4; // id string
+        n += 4; // mask
+        if (op.layout) n += 6 * 4 + 4 + 4 + 4; // 2 axes (3 words each) + pad + gap + align
+        if (op.bg !== undefined) n += 4;
+        if (op.cornerRadius) n += 4;
+        if (op.border) n += 8;
+        if (op.clip) n += 4;
+        if (op.floating) n += 16;
+        break;
+      }
+      case OP_TEXT: {
+        n += 4 + 4 + 4; // opcode + color + cfg
+        n += 4 + Math.ceil(encoder.encode(op.content).length / 4) * 4; // string
+        break;
+      }
+    }
+  }
+  return n;
+}
+
+export function snapshot(ops: Op[]): Op {
+  let size = packSize(ops);
+  let buf = new ArrayBuffer(size);
+  let words = pack(ops, buf, 0, size);
+  return { directive: OP_SNAPSHOT, data: new Uint8Array(buf, 0, words * 4) };
 }
