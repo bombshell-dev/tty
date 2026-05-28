@@ -31,8 +31,8 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: format
-        run: deno task fmt:check
+      - name: verify
+        run: deno task verify
 
       - name: lint
         run: deno lint
