@@ -8,7 +8,7 @@
 // BMP coarse filter: a 64-byte bitmap (1 bit per 128-codepoint block) gates
 // the binary search. Clean blocks return width 1 without touching the table.
 
-const UNICODE_BASE = "https://www.unicode.org/Public/16.0.0/ucd";
+let UNICODE_BASE = "https://www.unicode.org/Public/16.0.0/ucd";
 
 interface Interval {
   start: number;
@@ -20,9 +20,9 @@ interface TaggedInterval extends Interval {
 }
 
 async function fetchText(path: string): Promise<string> {
-  const url = `${UNICODE_BASE}/${path}`;
+  let url = `${UNICODE_BASE}/${path}`;
   console.error(`Fetching ${url} …`);
-  const response = await fetch(url);
+  let response = await fetch(url);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} fetching ${url}`);
   }
@@ -31,10 +31,10 @@ async function fetchText(path: string): Promise<string> {
 
 function parseCodepointRange(token: string): Interval {
   if (token.includes("..")) {
-    const [lo, hi] = token.split("..").map((s) => parseInt(s, 16));
+    let [lo, hi] = token.split("..").map((s) => parseInt(s, 16));
     return { start: lo, end: hi };
   }
-  const cp = parseInt(token, 16);
+  let cp = parseInt(token, 16);
   return { start: cp, end: cp };
 }
 
@@ -43,11 +43,11 @@ function parseCodepointRange(token: string): Interval {
  * `XXXX..YYYY ; Category # …` and returns intervals matching `category`.
  */
 function parseGeneralCategory(text: string, category: string): Interval[] {
-  const intervals: Interval[] = [];
-  for (const line of text.split("\n")) {
-    const content = line.split("#")[0].trim();
+  let intervals: Interval[] = [];
+  for (let line of text.split("\n")) {
+    let content = line.split("#")[0].trim();
     if (!content) continue;
-    const [range, cat] = content.split(";").map((s) => s.trim());
+    let [range, cat] = content.split(";").map((s) => s.trim());
     if (cat !== category) continue;
     intervals.push(parseCodepointRange(range));
   }
@@ -59,11 +59,11 @@ function parseGeneralCategory(text: string, category: string): Interval[] {
  * `XXXX ; Property_Name # …` and returns intervals matching `property`.
  */
 function parseDerivedProperty(text: string, property: string): Interval[] {
-  const intervals: Interval[] = [];
-  for (const line of text.split("\n")) {
-    const content = line.split("#")[0].trim();
+  let intervals: Interval[] = [];
+  for (let line of text.split("\n")) {
+    let content = line.split("#")[0].trim();
     if (!content) continue;
-    const [range, prop] = content.split(";").map((s) => s.trim());
+    let [range, prop] = content.split(";").map((s) => s.trim());
     if (prop !== property) continue;
     intervals.push(parseCodepointRange(range));
   }
@@ -75,11 +75,11 @@ function parseDerivedProperty(text: string, property: string): Interval[] {
  * and returns intervals for Wide (W) and Fullwidth (F) codepoints.
  */
 function parseWideEastAsian(text: string): Interval[] {
-  const intervals: Interval[] = [];
-  for (const line of text.split("\n")) {
-    const content = line.split("#")[0].trim();
+  let intervals: Interval[] = [];
+  for (let line of text.split("\n")) {
+    let content = line.split("#")[0].trim();
     if (!content) continue;
-    const [range, width] = content.split(";").map((s) => s.trim());
+    let [range, width] = content.split(";").map((s) => s.trim());
     if (width !== "W" && width !== "F") continue;
     intervals.push(parseCodepointRange(range));
   }
@@ -89,10 +89,10 @@ function parseWideEastAsian(text: string): Interval[] {
 function mergeIntervals(intervals: Interval[]): Interval[] {
   if (intervals.length === 0) return [];
   intervals.sort((a, b) => a.start - b.start);
-  const merged: Interval[] = [{ ...intervals[0] }];
+  let merged: Interval[] = [{ ...intervals[0] }];
   for (let index = 1; index < intervals.length; index++) {
-    const current = merged[merged.length - 1];
-    const next = intervals[index];
+    let current = merged[merged.length - 1];
+    let next = intervals[index];
     if (next.start <= current.end + 1) {
       current.end = Math.max(current.end, next.end);
     } else {
@@ -109,9 +109,9 @@ function mergeIntervals(intervals: Interval[]): Interval[] {
  */
 function subtractIntervals(base: Interval[], mask: Interval[]): Interval[] {
   let result = [...base];
-  for (const m of mask) {
-    const next: Interval[] = [];
-    for (const b of result) {
+  for (let m of mask) {
+    let next: Interval[] = [];
+    for (let b of result) {
       if (m.end < b.start || m.start > b.end) {
         next.push(b);
       } else {
@@ -126,8 +126,8 @@ function subtractIntervals(base: Interval[], mask: Interval[]): Interval[] {
 
 function assertNoAdjacentRanges(intervals: Interval[], label: string): void {
   for (let index = 1; index < intervals.length; index++) {
-    const previous = intervals[index - 1];
-    const current = intervals[index];
+    let previous = intervals[index - 1];
+    let current = intervals[index];
     if (current.start <= previous.end + 1) {
       throw new Error(
         `${label}: adjacent ranges at index ${index}: ` +
@@ -155,40 +155,40 @@ function formatUint8Hex(value: number): string {
 }
 
 function formatUint32Array(values: number[], indent = "  "): string {
-  const lines: string[] = [];
+  let lines: string[] = [];
   for (let index = 0; index < values.length; index += 8) {
-    const chunk = values.slice(index, index + 8);
+    let chunk = values.slice(index, index + 8);
     lines.push(indent + chunk.map(formatUint32Hex).join(", ") + ",");
   }
   return lines.join("\n");
 }
 
 function formatUint16Array(values: number[], indent = "  "): string {
-  const lines: string[] = [];
+  let lines: string[] = [];
   for (let index = 0; index < values.length; index += 8) {
-    const chunk = values.slice(index, index + 8);
+    let chunk = values.slice(index, index + 8);
     lines.push(indent + chunk.map(formatUint16Hex).join(", ") + ",");
   }
   return lines.join("\n");
 }
 
 function formatUint8Array(values: number[], indent = "  "): string {
-  const lines: string[] = [];
+  let lines: string[] = [];
   for (let index = 0; index < values.length; index += 8) {
-    const chunk = values.slice(index, index + 8);
+    let chunk = values.slice(index, index + 8);
     lines.push(indent + chunk.map(formatUint8Hex).join(", ") + ",");
   }
   return lines.join("\n");
 }
 
-const [derivedCategoryText, derivedCorePropsText, eastAsianWidthText] =
+let [derivedCategoryText, derivedCorePropsText, eastAsianWidthText] =
   await Promise.all([
     fetchText("extracted/DerivedGeneralCategory.txt"),
     fetchText("DerivedCoreProperties.txt"),
     fetchText("EastAsianWidth.txt"),
   ]);
 
-const nonspacingMarks = parseGeneralCategory(derivedCategoryText, "Mn");
+let nonspacingMarks = parseGeneralCategory(derivedCategoryText, "Mn");
 const enclosingMarks = parseGeneralCategory(derivedCategoryText, "Me");
 const defaultIgnorables = parseDerivedProperty(
   derivedCorePropsText,
@@ -211,7 +211,7 @@ const combiningIntervals = mergeIntervals(
 );
 assertNoAdjacentRanges(combiningIntervals, "combining");
 
-const wideIntervals = mergeIntervals(parseWideEastAsian(eastAsianWidthText));
+let wideIntervals = mergeIntervals(parseWideEastAsian(eastAsianWidthText));
 assertNoAdjacentRanges(wideIntervals, "wide");
 
 // Strip any codepoints that are in both tables — combining takes priority.
@@ -225,8 +225,8 @@ const allSpecialIntervals: TaggedInterval[] = [
 ].sort((a, b) => a.start - b.start);
 
 for (let index = 1; index < allSpecialIntervals.length; index++) {
-  const prev = allSpecialIntervals[index - 1];
-  const curr = allSpecialIntervals[index];
+  let prev = allSpecialIntervals[index - 1];
+  let curr = allSpecialIntervals[index];
   if (curr.start <= prev.end) {
     throw new Error(
       `combining/wide overlap at 0x${curr.start.toString(16)} ` +
@@ -235,13 +235,13 @@ for (let index = 1; index < allSpecialIntervals.length; index++) {
   }
 }
 
-const allRanges = allSpecialIntervals.map((i) => ({
+let allRanges = allSpecialIntervals.map((i) => ({
   start: i.start,
   count: i.end - i.start,
   width: i.width,
 }));
 
-for (const range of allRanges) {
+for (let range of allRanges) {
   if (range.start > 0x1fffff) {
     throw new Error(
       `Range start 0x${
@@ -258,7 +258,7 @@ for (const range of allRanges) {
 const smallRanges = allRanges.filter((range) => range.count <= 1023);
 const largeRanges = allRanges.filter((range) => range.count > 1023);
 
-const smallPacked = smallRanges.map(
+let smallPacked = smallRanges.map(
   (range) =>
     (range.start << 11) | (range.count << 1) | (range.width === 2 ? 1 : 0),
 );
@@ -271,7 +271,7 @@ for (let index = 1; index < smallPacked.length; index++) {
   }
 }
 
-const largeStarts = largeRanges.map((range) => range.start);
+let largeStarts = largeRanges.map((range) => range.start);
 const largeCounts = largeRanges.map((range) => range.count);
 const largeWidths = largeRanges.map((range) => range.width);
 
@@ -280,9 +280,9 @@ const largeWidths = largeRanges.map((range) => range.width);
 const bmpFilter = new Uint32Array(16);
 for (const range of allRanges) {
   if (range.start > 0xffff) continue;
-  const endCp = Math.min(range.start + range.count, 0xffff);
-  const startBlock = range.start >> 7;
-  const endBlock = endCp >> 7;
+  let endCp = Math.min(range.start + range.count, 0xffff);
+  let startBlock = range.start >> 7;
+  let endBlock = endCp >> 7;
   for (let block = startBlock; block <= endBlock; block++) {
     bmpFilter[block >> 5] |= 1 << (block & 31);
   }
@@ -296,7 +296,7 @@ for (const w of bmpFilter) {
   }
 }
 
-const tableBytes = 16 * 4 + // bmp_filter
+let tableBytes = 16 * 4 + // bmp_filter
   smallPacked.length * 4 +
   largeStarts.length * 4 +
   largeCounts.length * 2 +
@@ -307,9 +307,9 @@ console.error(`special_large_ranges: ${largeRanges.length} entries`);
 console.error(`BMP dirty blocks:     ${dirtyBlocks} / 512`);
 console.error(`Table data:           ${tableBytes} bytes`);
 
-const date = new Date().toISOString().slice(0, 10);
+let date = new Date().toISOString().slice(0, 10);
 
-const output = `\
+let output = `\
 /* wcwidth.c - Unicode character width lookup
  * Unicode 16.0 - generated by tasks/gen-wcwidth.ts on ${date}
  *
@@ -413,7 +413,7 @@ int iswprint(uint32_t codepoint) { return wcwidth(codepoint) >= 0; }
 `;
 
 if (Deno.args.includes("--check")) {
-  const existing = await Deno.readTextFile("src/wcwidth.c");
+  let existing = await Deno.readTextFile("src/wcwidth.c");
   if (existing !== output) {
     console.error("src/wcwidth.c is out of date — run: deno task gen-wcwidth");
     Deno.exit(1);
