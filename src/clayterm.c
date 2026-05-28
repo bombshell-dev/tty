@@ -298,59 +298,178 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
   }
 }
 
+/* ── Junction character lookup ────────────────────────────────────── */
+/* Bit layout: [1:0]=left, [3:2]=right, [5:4]=top, [7:6]=bottom style.
+ * Style values: 0=none 1=single 2=bold 3=double.
+ * Bit 8: rounded-corner hint (single-style 2-dir corner only).      */
+#define _JK(l,r,t,b) \
+  (((l)&3)|(((r)&3)<<2)|(((t)&3)<<4)|(((b)&3)<<6))
+
+static const uint32_t junction_chars[512] = {
+  /* ── single ─────────────────────────────────────────── */
+  [_JK(1,1,0,0)] = 0x2500, /* ─ */
+  [_JK(0,0,1,1)] = 0x2502, /* │ */
+  [_JK(0,1,0,1)] = 0x250C, /* ┌ */
+  [_JK(1,0,0,1)] = 0x2510, /* ┐ */
+  [_JK(0,1,1,0)] = 0x2514, /* └ */
+  [_JK(1,0,1,0)] = 0x2518, /* ┘ */
+  [_JK(1,1,0,1)] = 0x252C, /* ┬ */
+  [_JK(1,1,1,0)] = 0x2534, /* ┴ */
+  [_JK(0,1,1,1)] = 0x251C, /* ├ */
+  [_JK(1,0,1,1)] = 0x2524, /* ┤ */
+  [_JK(1,1,1,1)] = 0x253C, /* ┼ */
+
+  /* ── bold ────────────────────────────────────────────── */
+  [_JK(2,2,0,0)] = 0x2501, /* ━ */
+  [_JK(0,0,2,2)] = 0x2503, /* ┃ */
+  [_JK(0,2,0,2)] = 0x250F, /* ┏ */
+  [_JK(2,0,0,2)] = 0x2513, /* ┓ */
+  [_JK(0,2,2,0)] = 0x2517, /* ┗ */
+  [_JK(2,0,2,0)] = 0x251B, /* ┛ */
+  [_JK(2,2,0,2)] = 0x2533, /* ┳ */
+  [_JK(2,2,2,0)] = 0x253B, /* ┻ */
+  [_JK(0,2,2,2)] = 0x2523, /* ┣ */
+  [_JK(2,0,2,2)] = 0x252B, /* ┫ */
+  [_JK(2,2,2,2)] = 0x254B, /* ╋ */
+
+  /* ── double ──────────────────────────────────────────── */
+  [_JK(3,3,0,0)] = 0x2550, /* ═ */
+  [_JK(0,0,3,3)] = 0x2551, /* ║ */
+  [_JK(0,3,0,3)] = 0x2554, /* ╔ */
+  [_JK(3,0,0,3)] = 0x2557, /* ╗ */
+  [_JK(0,3,3,0)] = 0x255A, /* ╚ */
+  [_JK(3,0,3,0)] = 0x255D, /* ╝ */
+  [_JK(3,3,0,3)] = 0x2566, /* ╦ */
+  [_JK(3,3,3,0)] = 0x2569, /* ╩ */
+  [_JK(0,3,3,3)] = 0x2560, /* ╠ */
+  [_JK(3,0,3,3)] = 0x2563, /* ╣ */
+  [_JK(3,3,3,3)] = 0x256C, /* ╬ */
+
+  /* ── single+double mixed corners ─────────────────────── */
+  [_JK(0,3,0,1)] = 0x2552, /* ╒ right=dbl  bot=sgl */
+  [_JK(0,1,0,3)] = 0x2553, /* ╓ right=sgl  bot=dbl */
+  [_JK(3,0,0,1)] = 0x2555, /* ╕ left=dbl   bot=sgl */
+  [_JK(1,0,0,3)] = 0x2556, /* ╖ left=sgl   bot=dbl */
+  [_JK(0,3,1,0)] = 0x2558, /* ╘ right=dbl  top=sgl */
+  [_JK(0,1,3,0)] = 0x2559, /* ╙ right=sgl  top=dbl */
+  [_JK(3,0,1,0)] = 0x255B, /* ╛ left=dbl   top=sgl */
+  [_JK(1,0,3,0)] = 0x255C, /* ╜ left=sgl   top=dbl */
+  /* mixed T-junctions */
+  [_JK(0,3,1,1)] = 0x255E, /* ╞ right=dbl  v=sgl */
+  [_JK(0,1,3,3)] = 0x255F, /* ╟ right=sgl  v=dbl */
+  [_JK(3,0,1,1)] = 0x2561, /* ╡ left=dbl   v=sgl */
+  [_JK(1,0,3,3)] = 0x2562, /* ╢ left=sgl   v=dbl */
+  [_JK(3,3,0,1)] = 0x2564, /* ╤ h=dbl  bot=sgl */
+  [_JK(1,1,0,3)] = 0x2565, /* ╥ h=sgl  bot=dbl */
+  [_JK(3,3,1,0)] = 0x2567, /* ╧ h=dbl  top=sgl */
+  [_JK(1,1,3,0)] = 0x2568, /* ╨ h=sgl  top=dbl */
+  /* mixed cross */
+  [_JK(3,3,1,1)] = 0x256A, /* ╪ h=dbl v=sgl */
+  [_JK(1,1,3,3)] = 0x256B, /* ╫ h=sgl v=dbl */
+
+  /* ── rounded single corners (bit 8 set) ──────────────── */
+  [_JK(0,1,0,1)|0x100] = 0x256D, /* ╭ */
+  [_JK(1,0,0,1)|0x100] = 0x256E, /* ╮ */
+  [_JK(0,1,1,0)|0x100] = 0x2570, /* ╰ */
+  [_JK(1,0,1,0)|0x100] = 0x256F, /* ╯ */
+};
+
+static void mark_junction(struct Clayterm *ct, int x, int y,
+                           uint16_t bits, uint32_t fg) {
+  if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
+    return;
+  if (ct->clipping) {
+    if (x < ct->clipx || x >= ct->clipx + ct->clipw)
+      return;
+    if (y < ct->clipy || y >= ct->clipy + ct->cliph)
+      return;
+  }
+  ct->junctions[y * ct->w + x] |= bits;
+  cell_at(ct, ct->back, x, y)->fg = fg;
+}
+
 static void render_border(struct Clayterm *ct, int x0, int y0, int x1, int y1,
                           Clay_BorderRenderData *b) {
   uint32_t fg = color(b->color);
-  uint32_t bg = ATTR_DEFAULT;
-  int top = b->width.top > 0;
-  int bot = b->width.bottom > 0;
-  int left = b->width.left > 0;
-  int right = b->width.right > 0;
+  int top   = b->width.top    > 0;
+  int bot   = b->width.bottom > 0;
+  int left  = b->width.left   > 0;
+  int right = b->width.right  > 0;
   uint8_t style = (uint8_t)b->width.betweenChildren;
 
-  uint32_t h_char, v_char, tl, tr, bl, br;
-  switch (style) {
-  case 1: /* double */
-    tl = 0x2554; tr = 0x2557; bl = 0x255a; br = 0x255d;
-    h_char = 0x2550; v_char = 0x2551;
-    break;
-  case 2: /* bold */
-    tl = 0x250f; tr = 0x2513; bl = 0x2517; br = 0x251b;
-    h_char = 0x2501; v_char = 0x2503;
-    break;
-  default: /* single — corners rounded when cornerRadius > 0 */
-    tl = b->cornerRadius.topLeft > 0 ? 0x256d : 0x250c;
-    tr = b->cornerRadius.topRight > 0 ? 0x256e : 0x2510;
-    bl = b->cornerRadius.bottomLeft > 0 ? 0x2570 : 0x2514;
-    br = b->cornerRadius.bottomRight > 0 ? 0x256f : 0x2518;
-    h_char = 0x2500; v_char = 0x2502;
-    break;
+  /* map border style (0=single,1=double,2=bold) → junction style (1=single,3=double,2=bold) */
+  static const uint8_t smap[] = {1, 3, 2};
+  uint8_t js = style < 3 ? smap[style] : 1;
+
+  int rounded = (style == 0) &&
+                (b->cornerRadius.topLeft    > 0 || b->cornerRadius.topRight    > 0 ||
+                 b->cornerRadius.bottomLeft > 0 || b->cornerRadius.bottomRight > 0);
+
+#define JL(s) ((uint16_t)((s)&3))
+#define JR(s) ((uint16_t)(((s)&3)<<2))
+#define JT(s) ((uint16_t)(((s)&3)<<4))
+#define JB(s) ((uint16_t)(((s)&3)<<6))
+#define JROUND ((uint16_t)0x100)
+
+  /* corners */
+  if (top && left) {
+    uint16_t r = (rounded && b->cornerRadius.topLeft > 0) ? JROUND : 0;
+    mark_junction(ct, x0,   y0,   JR(js)|JB(js)|r, fg);
+  }
+  if (top && right) {
+    uint16_t r = (rounded && b->cornerRadius.topRight > 0) ? JROUND : 0;
+    mark_junction(ct, x1-1, y0,   JL(js)|JB(js)|r, fg);
+  }
+  if (bot && left) {
+    uint16_t r = (rounded && b->cornerRadius.bottomLeft > 0) ? JROUND : 0;
+    mark_junction(ct, x0,   y1-1, JR(js)|JT(js)|r, fg);
+  }
+  if (bot && right) {
+    uint16_t r = (rounded && b->cornerRadius.bottomRight > 0) ? JROUND : 0;
+    mark_junction(ct, x1-1, y1-1, JL(js)|JT(js)|r, fg);
   }
 
-  if (top && left)
-    setcell(ct, x0, y0, tl, fg, bg);
-  if (top && right)
-    setcell(ct, x1 - 1, y0, tr, fg, bg);
-  if (bot && left)
-    setcell(ct, x0, y1 - 1, bl, fg, bg);
-  if (bot && right)
-    setcell(ct, x1 - 1, y1 - 1, br, fg, bg);
+  /* horizontal edges — trim endpoint bits when no corner caps the edge */
+  if (top) {
+    for (int x = x0 + left; x < x1 - right; x++) {
+      uint16_t hb = JL(js)|JR(js);
+      if (!left  && x == x0)     hb = (uint16_t)(hb & ~JL(js));
+      if (!right && x == x1 - 1) hb = (uint16_t)(hb & ~JR(js));
+      mark_junction(ct, x, y0, hb, fg);
+    }
+  }
+  if (bot) {
+    for (int x = x0 + left; x < x1 - right; x++) {
+      uint16_t hb = JL(js)|JR(js);
+      if (!left  && x == x0)     hb = (uint16_t)(hb & ~JL(js));
+      if (!right && x == x1 - 1) hb = (uint16_t)(hb & ~JR(js));
+      mark_junction(ct, x, y1-1, hb, fg);
+    }
+  }
 
-  /* horizontal edges */
-  if (top)
-    for (int x = x0 + left; x < x1 - right; x++)
-      setcell(ct, x, y0, h_char, fg, bg);
-  if (bot)
-    for (int x = x0 + left; x < x1 - right; x++)
-      setcell(ct, x, y1 - 1, h_char, fg, bg);
+  /* vertical edges — trim endpoint bits when no corner caps the edge */
+  if (left) {
+    for (int y = y0 + top; y < y1 - bot; y++) {
+      uint16_t vb = JT(js)|JB(js);
+      if (!top && y == y0)     vb = (uint16_t)(vb & ~JT(js));
+      if (!bot && y == y1 - 1) vb = (uint16_t)(vb & ~JB(js));
+      mark_junction(ct, x0, y, vb, fg);
+    }
+  }
+  if (right) {
+    for (int y = y0 + top; y < y1 - bot; y++) {
+      uint16_t vb = JT(js)|JB(js);
+      if (!top && y == y0)     vb = (uint16_t)(vb & ~JT(js));
+      if (!bot && y == y1 - 1) vb = (uint16_t)(vb & ~JB(js));
+      mark_junction(ct, x1-1, y, vb, fg);
+    }
+  }
 
-  /* vertical edges */
-  if (left)
-    for (int y = y0 + top; y < y1 - bot; y++)
-      setcell(ct, x0, y, v_char, fg, bg);
-  if (right)
-    for (int y = y0 + top; y < y1 - bot; y++)
-      setcell(ct, x1 - 1, y, v_char, fg, bg);
+#undef JL
+#undef JR
+#undef JT
+#undef JB
+#undef JROUND
 }
 
 /* ── Command buffer helpers ───────────────────────────────────────── */
@@ -617,6 +736,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
   ct->lastx = ct->lasty = -1;
 
   cells_fill(ct->back, ct->w, ct->h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);
+  memset(ct->junctions, 0, (size_t)(ct->w * ct->h) * sizeof(uint16_t));
 
   /* walk Clay render commands into back buffer */
   for (int32_t j = 0; j < cmds.length; j++) {
@@ -650,6 +770,14 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
     default:
       break;
     }
+  }
+
+  /* junction resolution: write correct Unicode glyph for each accumulated cell */
+  for (int j = 0; j < ct->w * ct->h; j++) {
+    uint16_t bits = ct->junctions[j];
+    if (!bits) continue;
+    uint32_t ch = junction_chars[bits & 0x1ff];
+    if (ch) ct->back[j].ch = ch;
   }
 
   if (mode == 1) {

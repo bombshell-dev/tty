@@ -160,6 +160,33 @@ describe("term", () => {
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛`.trim());
   });
 
+  it("renders T-junction where inner separator meets outer border (single)", () => {
+    let out = print(
+      decode(
+        term.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ltr" },
+            border: { color: rgba(255, 255, 255), left: 1, right: 1, top: 1, bottom: 1 },
+          }),
+          open("left", {
+            layout: { width: fixed(10), height: grow() },
+            border: { color: rgba(255, 255, 255), right: 1 },
+          }),
+          close(),
+          open("right", { layout: { width: grow(), height: grow() } }),
+          close(),
+          close(),
+        ]).output,
+      ),
+      40,
+      10,
+    );
+
+    expect(out).toContain("┬");
+    expect(out).toContain("┴");
+    expect(out).toMatch(/^┌─+┬/m);
+  });
+
   describe("line mode", () => {
     let box = (msg: string) => [
       open("root", {
