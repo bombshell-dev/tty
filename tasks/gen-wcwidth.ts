@@ -1,32 +1,16 @@
 // gen-wcwidth.ts — generate src/wcwidth.c from Unicode 16.0 data
 // Usage: deno task gen-wcwidth
 //
-// wcwidth = "wide character width", a POSIX standard function.
-// This script fetches three Unicode data files and emits a compact C
-// implementation with two lookup strategies:
-//
-//   "packed" ranges  — uint32_t where bits 31–8 = start codepoint,
-//                      bits 7–0 = count (max 255).  Used for combining
-//                      marks and small wide ranges.
-//
-//   "large" ranges   — separate uint32_t starts[] + uint16_t counts[]
-//                      for the handful of CJK/Hangul blocks whose range
-//                      spans more than 255 codepoints.
+// Packed encoding (*_small_ranges): each uint32_t packs start codepoint in
+// bits 31–8 and count in bits 7–0. Large ranges (count > 255) use separate
+// starts[] + counts[] arrays.
 
 const UNICODE_BASE = "https://www.unicode.org/Public/16.0.0/ucd";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface Interval {
   start: number;
   end: number; // inclusive
 }
-
-// ---------------------------------------------------------------------------
-// Fetch
-// ---------------------------------------------------------------------------
 
 async function fetchText(path: string): Promise<string> {
   const url = `${UNICODE_BASE}/${path}`;
@@ -38,10 +22,6 @@ async function fetchText(path: string): Promise<string> {
   return response.text();
 }
 
-// ---------------------------------------------------------------------------
-// Parse
-// ---------------------------------------------------------------------------
-
 function parseCodepointRange(token: string): Interval {
   if (token.includes("..")) {
     const [lo, hi] = token.split("..").map((s) => parseInt(s, 16));
@@ -51,7 +31,10 @@ function parseCodepointRange(token: string): Interval {
   return { start: cp, end: cp };
 }
 
-// extracted/DerivedGeneralCategory.txt  →  "XXXX..YYYY ; Category # …"
+/**
+ * Parses `extracted/DerivedGeneralCategory.txt` lines of the form
+ * `XXXX..YYYY ; Category # …` and returns intervals matching `category`.
+ */
 function parseGeneralCategory(text: string, category: string): Interval[] {
   const intervals: Interval[] = [];
   for (const line of text.split("\n")) {
@@ -64,7 +47,10 @@ function parseGeneralCategory(text: string, category: string): Interval[] {
   return intervals;
 }
 
-// DerivedCoreProperties.txt  →  "XXXX ; Property_Name # …"
+/**
+ * Parses `DerivedCoreProperties.txt` lines of the form
+ * `XXXX ; Property_Name # …` and returns intervals matching `property`.
+ */
 function parseDerivedProperty(text: string, property: string): Interval[] {
   const intervals: Interval[] = [];
   for (const line of text.split("\n")) {
@@ -77,7 +63,10 @@ function parseDerivedProperty(text: string, property: string): Interval[] {
   return intervals;
 }
 
-// EastAsianWidth.txt  →  "XXXX ; W|F # …"  (W = Wide, F = Fullwidth)
+/**
+ * Parses `EastAsianWidth.txt` lines of the form `XXXX ; W|F # …`
+ * and returns intervals for Wide (W) and Fullwidth (F) codepoints.
+ */
 function parseWideEastAsian(text: string): Interval[] {
   const intervals: Interval[] = [];
   for (const line of text.split("\n")) {
@@ -89,10 +78,6 @@ function parseWideEastAsian(text: string): Interval[] {
   }
   return intervals;
 }
-
-// ---------------------------------------------------------------------------
-// Range helpers
-// ---------------------------------------------------------------------------
 
 function mergeIntervals(intervals: Interval[]): Interval[] {
   if (intervals.length === 0) return [];
@@ -117,16 +102,16 @@ function assertNoAdjacentRanges(intervals: Interval[], label: string): void {
     if (current.start <= previous.end + 1) {
       throw new Error(
         `${label}: adjacent ranges at index ${index}: ` +
-          `[0x${previous.start.toString(16)}, 0x${previous.end.toString(16)}] ` +
-          `and [0x${current.start.toString(16)}, 0x${current.end.toString(16)}]`,
+          `[0x${previous.start.toString(16)}, 0x${
+            previous.end.toString(16)
+          }] ` +
+          `and [0x${current.start.toString(16)}, 0x${
+            current.end.toString(16)
+          }]`,
       );
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// C emit helpers
-// ---------------------------------------------------------------------------
 
 function formatUint32Hex(value: number): string {
   return `0x${(value >>> 0).toString(16).padStart(8, "0")}`;
@@ -154,18 +139,12 @@ function formatUint16Array(values: number[], indent = "  "): string {
   return lines.join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
 const [derivedCategoryText, derivedCorePropsText, eastAsianWidthText] =
   await Promise.all([
     fetchText("extracted/DerivedGeneralCategory.txt"),
     fetchText("DerivedCoreProperties.txt"),
     fetchText("EastAsianWidth.txt"),
   ]);
-
-// --- Collect width-0 intervals ---
 
 const nonspacingMarks = parseGeneralCategory(derivedCategoryText, "Mn");
 const enclosingMarks = parseGeneralCategory(derivedCategoryText, "Me");
@@ -174,9 +153,7 @@ const defaultIgnorables = parseDerivedProperty(
   "Default_Ignorable_Code_Point",
 );
 
-// Merge all zero-width sources, then strip anything in the fast-path range
-// (0x00–0xFF). Those codepoints are handled by hard-coded checks in wcwidth()
-// so there is no point carrying them in the lookup table.
+// 0x00–0xFF is handled by fast-path checks in wcwidth(), so strip it from the table.
 const allZeroWidth = mergeIntervals([
   ...nonspacingMarks,
   ...enclosingMarks,
@@ -185,16 +162,15 @@ const allZeroWidth = mergeIntervals([
 const combiningIntervals = mergeIntervals(
   allZeroWidth
     .filter((interval) => interval.end > 0xff)
-    .map((interval) => ({ start: Math.max(interval.start, 0x100), end: interval.end })),
+    .map((interval) => ({
+      start: Math.max(interval.start, 0x100),
+      end: interval.end,
+    })),
 );
 assertNoAdjacentRanges(combiningIntervals, "combining");
 
-// --- Collect width-2 intervals ---
-
 const wideIntervals = mergeIntervals(parseWideEastAsian(eastAsianWidthText));
 assertNoAdjacentRanges(wideIntervals, "wide");
-
-// --- Convert intervals to (start, count) pairs ---
 
 const combiningRanges = combiningIntervals.map((interval) => ({
   start: interval.start,
@@ -206,28 +182,27 @@ const wideRanges = wideIntervals.map((interval) => ({
   count: interval.end - interval.start,
 }));
 
-// --- Assert 24-bit start constraint (hard limit: Unicode fits in 21 bits) ---
-
 for (const range of [...combiningRanges, ...wideRanges]) {
   if (range.start > 0xffffff) {
     throw new Error(
-      `Range start 0x${range.start.toString(16)} exceeds 24 bits — packed encoding broken`,
+      `Range start 0x${
+        range.start.toString(16)
+      } exceeds 24 bits — packed encoding broken`,
     );
   }
 }
 
-// --- Split both combining and wide ranges into small (count ≤ 255) / large ---
-//
 // Unicode 16.0's DerivedCoreProperties.txt includes E0000..E0FFF as a single
 // Default_Ignorable block (count = 4095), so combining ranges also need the
 // small/large split — not just wide ranges.
-
-const combiningSmallRanges = combiningRanges.filter((range) => range.count <= 255);
-const combiningLargeRanges = combiningRanges.filter((range) => range.count > 255);
+const combiningSmallRanges = combiningRanges.filter((range) =>
+  range.count <= 255
+);
+const combiningLargeRanges = combiningRanges.filter((range) =>
+  range.count > 255
+);
 const wideSmallRanges = wideRanges.filter((range) => range.count <= 255);
 const wideLargeRanges = wideRanges.filter((range) => range.count > 255);
-
-// --- Pack small entries: (start << 8) | count ---
 
 const combiningSmallPacked = combiningSmallRanges.map(
   (range) => (range.start << 8) | range.count,
@@ -240,23 +215,22 @@ const combiningLargeCounts = combiningLargeRanges.map((range) => range.count);
 const wideLargeStarts = wideLargeRanges.map((range) => range.start);
 const wideLargeCounts = wideLargeRanges.map((range) => range.count);
 
-// --- Verify sort invariants (packed arrays must be strictly increasing) ---
-
 for (let index = 1; index < combiningSmallPacked.length; index++) {
   if (combiningSmallPacked[index] <= combiningSmallPacked[index - 1]) {
-    throw new Error(`combining_small_ranges not strictly increasing at index ${index}`);
+    throw new Error(
+      `combining_small_ranges not strictly increasing at index ${index}`,
+    );
   }
 }
 for (let index = 1; index < wideSmallPacked.length; index++) {
   if (wideSmallPacked[index] <= wideSmallPacked[index - 1]) {
-    throw new Error(`wide_small_ranges not strictly increasing at index ${index}`);
+    throw new Error(
+      `wide_small_ranges not strictly increasing at index ${index}`,
+    );
   }
 }
 
-// --- Report ---
-
-const tableBytes =
-  combiningSmallPacked.length * 4 +
+const tableBytes = combiningSmallPacked.length * 4 +
   combiningLargeStarts.length * 4 +
   combiningLargeCounts.length * 2 +
   wideSmallPacked.length * 4 +
@@ -268,8 +242,6 @@ console.error(`combining_large_ranges: ${combiningLargeRanges.length} entries`);
 console.error(`wide_small_ranges:      ${wideSmallPacked.length} entries`);
 console.error(`wide_large_ranges:      ${wideLargeRanges.length} entries`);
 console.error(`Table data:             ${tableBytes} bytes`);
-
-// --- Emit src/wcwidth.c ---
 
 const date = new Date().toISOString().slice(0, 10);
 
