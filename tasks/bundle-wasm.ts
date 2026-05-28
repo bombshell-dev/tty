@@ -12,8 +12,7 @@ function encodeZ85(data: Uint8Array): string {
   }
   let out: string[] = [];
   for (let i = 0; i < src.length; i += 4) {
-    let v =
-      src[i] * 16777216 +
+    let v = src[i] * 16777216 +
       src[i + 1] * 65536 +
       src[i + 2] * 256 +
       src[i + 3];
