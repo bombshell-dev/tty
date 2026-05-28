@@ -8,7 +8,10 @@
  *   4. Commit — restore cursor past region, advance with \n
  */
 
-import { main, type Operation, sleep, until } from "effection";
+import { Buffer } from "node:buffer";
+import { readSync } from "node:fs";
+import process from "node:process";
+import { ensure, main, type Operation, sleep, until } from "effection";
 import {
   close,
   createInput,
@@ -28,8 +31,23 @@ import {
 import { cursor, settings } from "../../settings.ts";
 import { validated } from "../../validate.ts";
 
+function terminalSize(): { columns: number; rows: number } {
+  return process.stdout.isTTY
+    ? {
+      columns: process.stdout.columns ?? 80,
+      rows: process.stdout.rows ?? 24,
+    }
+    : { columns: 80, rows: 24 };
+}
+
+function setRawMode(enabled: boolean): void {
+  if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+    process.stdin.setRawMode(enabled);
+  }
+}
+
 const encode = (s: string) => new TextEncoder().encode(s);
-const write = (b: Uint8Array) => Deno.stdout.writeSync(b);
+const write = (b: Uint8Array) => process.stdout.write(Buffer.from(b));
 
 const GREEN = rgba(80, 250, 123);
 const GRAY = rgba(100, 100, 100);
@@ -49,10 +67,10 @@ function* queryCursor(): Operation<CursorEvent> {
   let parser = yield* until(createInput({ escLatency: 100 }));
   write(DSR());
 
-  let buf = new Uint8Array(32);
+  let buf = Buffer.allocUnsafe(32);
   while (true) {
-    let n = Deno.stdin.readSync(buf);
-    if (n === null) continue;
+    let n = readSync(process.stdin.fd, buf, 0, buf.length, null);
+    if (n === 0) continue;
     let result = parser.scan(buf.subarray(0, n));
     for (let ev of result.events) {
       if (ev.type === "cursor") {
@@ -62,16 +80,16 @@ function* queryCursor(): Operation<CursorEvent> {
   }
 }
 
-function waitKey() {
-  let buf = new Uint8Array(32);
+function waitKey(): void {
+  let buf = Buffer.allocUnsafe(32);
   while (true) {
-    let n = Deno.stdin.readSync(buf);
-    if (n === null) continue;
+    let n = readSync(process.stdin.fd, buf, 0, buf.length, null);
+    if (n === 0) continue;
     for (let i = 0; i < n; i++) {
       if (buf[i] === 0x03) {
-        Deno.stdin.setRaw(false);
+        setRawMode(false);
         write(SHOWCURSOR());
-        Deno.exit(0);
+        process.exit(0);
       }
     }
     return;
@@ -112,7 +130,7 @@ function* transaction(
   frames: number,
   interval: number,
 ): Operation<void> {
-  let { columns } = Deno.consoleSize();
+  let { columns } = terminalSize();
 
   write(encode("\n".repeat(height)));
 
@@ -142,16 +160,22 @@ function say(msg: string) {
   write(encode(msg + "\n"));
 }
 
-function pause() {
+function pause(): void {
   waitKey();
   write(encode("\n"));
 }
 
 await main(function* () {
-  let { columns } = Deno.consoleSize();
-  Deno.stdin.setRaw(true);
+  let { columns } = terminalSize();
+  setRawMode(true);
   let tty = settings(cursor(false));
   write(tty.apply);
+
+  yield* ensure(() => {
+    setRawMode(false);
+    write(CSI("0m"));
+    write(tty.revert);
+  });
 
   // Introduction
   say("Clayterm can render entire scenes, but it can also render");
@@ -338,6 +362,4 @@ await main(function* () {
 
   write(CSI("0m"));
   write(encode("\n"));
-  write(tty.revert);
-  Deno.stdin.setRaw(false);
 });

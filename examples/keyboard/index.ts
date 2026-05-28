@@ -1,4 +1,6 @@
 // deno-lint-ignore-file no-fallthrough
+import { Buffer } from "node:buffer";
+import process from "node:process";
 import {
   createChannel,
   each,
@@ -32,6 +34,54 @@ import {
 } from "../../settings.ts";
 import { useInput } from "./use-input.ts";
 import { useStdin } from "./use-stdin.ts";
+
+function terminalSize(): { columns: number; rows: number } {
+  return process.stdout.isTTY
+    ? {
+      columns: process.stdout.columns ?? 80,
+      rows: process.stdout.rows ?? 24,
+    }
+    : { columns: 80, rows: 24 };
+}
+
+function setRawMode(enabled: boolean): void {
+  if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+    process.stdin.setRawMode(enabled);
+  }
+}
+
+function writeStdout(bytes: Uint8Array): void {
+  process.stdout.write(Buffer.from(bytes));
+}
+
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function equalSetting(a: Setting, b: Setting): boolean {
+  return equalBytes(a.apply, b.apply) && equalBytes(a.revert, b.revert);
+}
+
+// Avoid rewriting terminal input modes on every mousemove. Deno's `node:` TTY
+// compatibility layer on Windows is sensitive to that churn even when the
+// effective settings are unchanged.
+function updateFlagsIfChanged(current: Setting, next: Setting): Setting {
+  if (equalSetting(current, next)) {
+    return current;
+  }
+
+  writeStdout(current.revert);
+  writeStdout(next.apply);
+  return next;
+}
 
 const active = rgba(60, 120, 220);
 const inactive = rgba(50, 50, 60);
@@ -563,11 +613,9 @@ function ttyFlags(ctx: AppContext): Setting {
 }
 
 await main(function* () {
-  let { columns, rows } = Deno.stdout.isTerminal()
-    ? Deno.consoleSize()
-    : { columns: 80, rows: 24 };
+  let { columns, rows } = terminalSize();
 
-  Deno.stdin.setRaw(true);
+  setRawMode(true);
 
   let stdin = yield* useStdin();
   let input = useInput(stdin);
@@ -575,22 +623,23 @@ await main(function* () {
   let term = yield* until(createTerm({ width: columns, height: rows }));
 
   let tty = settings(alternateBuffer(), cursor(false));
-  Deno.stdout.writeSync(tty.apply);
+  writeStdout(tty.apply);
 
   let modality = recognizer();
   let context = modality.next().value;
 
   let flags = ttyFlags(context);
-  Deno.stdout.writeSync(flags.apply);
+  writeStdout(flags.apply);
 
   yield* ensure(() => {
-    Deno.stdout.writeSync(flags.revert);
-    Deno.stdout.writeSync(tty.revert);
+    setRawMode(false);
+    writeStdout(flags.revert);
+    writeStdout(tty.revert);
   });
 
   let { output } = term.render(keyboard(context));
 
-  Deno.stdout.writeSync(output);
+  writeStdout(output);
 
   let pointer = {
     events: createChannel<PointerEvent, void>(),
@@ -616,9 +665,7 @@ await main(function* () {
       context = { ...context, logged: prev };
     }
 
-    Deno.stdout.writeSync(flags.revert);
-    flags = ttyFlags(context);
-    Deno.stdout.writeSync(flags.apply);
+    flags = updateFlagsIfChanged(flags, ttyFlags(context));
 
     if (context["Capture mouse events"]) {
       if ("x" in event) {
@@ -640,7 +687,7 @@ await main(function* () {
       yield* pointer.events.send(event);
     }
 
-    Deno.stdout.writeSync(output);
+    writeStdout(output);
 
     yield* each.next();
   }

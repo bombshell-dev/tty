@@ -6,7 +6,8 @@ with information about your terminal, shell, operating system and any other
 information that could be pertinent to reproducing the issue.
 
 > [!NOTE]
-> Run the commands in this document from the repository root.
+> Run the commands in this document from the repository root. These examples use
+> `node:` terminal APIs so the same files can be run with either Deno or Node.
 
 ## Prerequisites
 
@@ -24,6 +25,8 @@ Run it with:
 
 ```sh
 deno run examples/keyboard/index.ts
+# or
+node examples/keyboard/index.ts
 ```
 
 What it shows:
@@ -48,6 +51,8 @@ Run it with:
 
 ```sh
 deno run examples/inline-regions/index.ts
+# or
+node examples/inline-regions/index.ts
 ```
 
 What it shows:
