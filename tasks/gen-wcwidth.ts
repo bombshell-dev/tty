@@ -412,5 +412,14 @@ int wcwidth(uint32_t codepoint) {
 int iswprint(uint32_t codepoint) { return wcwidth(codepoint) >= 0; }
 `;
 
-await Deno.writeTextFile("src/wcwidth.c", output);
-console.error("Wrote src/wcwidth.c");
+if (Deno.args.includes("--check")) {
+  const existing = await Deno.readTextFile("src/wcwidth.c");
+  if (existing !== output) {
+    console.error("src/wcwidth.c is out of date — run: deno task gen-wcwidth");
+    Deno.exit(1);
+  }
+  console.error("src/wcwidth.c is up to date");
+} else {
+  await Deno.writeTextFile("src/wcwidth.c", output);
+  console.error("Wrote src/wcwidth.c");
+}
