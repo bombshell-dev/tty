@@ -131,8 +131,12 @@ function assertNoAdjacentRanges(intervals: Interval[], label: string): void {
     if (current.start <= previous.end + 1) {
       throw new Error(
         `${label}: adjacent ranges at index ${index}: ` +
-          `[0x${previous.start.toString(16)}, 0x${previous.end.toString(16)}] ` +
-          `and [0x${current.start.toString(16)}, 0x${current.end.toString(16)}]`,
+          `[0x${previous.start.toString(16)}, 0x${
+            previous.end.toString(16)
+          }] ` +
+          `and [0x${current.start.toString(16)}, 0x${
+            current.end.toString(16)
+          }]`,
       );
     }
   }
@@ -240,7 +244,9 @@ const allRanges = allSpecialIntervals.map((i) => ({
 for (const range of allRanges) {
   if (range.start > 0x1fffff) {
     throw new Error(
-      `Range start 0x${range.start.toString(16)} exceeds 21 bits — packed encoding broken`,
+      `Range start 0x${
+        range.start.toString(16)
+      } exceeds 21 bits — packed encoding broken`,
     );
   }
 }
@@ -253,7 +259,8 @@ const smallRanges = allRanges.filter((range) => range.count <= 1023);
 const largeRanges = allRanges.filter((range) => range.count > 1023);
 
 const smallPacked = smallRanges.map(
-  (range) => (range.start << 11) | (range.count << 1) | (range.width === 2 ? 1 : 0),
+  (range) =>
+    (range.start << 11) | (range.count << 1) | (range.width === 2 ? 1 : 0),
 );
 
 for (let index = 1; index < smallPacked.length; index++) {
@@ -277,17 +284,19 @@ for (const range of allRanges) {
   const startBlock = range.start >> 7;
   const endBlock = endCp >> 7;
   for (let block = startBlock; block <= endBlock; block++) {
-    bmpFilter[block >> 5] |= (1 << (block & 31));
+    bmpFilter[block >> 5] |= 1 << (block & 31);
   }
 }
 let dirtyBlocks = 0;
 for (const w of bmpFilter) {
   let x = w;
-  while (x) { x &= x - 1; dirtyBlocks++; }
+  while (x) {
+    x &= x - 1;
+    dirtyBlocks++;
+  }
 }
 
-const tableBytes =
-  16 * 4 + // bmp_filter
+const tableBytes = 16 * 4 + // bmp_filter
   smallPacked.length * 4 +
   largeStarts.length * 4 +
   largeCounts.length * 2 +
