@@ -50,7 +50,39 @@ jobs:
         with:
           mode: simulation
           # IMPORTANT! deno task bench fails in CI due to incompatible V8 bindings
-          run: |
-            node bench/mod.ts
-            node bench/startup/createTerm.bench.ts
-            node bench/startup/ttfr.bench.ts
+          run: node bench/mod.ts
+
+  startup-process-benchmarks:
+    name: Run process startup benchmarks
+    runs-on: codspeed-macro
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build WASM
+        run: make
+
+      - name: Install dependencies
+        run: deno install
+
+      - name: Run process startup benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: walltime
+          run: node bench/startup.bench.ts
