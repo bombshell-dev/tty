@@ -17,7 +17,6 @@
     "effection": "npm:effection@^4.0.2",
     "@std/encoding": "jsr:@std/encoding@1",
     "@codspeed/tinybench-plugin": "npm:@codspeed/tinybench-plugin@^5.4.0",
-    "@codspeed/core": "npm:@codspeed/core@^5.4.0",
     "tinybench": "npm:tinybench@^5.0.0"
   },
   "exports": {
