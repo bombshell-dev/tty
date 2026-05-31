@@ -21,7 +21,7 @@ computation.
 will run anywhere JavaScript runs with no native dependencies, and no build step
 for consumers.
 
-### Demo
+### Examples
 
 The application in this demo uses Clayterm for all layout and input parsing
 
@@ -30,14 +30,14 @@ The application in this demo uses Clayterm for all layout and input parsing
 The input parser decodes raw terminal bytes into structured events. Here you can
 see each key event as the string "hello world" is typed.
 
-![Keyboard events demo](demo/keyboard-key-events.gif)
+![Keyboard events demo](examples/keyboard/keyboard-key-events.gif)
 
 #### Pointer Events
 
 Here we see hover styles applied to UI elements in response to the pointer
 state. Clay drives the hit testing; no manual coordinate math required.
 
-![Pointer events demo](demo/keyboard-pointer-events.gif)
+![Pointer events demo](examples/keyboard/keyboard-pointer-events.gif)
 
 ## Architecture
 
@@ -149,25 +149,28 @@ Pass pointer state to `render()` to have clayterm do hit detection and return
 pointer events in addition to the byte sequence.
 
 ```typescript
-let { output, events } = term.render([
-  open("root", {
-    layout: { width: grow(), height: grow(), direction: "ltr" },
-  }),
-  open("sidebar", {
-    layout: { width: fixed(20), height: grow() },
-    bg: rgba(30, 30, 40),
-  }),
-  text("Sidebar"),
-  close(),
-  open("main", {
-    layout: { width: grow(), height: grow() },
-  }),
-  text("Main content"),
-  close(),
-  close(),
-], {
-  pointer: { x: mouseX, y: mouseY, down: mouseDown },
-});
+let { output, events } = term.render(
+  [
+    open("root", {
+      layout: { width: grow(), height: grow(), direction: "ltr" },
+    }),
+    open("sidebar", {
+      layout: { width: fixed(20), height: grow() },
+      bg: rgba(30, 30, 40),
+    }),
+    text("Sidebar"),
+    close(),
+    open("main", {
+      layout: { width: grow(), height: grow() },
+    }),
+    text("Main content"),
+    close(),
+    close(),
+  ],
+  {
+    pointer: { x: mouseX, y: mouseY, down: mouseDown },
+  },
+);
 
 for (let event of events) {
   // { type: "pointerenter", id: "sidebar" }
@@ -212,16 +215,12 @@ process.stdin.on("data", (buf) => {
 
 ## Development
 
-Requires `clang` with wasm32 target support.
+For local source builds, toolchain setup, and `clay` submodule instructions, see
+[BUILD.md](BUILD.md).
 
-First build the `.wasm`
+Quick local validation:
 
 ```sh
 make
-```
-
-run tests
-
-```sh
 deno task test
 ```

@@ -104,6 +104,28 @@ describe("validate", () => {
     ])).toBe(true);
   });
 
+  it("accepts signed floating z-index values", () => {
+    expect(validate([
+      open("x", { floating: { zIndex: -1 } }),
+      close(),
+    ])).toBe(true);
+    expect(validate([
+      open("x", { floating: { zIndex: 32767 } }),
+      close(),
+    ])).toBe(true);
+  });
+
+  it("rejects floating z-index values outside signed 16-bit range", () => {
+    expect(validate([
+      open("x", { floating: { zIndex: -32769 } }),
+      close(),
+    ])).toBe(false);
+    expect(validate([
+      open("x", { floating: { zIndex: 32768 } }),
+      close(),
+    ])).toBe(false);
+  });
+
   it("rejects numeric floating enum values", () => {
     expect(validate([
       // deno-lint-ignore no-explicit-any

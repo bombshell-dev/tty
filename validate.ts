@@ -7,6 +7,7 @@ import type { RenderOptions, RenderResult, Term } from "./term.ts";
 
 const u8 = Type.Integer({ minimum: 0, maximum: 255 });
 const u16 = Type.Integer({ minimum: 0, maximum: 65535 });
+const i16 = Type.Integer({ minimum: -32768, maximum: 32767 });
 
 /* RGBA color packed as (a << 24 | r << 16 | g << 8 | b). When alpha >= 128,
  * bit 31 is set and JavaScript interprets the value as a negative int32.
@@ -124,7 +125,7 @@ const Floating = Type.Object({
   })),
   pointerCaptureMode: Type.Optional(PointerCaptureMode),
   clipTo: Type.Optional(ClipTo),
-  zIndex: Type.Optional(u16),
+  zIndex: Type.Optional(i16),
 });
 
 /* ── Op types (discriminated on `directive`) ──────────────────────── */

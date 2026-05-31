@@ -24,9 +24,9 @@ import {
   rgba,
   SHOWCURSOR,
   text,
-} from "../mod.ts";
-import { cursor, settings } from "../settings.ts";
-import { validated } from "../validate.ts";
+} from "../../mod.ts";
+import { cursor, settings } from "../../settings.ts";
+import { validated } from "../../validate.ts";
 
 const encode = (s: string) => new TextEncoder().encode(s);
 const write = (b: Uint8Array) => Deno.stdout.writeSync(b);
