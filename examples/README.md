@@ -72,7 +72,8 @@ node examples/inline-regions/index.ts
 What it shows:
 
 - rendering animated regions into normal terminal scrollback
-- querying cursor position with Device Status Report (DSR) to place later frames correctly
+- querying cursor position with Device Status Report (DSR) to place later frames
+  correctly
 - updating a previously allocated region without taking over the whole screen
 - small animated demos including a spinner, a progress bar, and a nyan-cat-style
   sequence
