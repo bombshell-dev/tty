@@ -11,7 +11,7 @@ import {
   suspend,
   until,
 } from "effection";
-import { createInput, type InputEvent, type InputOptions } from "../mod.ts";
+import { createInput, type InputEvent, type InputOptions } from "../../mod.ts";
 
 function nothing() {
   return suspend() as unknown as Operation<

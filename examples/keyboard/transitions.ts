@@ -28,8 +28,8 @@ import {
   percent,
   rgba,
   text,
-} from "../mod.ts";
-import { alternateBuffer, cursor, settings } from "../settings.ts";
+} from "../../mod.ts";
+import { alternateBuffer, cursor, settings } from "../../settings.ts";
 import { useInput } from "./use-input.ts";
 import { useStdin } from "./use-stdin.ts";
 

@@ -21,7 +21,7 @@ import {
   type PointerEvent,
   rgba,
   text,
-} from "../mod.ts";
+} from "../../mod.ts";
 import {
   alternateBuffer,
   cursor,
@@ -29,7 +29,7 @@ import {
   progressiveInput,
   type Setting,
   settings,
-} from "../settings.ts";
+} from "../../settings.ts";
 import { useInput } from "./use-input.ts";
 import { useStdin } from "./use-stdin.ts";
 

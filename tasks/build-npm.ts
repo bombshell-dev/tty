@@ -20,9 +20,8 @@ await build({
   typeCheck: false,
   compilerOptions: {
     lib: ["ESNext"],
-    target: "ES2020",
-    sourceMap: true,
   },
+  skipSourceOutput: true,
   package: {
     name: "clayterm",
     version,
@@ -31,15 +30,16 @@ await build({
     license: "MIT",
     repository: {
       type: "git",
-      url: "git+https://github.com/thefrontside/clayterm.git",
+      url: "git+https://github.com/bombshell-dev/clayterm.git",
     },
     bugs: {
-      url: "https://github.com/thefrontside/clayterm/issues",
+      url: "https://github.com/bombshell-dev/clayterm/issues",
     },
     engines: {
-      node: ">= 16",
+      node: ">= 22",
     },
     sideEffects: false,
+    type: "module",
   },
 });
 
