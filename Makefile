@@ -21,6 +21,7 @@ EXPORTS = \
   -Wl,--export=pointer_over_id_string_length \
   -Wl,--export=pointer_over_id_string_ptr \
   -Wl,--export=get_element_bounds \
+  -Wl,--export=animating \
   -Wl,--export=error_count \
   -Wl,--export=error_type \
   -Wl,--export=error_message_length \
