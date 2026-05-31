@@ -3,7 +3,7 @@
  *
  * Shows the region lifecycle:
  *   1. Allocate space with raw newlines
- *   2. DSR — queries cursor position to compute `top`
+ *   2. Device Status Report (DSR) — queries cursor position to compute `top`
  *   3. CUP mode (all frames) — renders at `top`
  *   4. Commit — restore cursor past region, advance with \n
  */

@@ -43,6 +43,20 @@ Related files:
   events
 - `examples/keyboard/use-stdin.ts` adapts stdin into a byte stream for the demo
 
+#### Keyboard Events
+
+The input parser decodes raw terminal bytes into structured events. Here you can
+see each key event as the string "hello world" is typed.
+
+![Keyboard events demo](keyboard/keyboard-key-events.gif)
+
+#### Pointer Events
+
+Here we see hover styles applied to UI elements in response to the pointer
+state. Clay drives the hit testing; no manual coordinate math required.
+
+![Pointer events demo](keyboard/keyboard-pointer-events.gif)
+
 ## Inline Regions
 
 Path: `examples/inline-regions/index.ts`
@@ -58,7 +72,7 @@ node examples/inline-regions/index.ts
 What it shows:
 
 - rendering animated regions into normal terminal scrollback
-- querying cursor position with DSR to place later frames correctly
+- querying cursor position with Device Status Report (DSR) to place later frames correctly
 - updating a previously allocated region without taking over the whole screen
 - small animated demos including a spinner, a progress bar, and a nyan-cat-style
   sequence
