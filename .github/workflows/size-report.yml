@@ -81,10 +81,9 @@ jobs:
             const fmtDelta = (n) =>
               n === 0 ? '±0 KB' : `${n > 0 ? '+' : ''}${(n / 1024).toFixed(1)} KB`;
 
-            const takeaway =
-              deltaGzip < 0 ? 'Size Reduced' :
-              deltaGzip > 0 ? 'Size Increased' :
-              'No Change to Size';
+            if (deltaGzip === 0 && deltaRaw === 0) return;
+
+            const takeaway = deltaGzip < 0 ? 'Size Reduced' : 'Size Increased';
 
             const body = [
               '<!-- size-report -->',
