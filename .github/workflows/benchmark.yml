@@ -5,8 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # `workflow_dispatch` allows CodSpeed to trigger backtest
-  # performance analysis in order to generate initial data.
+  # `workflow_dispatch` allows CodSpeed to trigger
   workflow_dispatch:
 
 permissions: {}
@@ -67,7 +66,7 @@ jobs:
   simulation:
     name: Run benchmarks (simulation)
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: codspeed-macro
     permissions:
       contents: read # clone repo
       id-token: write # upload benchmark results to codspeed
