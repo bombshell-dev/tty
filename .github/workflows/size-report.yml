@@ -67,21 +67,17 @@ jobs:
             const head = JSON.parse(fs.readFileSync('/tmp/head-sizes.json', 'utf8'));
             const base = JSON.parse(fs.readFileSync('/tmp/base-sizes.json', 'utf8'));
 
-            const total = (arr) => arr.reduce(
-              (acc, f) => ({ raw: acc.raw + f.raw, gzip: acc.gzip + f.gzip }),
-              { raw: 0, gzip: 0 }
-            );
+            const total = (arr) => arr.reduce((acc, f) => acc + f.size, 0);
             const headTotal = total(head);
             const baseTotal = total(base);
 
-            const deltaRaw = headTotal.raw - baseTotal.raw;
-            const deltaGzip = headTotal.gzip - baseTotal.gzip;
+            const delta = headTotal - baseTotal;
 
             const fmt = (n) => `${(n / 1024).toFixed(1)} KB`;
             const fmtDelta = (n) =>
-              n === 0 ? '±0 KB' : `${n > 0 ? '+' : ''}${(n / 1024).toFixed(1)} KB`;
+              `${n > 0 ? '+' : ''}${(n / 1024).toFixed(1)} KB`;
 
-            if (deltaGzip === 0 && deltaRaw === 0) return;
+            if (delta === 0) return;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -93,21 +89,18 @@ jobs:
 
             // Skip if the head sizes haven't changed since the last push
             if (existing) {
-              const match = existing.body.match(/<!-- sizes:(.*?) -->/);
-              if (match) {
-                const prev = JSON.parse(match[1]);
-                if (prev.raw === headTotal.raw && prev.gzip === headTotal.gzip) return;
-              }
+              const match = existing.body.match(/<!-- sizes:(\d+) -->/);
+              if (match && Number(match[1]) === headTotal) return;
             }
 
-            const takeaway = deltaGzip < 0 ? 'Size Reduced' : 'Size Increased';
+            const takeaway = delta < 0 ? 'Size Reduced' : 'Size Increased';
 
             const body = [
               '<!-- size-report -->',
-              `<!-- sizes:${JSON.stringify(headTotal)} -->`,
-              `**${takeaway}** — ${fmtDelta(deltaGzip)} gz, ${fmtDelta(deltaRaw)} raw`,
+              `<!-- sizes:${headTotal} -->`,
+              `**${takeaway}** — ${fmtDelta(delta)}`,
               '',
-              `${fmt(headTotal.gzip)} gz (${fmt(headTotal.raw)} raw)`,
+              `${fmt(headTotal)} unpacked`,
             ].join('\n');
 
             if (existing) {
