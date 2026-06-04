@@ -7,6 +7,11 @@
 //
 // BMP coarse filter: a 64-byte bitmap (1 bit per 128-codepoint block) gates
 // the binary search. Clean blocks return width 1 without touching the table.
+//
+// Lookup order in wcwidth(): ASCII/Latin-1 fast paths, then a noncharacter
+// guard, then codepoint_in_special() which checks (1) a TUI box-drawing fast
+// lane, (2) the large contiguous blocks (CJK/Hangul/SIP/tags), (3) the BMP
+// coarse filter, (4) the packed small-range binary search.
 
 let UNICODE_BASE = "https://www.unicode.org/Public/16.0.0/ucd";
 
@@ -331,6 +336,29 @@ for (const w of bmpFilter) {
   }
 }
 
+// TUI box-drawing fast lane: the width-1-only prefix of the box-drawing region.
+// U+2500..BOX_DRAWING_END (box drawing, block elements, shading, geometric
+// shapes) are all width 1, so wcwidth() shortcuts that whole region with one
+// range check. The bound is the codepoint just before the first special
+// codepoint at/after U+2500 (emoji U+25FD in Unicode 16.0). The assertion makes
+// a future revision that widens a glyph in this region fail the build rather
+// than silently mis-measure TUI borders.
+let firstSpecialAt2500 = Infinity;
+for (const r of allRanges) {
+  let hi = r.start + r.count;
+  if (hi < 0x2500) continue;
+  let c = Math.max(r.start, 0x2500);
+  if (c <= hi && c < firstSpecialAt2500) firstSpecialAt2500 = c;
+}
+const boxDrawingEnd = firstSpecialAt2500 - 1;
+if (boxDrawingEnd < 0x259f) {
+  throw new Error(
+    `box fast lane too short: ends at U+${
+      boxDrawingEnd.toString(16)
+    } (expected >= U+259F)`,
+  );
+}
+
 let tableBytes = 16 * 4 + // bmp_filter
   smallPacked.length * 4 +
   largeStarts.length * 4 +
@@ -340,6 +368,9 @@ let tableBytes = 16 * 4 + // bmp_filter
 console.error(`special_small_ranges: ${smallPacked.length} entries`);
 console.error(`special_large_ranges: ${largeRanges.length} entries`);
 console.error(`BMP dirty blocks:     ${dirtyBlocks} / 512`);
+console.error(
+  `Box fast lane:        U+2500..U+${boxDrawingEnd.toString(16).toUpperCase()}`,
+);
 console.error(`Table data:           ${tableBytes} bytes`);
 
 // Fingerprint the generated tables (not the source text or comments) so the
@@ -396,6 +427,14 @@ let output = `\
  *
  * Large-range encoding (special_large_* parallel arrays):
  *   Used for ranges whose span exceeds 1023 codepoints.
+ *
+ * TUI box-drawing fast lane (BOX_DRAWING_END):
+ *   U+2500..BOX_DRAWING_END (box drawing, block elements, shading, geometric
+ *   shapes) are all width 1, so wcwidth() returns 1 for them without searching.
+ *
+ * Lookup order in codepoint_in_special(): box fast lane, then the large table
+ * (CJK/Hangul/SIP/tags exit in ~3 comparisons), then the BMP coarse filter,
+ * then the packed small-range binary search.
  */
 
 #include <stdint.h>
@@ -421,16 +460,35 @@ static const uint8_t special_large_widths[] = {
 ${formatUint8Array(largeWidths)}
 };
 #define SPECIAL_LARGE_COUNT ${largeRanges.length}
+#define BOX_DRAWING_END 0x${boxDrawingEnd.toString(16)}
 
 /* clang-format on */
 
 static int codepoint_in_special(uint32_t codepoint) {
+  /* TUI fast lane: U+2500..BOX_DRAWING_END (box drawing, block elements,
+   * shading, geometric shapes) are all width 1; skip the search. */
+  if (codepoint >= 0x2500 && codepoint <= BOX_DRAWING_END)
+    return 1;
+  /* Big contiguous blocks (CJK, Hangul, SIP, tag chars) live in the large
+   * table - check it first so common ideographs exit in ~3 comparisons
+   * instead of missing through all the small ranges. */
+  int left = 0, right = SPECIAL_LARGE_COUNT - 1;
+  while (left <= right) {
+    int mid = (left + right) / 2;
+    if (codepoint < special_large_starts[mid])
+      right = mid - 1;
+    else if (codepoint > special_large_starts[mid] + special_large_counts[mid])
+      left = mid + 1;
+    else
+      return special_large_widths[mid];
+  }
   if (codepoint <= 0xffff) {
     uint32_t block = codepoint >> 7;
     if (!((bmp_filter[block >> 5] >> (block & 31u)) & 1u))
       return 1;
   }
-  int left = 0, right = SPECIAL_SMALL_COUNT - 1;
+  left = 0;
+  right = SPECIAL_SMALL_COUNT - 1;
   while (left <= right) {
     int mid = (left + right) / 2;
     uint32_t entry = special_small_ranges[mid];
@@ -441,17 +499,6 @@ static int codepoint_in_special(uint32_t codepoint) {
       left = mid + 1;
     else
       return (entry & 1) ? 2 : 0;
-  }
-  left = 0;
-  right = SPECIAL_LARGE_COUNT - 1;
-  while (left <= right) {
-    int mid = (left + right) / 2;
-    if (codepoint < special_large_starts[mid])
-      right = mid - 1;
-    else if (codepoint > special_large_starts[mid] + special_large_counts[mid])
-      left = mid + 1;
-    else
-      return special_large_widths[mid];
   }
   return 1;
 }
