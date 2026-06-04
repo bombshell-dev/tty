@@ -1,4 +1,4 @@
-// gen-wcwidth.ts — generate src/wcwidth.c from Unicode 16.0 data
+// gen-wcwidth.ts — generate src/wcwidth.c from Unicode 17.0 data
 // Usage: deno task gen-wcwidth
 //
 // Packed encoding (special_small_ranges): each uint32_t packs start codepoint
@@ -13,7 +13,7 @@
 // lane, (2) the large contiguous blocks (CJK/Hangul/SIP/tags), (3) the BMP
 // coarse filter, (4) the packed small-range binary search.
 
-let UNICODE_BASE = "https://www.unicode.org/Public/16.0.0/ucd";
+let UNICODE_BASE = "https://www.unicode.org/Public/17.0.0/ucd";
 
 interface Interval {
   start: number;
