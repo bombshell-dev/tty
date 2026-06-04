@@ -222,6 +222,33 @@ assertNoAdjacentRanges(combiningIntervals, "combining");
 let wideIntervals = mergeIntervals(parseWideEastAsian(eastAsianWidthText));
 assertNoAdjacentRanges(wideIntervals, "wide");
 
+// Fast-path invariant for U+0000..U+00FF: wcwidth() resolves this range without
+// the tables (0x20-0x7E and 0xA0-0xFF -> 1; controls -> 0/-1), so the generator
+// strips it. The blanket "0xA0-0xFF -> 1" intentionally overrides
+// "Default_Ignorable -> 0" for U+00AD only (matching musl and U+00AD's
+// EastAsianWidth=Narrow). Assert nothing ELSE in 0x00-0xFF wants width 0 or 2,
+// so a later Unicode revision can't silently break the fast path.
+{
+  const zeroInLatin1 = new Set<number>();
+  for (const { start, end } of allZeroWidth) {
+    for (let c = start; c <= Math.min(end, 0xff); c++) zeroInLatin1.add(c);
+  }
+  zeroInLatin1.delete(0x00ad); // accepted carve-out: SOFT HYPHEN renders as width 1
+  if (zeroInLatin1.size > 0) {
+    let list = [...zeroInLatin1].map((c) =>
+      "U+" + c.toString(16).toUpperCase()
+    );
+    throw new Error(
+      `Fast-path broken: zero-width codepoints in 0x00-0xFF other than U+00AD: ${
+        list.join(", ")
+      }`,
+    );
+  }
+  if (wideIntervals.some(({ start }) => start <= 0xff)) {
+    throw new Error("Fast-path broken: wide/fullwidth codepoint in 0x00-0xFF");
+  }
+}
+
 // Strip any codepoints that are in both tables — combining takes priority.
 // U+115F (Hangul Choseong Filler) is the known overlap in Unicode 16.0.
 const pureWideIntervals = subtractIntervals(wideIntervals, combiningIntervals);
@@ -344,6 +371,15 @@ let output = `\
  *   DerivedCoreProperties.txt: Default_Ignorable_Code_Point -> width 0
  *   EastAsianWidth.txt: W/F properties -> width 2
  *
+ * NOTE: U+00AD SOFT HYPHEN is Default_Ignorable but is emitted as width 1,
+ * not 0: the 0xA0-0xFF fast path in wcwidth() returns 1 for the whole block.
+ * This is intentional and matches musl and U+00AD's EastAsianWidth=Narrow.
+ *
+ * Noncharacters (U+FDD0-U+FDEF and U+nFFFE/U+nFFFF) return -1: they are
+ * permanently unassigned and never printable. They cannot be stored in the
+ * packed table (the width bit only encodes 0 vs 2), so wcwidth() handles them
+ * with a dedicated guard.
+ *
  * Combining (width 0) and wide (width 2) ranges are merged into a single
  * sorted table so wcwidth() needs only one binary search for any codepoint.
  *
@@ -427,6 +463,10 @@ int wcwidth(uint32_t codepoint) {
     return 1;
   if (codepoint < 0x20 || (codepoint > 0x7e && codepoint < 0xa0))
     return codepoint == 0 ? 0 : -1;
+  /* Noncharacters are permanently unassigned and never printable:
+   * U+FDD0..U+FDEF and the last two codepoints of every plane (U+nFFFE/U+nFFFF). */
+  if ((codepoint & 0xfffe) == 0xfffe || (codepoint >= 0xfdd0 && codepoint <= 0xfdef))
+    return -1;
   return codepoint_in_special(codepoint);
 }
 
