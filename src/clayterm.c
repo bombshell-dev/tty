@@ -321,6 +321,20 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
       n = 1;
       cp = 0xfffd;
     }
+    /* grapheme cluster: base codepoint + U+FE0F (variation selector-16)
+     * forms a single emoji-presentation glyph of width 2. Place the base
+     * codepoint into the cell (never FE0F) and advance x by 2. */
+    if (rem - n > 0) {
+      uint32_t next;
+      int n2 = utf8_decode(&next, p + n);
+      if (n2 > 0 && n2 <= rem - n && next == 0xfe0f) {
+        setcell(ct, x, y0, cp, fg, ATTR_DEFAULT);
+        x += 2;
+        p += n + n2;
+        rem -= n + n2;
+        continue;
+      }
+    }
     int cw = wcwidth(cp);
     if (cw < 0)
       cw = 1;
@@ -857,6 +871,18 @@ void measure(int ret, int txt) {
     if (n <= 0) {
       n = 1;
       cp = 0xfffd;
+    }
+    /* grapheme cluster: base codepoint + U+FE0F (variation selector-16)
+     * forms a single emoji-presentation glyph of width 2 */
+    if (rem - n > 0) {
+      uint32_t next;
+      int n2 = utf8_decode(&next, p + n);
+      if (n2 > 0 && n2 <= rem - n && next == 0xfe0f) {
+        w += 2;
+        p += n + n2;
+        rem -= n + n2;
+        continue;
+      }
     }
     /* Mirror draw_text: non-printables render as one U+FFFD cell, so
      * they must measure as one cell. */
