@@ -511,8 +511,10 @@ int wcwidth(uint32_t codepoint) {
   if (codepoint < 0x20 || (codepoint > 0x7e && codepoint < 0xa0))
     return codepoint == 0 ? 0 : -1;
   /* Noncharacters are permanently unassigned and never printable:
-   * U+FDD0..U+FDEF and the last two codepoints of every plane (U+nFFFE/U+nFFFF). */
-  if ((codepoint & 0xfffe) == 0xfffe || (codepoint >= 0xfdd0 && codepoint <= 0xfdef))
+   * U+FDD0..U+FDEF and the last two codepoints of every plane
+   * (U+nFFFE/U+nFFFF). */
+  if ((codepoint & 0xfffe) == 0xfffe ||
+      (codepoint >= 0xfdd0 && codepoint <= 0xfdef))
     return -1;
   return codepoint_in_special(codepoint);
 }
