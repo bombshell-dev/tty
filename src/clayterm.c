@@ -38,6 +38,13 @@
 
 #define MAX_ERRORS 32
 
+/* clip stack depth: nesting beyond this clamps to the deepest rect */
+#define CLIP_STACK_MAX 16
+
+typedef struct {
+  int x, y, w, h;
+} ClipRect;
+
 struct Clayterm {
   int w, h;
   Cell *front;
@@ -45,9 +52,12 @@ struct Clayterm {
   Buffer out;
   uint32_t lastfg, lastbg;
   int lastx, lasty;
-  /* clip region */
+  /* clip region (active top mirrored here so setcell stays unchanged) */
   int clipx, clipy, clipw, cliph;
   int clipping;
+  /* clip stack: nesting pushes intersected rects, leaving pops to restore */
+  ClipRect clipstack[CLIP_STACK_MAX];
+  int clipdepth;
   /* error collection */
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
@@ -611,6 +621,8 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
   ct->out.length = 0;
   ct->lastfg = ct->lastbg = 0xffffffff;
   ct->lastx = ct->lasty = -1;
+  ct->clipdepth = 0;
+  ct->clipping = 0;
 
   cells_fill(ct->back, ct->w, ct->h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);
 
@@ -633,15 +645,50 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
     case CLAY_RENDER_COMMAND_TYPE_BORDER:
       render_border(ct, x0, y0, x1, y1, cmd);
       break;
-    case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START:
+    case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: {
+      /* intersect the child box with the current active rect (if any) */
+      int nx0 = x0, ny0 = y0, nx1 = x1, ny1 = y1;
+      if (ct->clipdepth > 0) {
+        ClipRect top = ct->clipstack[ct->clipdepth - 1];
+        if (top.x > nx0)
+          nx0 = top.x;
+        if (top.y > ny0)
+          ny0 = top.y;
+        if (top.x + top.w < nx1)
+          nx1 = top.x + top.w;
+        if (top.y + top.h < ny1)
+          ny1 = top.y + top.h;
+      }
+      int nw = nx1 - nx0;
+      int nh = ny1 - ny0;
+      if (nw < 0)
+        nw = 0;
+      if (nh < 0)
+        nh = 0;
+      if (ct->clipdepth < CLIP_STACK_MAX) {
+        ClipRect r = {nx0, ny0, nw, nh};
+        ct->clipstack[ct->clipdepth++] = r;
+      }
       ct->clipping = 1;
-      ct->clipx = x0;
-      ct->clipy = y0;
-      ct->clipw = x1 - x0;
-      ct->cliph = y1 - y0;
+      ct->clipx = nx0;
+      ct->clipy = ny0;
+      ct->clipw = nw;
+      ct->cliph = nh;
       break;
+    }
     case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:
-      ct->clipping = 0;
+      if (ct->clipdepth > 0)
+        ct->clipdepth--;
+      if (ct->clipdepth > 0) {
+        ClipRect top = ct->clipstack[ct->clipdepth - 1];
+        ct->clipping = 1;
+        ct->clipx = top.x;
+        ct->clipy = top.y;
+        ct->clipw = top.w;
+        ct->cliph = top.h;
+      } else {
+        ct->clipping = 0;
+      }
       break;
     default:
       break;
