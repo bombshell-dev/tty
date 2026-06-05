@@ -176,6 +176,21 @@ static void present_cups(struct Clayterm *ct, int row) {
       if (w < 1)
         w = 1;
 
+      /* If a narrow glyph was floated onto a trailing column of this wide
+       * char, render_text left the lead cell but the trailing cell now
+       * holds a non-space glyph. Collapse the orphaned lead to a space and
+       * treat it as width-1 so the overlay glyph emits on the next pass. */
+      if (w > 1) {
+        for (int i = 1; i < w && x + i < ct->w; i++) {
+          Cell *bw = cell_at(ct, ct->back, x + i, y);
+          if (bw->ch != ' ') {
+            back->ch = ' ';
+            w = 1;
+            break;
+          }
+        }
+      }
+
       if (cell_cmp(back, front)) {
         /* copy to front */
         *front = *back;
@@ -221,6 +236,21 @@ static void present_lines(struct Clayterm *ct) {
       int w = wcwidth(back->ch);
       if (w < 1)
         w = 1;
+
+      /* If a narrow glyph was floated onto a trailing column of this wide
+       * char, render_text left the lead cell but the trailing cell now
+       * holds a non-space glyph. Collapse the orphaned lead to a space and
+       * treat it as width-1 so the overlay glyph emits on the next pass. */
+      if (w > 1) {
+        for (int i = 1; i < w && x + i < ct->w; i++) {
+          Cell *bw = cell_at(ct, ct->back, x + i, y);
+          if (bw->ch != ' ') {
+            back->ch = ' ';
+            w = 1;
+            break;
+          }
+        }
+      }
 
       *front = *back;
 
