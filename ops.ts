@@ -202,14 +202,18 @@ export function pack(
       case OP_TEXT: {
         view.setUint32(o, OP_TEXT, true);
         o += 4;
-        view.setUint32(o, op.color ?? 0xFFFFFFFF, true);
+        // No explicit color: leave the terminal default foreground by writing
+        // 0 and setting ATTR_DEFAULT (0x80 in the attrs byte). The C path ORs
+        // it into fg and emit_attr skips the foreground SGR (mirrors unset bg).
+        let textDefault = op.color === undefined;
+        view.setUint32(o, op.color ?? 0, true);
         o += 4;
         view.setUint32(
           o,
           (op.fontSize ?? 1) |
             ((op.fontId ?? 0) << 8) |
             ((op.wrap ?? 0) << 16) |
-            ((op.attrs ?? 0) << 24),
+            (((op.attrs ?? 0) | (textDefault ? 0x80 : 0)) << 24),
           true,
         );
         o += 4;
