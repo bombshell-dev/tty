@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
-import { close, fit, fixed, open, rgba, text } from "../ops.ts";
+import { close, fit, open, text } from "../ops.ts";
 import { print } from "./print.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -33,23 +33,16 @@ describe("vs16 emoji width measurement", () => {
     expect(r.info.get("box")!.bounds.width).toBe(2);
   });
 
-  it("fitted bordered box around 🌡️⚠️✅ is 8 cells wide", () => {
+  it("renders each base+FE0F as a width-2 cluster and drops the selector", () => {
     let r = term.render([
-      open("box", {
-        layout: { width: fit(), height: fixed(3) },
-        border: {
-          color: rgba(255, 255, 255),
-          left: 1,
-          right: 1,
-          top: 1,
-          bottom: 1,
-        },
-      }),
+      open("box", { layout: { width: fit(), height: fit() } }),
       text(VS16),
       close(),
     ]);
     let grid = print(decode(r.output), 24, 3);
-    // 6 content cols + 2 border cols => top border ┌──────┐ (8 wide)
-    expect(grid.split("\n")[0]).toBe("┌──────┐" + " ".repeat(16));
+    // each cluster occupies two columns (base glyph + trailing cell), so the
+    // bases land on even columns; U+FE0F is consumed, never emitted.
+    expect(grid.split("\n")[0].trimEnd()).toBe("🌡 ⚠ ✅");
+    expect(grid).not.toContain("\u{FE0F}");
   });
 });
