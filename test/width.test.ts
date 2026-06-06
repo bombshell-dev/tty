@@ -7,7 +7,7 @@ const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
 const VS16 = "\u{1F321}\u{FE0F}\u{26A0}\u{FE0F}\u{2705}"; // 🌡️⚠️✅
 
-describe("vs16 emoji width measurement", () => {
+describe("emoji width", () => {
   let term: Term;
   beforeEach(async () => {
     term = await createTerm({ width: 24, height: 3 });
