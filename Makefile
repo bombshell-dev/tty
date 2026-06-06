@@ -1,11 +1,13 @@
 CC = clang
 TARGET = clayterm.wasm
 SRC = src/module.c
+CLAY_PATCHES = $(sort $(wildcard patches/*.patch))
 
 CFLAGS = --target=wasm32 -nostdlib -O2 \
          -ffunction-sections -fdata-sections \
          -mbulk-memory \
          -DCLAY_IMPLEMENTATION -DCLAY_WASM \
+         -DCLAY_DEBUG_MODE_ENABLED=0 \
          -Isrc -I.
 
 EXPORTS = \
@@ -47,7 +49,16 @@ all: $(TARGET) wasm.ts
 
 DEPS = $(wildcard src/*.c src/*.h)
 
-$(TARGET): $(DEPS)
+# Apply every patch in patches/ to the clay submodule before compiling. clay.h
+# is reset to pristine first, so the applied set always matches patches/*.patch
+# exactly (idempotent, applied in sorted order). Reverted by `make clean`.
+# Opt-outs like CLAY_DEBUG_MODE_ENABLED=0 are selected via CFLAGS above.
+# Drop individual patches as their changes ship in upstream clay.
+$(TARGET): $(DEPS) $(CLAY_PATCHES)
+	@git -C clay checkout -- clay.h
+	@for p in $(CLAY_PATCHES); do \
+	  git -C clay apply ../$$p || { echo "ERROR: failed to apply $$p to clay/clay.h" >&2; exit 1; }; \
+	done
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC)
 
 wasm.ts: $(TARGET)
@@ -55,5 +66,6 @@ wasm.ts: $(TARGET)
 
 clean:
 	rm -f $(TARGET) wasm.ts
+	-git -C clay checkout -- clay.h
 
 .PHONY: all clean
