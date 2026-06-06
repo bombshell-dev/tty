@@ -6,7 +6,7 @@ import { print } from "./print.ts";
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 const trim = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n");
 
-describe("nested clip stacking", () => {
+describe("clip", () => {
   let term: Term;
 
   beforeEach(async () => {
