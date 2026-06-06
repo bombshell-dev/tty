@@ -294,6 +294,43 @@ Creation of a Term is asynchronous because it may involve WASM module
 preparation. A Term instance MAY be used for any number of render transactions.
 The Term retains its cell buffers across frames for diffing purposes.
 
+### 7.5 Clip semantics
+
+An element whose `props` include a `clip` group declares a **clip region**: a
+rectangular bound on the cells its descendants are permitted to write. Cells
+produced by descendants that fall outside this region MUST be suppressed from
+the output. The clip region is determined by the element's computed layout box
+and the axes selected by the `clip` group (`horizontal`, `vertical`, or both).
+
+Clip regions stack. When clip elements nest:
+
+- The effective clip region of an element MUST be the intersection of its own
+  declared region with the effective clip region of its nearest clipping
+  ancestor, if any.
+- When the renderer finishes processing a clip element's subtree, it MUST
+  restore the effective clip region of that element's clipping ancestor. Later
+  siblings drawn within an ancestor clip MUST therefore remain bounded by that
+  ancestor.
+- A `clip` element whose declared region is fully outside its ancestor's
+  effective region produces an empty effective region; descendants of that
+  element MUST NOT contribute any cells to the output.
+
+The renderer MAY impose an implementation-defined limit on the depth of clip
+regions it can track. The limit itself is not normatively bounded. When a frame
+nests clip regions more deeply than the renderer can track:
+
+- All clip regions whose entry the renderer successfully tracked MUST continue
+  to be honored for the remainder of the frame, including for siblings drawn
+  after the over-deep subtree closes. The renderer MUST maintain push/pop
+  symmetry so that exiting an untracked clip does not disturb any ancestor's
+  effective region.
+- Content drawn inside an untracked clip region MUST remain bounded by the
+  deepest successfully-tracked ancestor clip region. The untracked region's own
+  additional restriction MAY be lost.
+- The renderer MUST surface the condition via the render result's error channel
+  (see §12.3) before returning, so the caller can detect that some clipping was
+  not applied.
+
 ---
 
 ## 8. Public Rendering API
@@ -648,7 +685,10 @@ The `open()` constructor currently accepts the following property groups in its
   color
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
-- **`clip`** — clip region configuration for scroll containers
+- **`clip`** — Declares the element as a clip region (see §7.5). Currently
+  accepts `horizontal: boolean` and `vertical: boolean` axis selectors.
+  Originally added for scroll containers; nesting and standalone use are
+  supported.
 - **`floating`** — floating-element configuration (offset, expansion, parent
   reference, attach target, structured attach points, pointer capture mode, clip
   target, z-index)
@@ -770,7 +810,8 @@ The `errors` field contains any errors reported by the Clay layout engine during
 the most recent `render()` call. Each error is a `ClayError` object with:
 
 - `type`: a string identifying the error category. The following types are
-  defined, matching Clay's error taxonomy:
+  defined. Most mirror Clay's error taxonomy; `"CLIP_DEPTH_EXCEEDED"` is
+  Clayterm-specific.
   - `"TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED"`
   - `"ARENA_CAPACITY_EXCEEDED"`
   - `"ELEMENTS_CAPACITY_EXCEEDED"`
@@ -780,6 +821,9 @@ the most recent `render()` call. Each error is a `ClayError` object with:
   - `"PERCENTAGE_OVER_1"`
   - `"INTERNAL_ERROR"`
   - `"UNBALANCED_OPEN_CLOSE"`
+  - `"CLIP_DEPTH_EXCEEDED"` — A frame nested clip regions more deeply than the
+    renderer could track. See §7.5 for the guarantees that still hold in this
+    case. The `message` SHOULD identify the renderer's tracking limit.
 - `message`: a human-readable string describing the error in detail.
 
 Errors are collected per-render; each call to `render()` returns only the errors
@@ -851,6 +895,30 @@ background color.
 **Border junction resolution.** When bordered elements share edges, the renderer
 accumulates per-cell direction bitmasks and resolves them to correct box-drawing
 junction glyphs in a post-render pass.
+
+**Clip stack.** Section 7.5 requires the effective clip region of a nested
+`clip` element to be the intersection of its declared region with its clipping
+ancestor's effective region. The underlying layout engine (Clay) emits
+per-clip-element bounding boxes that are not pre-intersected with any ancestor's
+clip, so the renderer maintains an internal stack of effective clip rectangles:
+it pushes the intersected rect on each clip-region entry and pops on exit. The
+stack capacity is a small fixed value sufficient for realistic UIs; depth beyond
+that is handled per §7.5 (prior clips honored, the over-deep level coalesced
+into its deepest tracked ancestor, and a `"CLIP_DEPTH_EXCEEDED"` error
+surfaced).
+
+Upstream Clay may eventually flatten nested clip emission so renderers only need
+single-rect handling; see
+[nicbarker/clay#466](https://github.com/nicbarker/clay/issues/466) (the
+underlying issue),
+[nicbarker/clay#485](https://github.com/nicbarker/clay/pull/485) (in-flight
+Clay-side fix), and
+[nicbarker/clay#87](https://github.com/nicbarker/clay/issues/87) (renderer
+guidance). When upgrading Clay, check whether a single clip element now produces
+multiple `SCISSOR_START`/`SCISSOR_END` pairs across its lifetime (one per
+nesting transition rather than just an outer pair); if so, the renderer-side
+stack can be removed and replaced with a single rect storing Clay's bounding box
+directly.
 
 ---
 
