@@ -1,82 +1,115 @@
-import { beforeEach, describe, expect, it } from "./suite.ts";
-import { createTerm, type Term } from "../term.ts";
-import { close, fixed, open, text } from "../ops.ts";
+import { describe, expect, it } from "./suite.ts";
+import { createTerm } from "../term.ts";
+import { close, fixed, grow, open, rgba, text } from "../ops.ts";
 import { print } from "./print.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 const trim = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n");
 
+const white = rgba(255, 255, 255);
+const border = { color: white, left: 1, right: 1, top: 1, bottom: 1 };
+const pad = { left: 1, right: 1, top: 1, bottom: 1 };
+
 describe("clip", () => {
-  let term: Term;
+  // rulesr marks the bottom of an invisible 14×4 clip(outer);
+  //   ┌────┐
+  //   │    │
+  //   └────┘
+  //   ┌────────┐
+  //   ──────────────
+  //   │clipped │
+  //   └────────┘
+  it("restores outer vertical bound for a sibling after a nested clip", async () => {
+    let term = await createTerm({ width: 14, height: 8 });
 
-  beforeEach(async () => {
-    term = await createTerm({ width: 8, height: 8 });
-  });
-
-  it("restores the outer clip rect vertically for a sibling after a nested clip", () => {
     let out = term.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
       open("outer", {
-        layout: { width: fixed(8), height: fixed(4), direction: "ttb" },
+        layout: { width: fixed(14), height: fixed(4), direction: "ttb" },
         clip: { vertical: true, horizontal: true },
       }),
       open("inner", {
-        layout: { width: fixed(4), height: fixed(2), direction: "ttb" },
+        layout: { width: fixed(6), height: fixed(3), direction: "ttb" },
         clip: { vertical: true, horizontal: true },
+        border,
       }),
-      open("innerContent", {
-        layout: { width: fixed(4), height: fixed(4), direction: "ttb" },
-      }),
-      text("AAAA\nBBBB\nCCCC\nDDDD"),
-      close(), // innerContent
-      close(), // inner
+      close(),
       open("sibling", {
-        layout: { width: fixed(4), height: fixed(4), direction: "ttb" },
+        layout: {
+          width: fixed(10),
+          height: fixed(3),
+          direction: "ttb",
+          padding: pad,
+        },
+        border,
       }),
-      text("XXXX\nYYYY\nZZZZ\nWWWW"),
-      close(), // sibling
-      close(), // outer
+      text("clipped"),
+      close(),
+      close(),
+      open("ruler", {
+        layout: { width: fixed(14), height: fixed(1), direction: "ttb" },
+      }),
+      text("──────────────"),
+      close(),
+      close(),
     ]).output;
 
-    let grid = trim(print(decode(out), 8, 8));
-    // After the inner clip closes the outer rect must be restored, so the
-    // sibling rows past the outer clip bottom (ZZZZ, WWWW) are clipped away.
-    expect(grid).toEqual(
-      [
-        "AAAA", // inner content row 0 (inner clip = rows 0-1)
-        "BBBB", // inner content row 1
-        "XXXX", // sibling starts at row 2 — inside outer clip
-        "YYYY", // sibling row 3 — last row inside outer clip
-        "", // row 4: ZZZZ clipped by restored outer rect
-        "", // row 5: WWWW clipped by restored outer rect
-        "",
-        "",
-      ].join("\n"),
-    );
+    expect(trim(print(decode(out), 14, 8)).trim()).toEqual(`
+┌────┐
+│    │
+└────┘
+┌────────┐
+──────────────
+`.trim());
   });
 
-  it("restores the outer clip horizontal bound for a sibling after a nested clip", () => {
+  // ruler marks the right boundary of an invisible 8×3 ltr clip
+  //   ┌─┐┌────│───┐
+  //   │ ││clip│ed │
+  //   └─┘└────│───┘
+  it("restores outer horizontal bound for a sibling after a nested clip", async () => {
+    let term = await createTerm({ width: 14, height: 6 });
+
     let out = term.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ltr" },
+      }),
       open("outer", {
-        layout: { width: fixed(4), height: fixed(4), direction: "ttb" },
+        layout: { width: fixed(8), height: fixed(3), direction: "ltr" },
         clip: { vertical: true, horizontal: true },
       }),
       open("inner", {
-        layout: { width: fixed(2), height: fixed(1), direction: "ttb" },
+        layout: { width: fixed(3), height: fixed(3), direction: "ttb" },
         clip: { vertical: true, horizontal: true },
+        border,
       }),
-      text("II"),
-      close(), // inner
+      close(),
       open("sibling", {
-        layout: { width: fixed(8), height: fixed(1), direction: "ttb" },
+        layout: {
+          width: fixed(10),
+          height: fixed(3),
+          direction: "ttb",
+          padding: pad,
+        },
+        border,
       }),
-      text("SSSSSSSS"),
-      close(), // sibling
-      close(), // outer
+      text("clipped"),
+      close(),
+      close(),
+      open("ruler", {
+        layout: { width: fixed(1), height: fixed(3), direction: "ttb" },
+      }),
+      text("│\n│\n│"),
+      close(),
+      close(),
     ]).output;
 
-    let siblingRow = print(decode(out), 8, 4).split("\n")[1];
-    // Outer clip width is 4; once the narrower inner clip closes the outer
-    // horizontal bound must be restored so cols >= 4 of the sibling are clipped.
-    expect(siblingRow).toEqual("SSSS    ");
+    expect(trim(print(decode(out), 14, 6)).trim()).toEqual(`
+┌─┐┌────│
+│ ││clip│
+└─┘└────│
+`.trim());
   });
 });
