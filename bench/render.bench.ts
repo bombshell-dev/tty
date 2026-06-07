@@ -5,40 +5,6 @@ import { close, fixed, grow, open, rgba, text } from "../ops.ts";
 import type { Op } from "../ops.ts";
 
 let term = await createTerm({ width: 80, height: 24 });
-let termPtr = await createTerm({ width: 80, height: 24 });
-
-let helloOps: Op[] = [
-  open("root", {
-    layout: { width: grow(), height: grow(), direction: "ttb" },
-  }),
-  text("Hello, World!"),
-  close(),
-];
-
-let borderedOps: Op[] = [
-  open("root", {
-    layout: { width: grow(), height: grow(), direction: "ttb" },
-  }),
-  open("box", {
-    layout: {
-      width: grow(),
-      height: grow(),
-      padding: { left: 1, right: 1, top: 1, bottom: 1 },
-      direction: "ttb",
-    },
-    border: {
-      color: rgba(0, 255, 0),
-      left: 1,
-      right: 1,
-      top: 1,
-      bottom: 1,
-    },
-    cornerRadius: { tl: 1, tr: 1, bl: 1, br: 1 },
-  }),
-  text("Bordered content"),
-  close(),
-  close(),
-];
 
 let dashboardOps: Op[] = [
   open("root", {
@@ -134,24 +100,20 @@ let uiOps: Op[] = [
   close(),
 ];
 
-let bench = withCodSpeed(new Bench());
+let bench = withCodSpeed(new Bench({ name: "render" }));
 
 bench
-  .add("simple text", () => {
-    term.render(helloOps);
+  .add("render mixed frames", () => {
+    for (let i = 0; i < 250; i++) {
+      term.render(i % 2 === 0 ? dashboardOps : uiOps);
+    }
+    return Promise.resolve();
   })
-  .add("bordered box with corner radius", () => {
-    term.render(borderedOps);
-  })
-  .add("dashboard layout", () => {
-    term.render(dashboardOps);
-  })
-  .add("diff render (second frame)", () => {
-    term.render(dashboardOps);
-    term.render(dashboardOps);
-  })
-  .add("render with pointer hit testing", () => {
-    termPtr.render(uiOps, { pointer: { x: 10, y: 1, down: false } });
+  .add("render steady diff", () => {
+    for (let i = 0; i < 250; i++) {
+      term.render(dashboardOps);
+    }
+    return Promise.resolve();
   });
 
 await bench.run();
