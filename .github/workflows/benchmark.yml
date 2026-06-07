@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read # clone repo
     steps:
@@ -32,17 +32,7 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Cache WASM
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        id: wasm-cache
-        with:
-          path: |
-            clayterm.wasm
-            wasm.ts
-          key: wasm-${{ hashFiles('Makefile', 'src/**', 'tasks/bundle-wasm.ts') }}
-
       - name: Build WASM
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: make
 
       - name: Cache dependencies
@@ -146,8 +136,8 @@ jobs:
         if: steps.deno-cache.outputs.cache-hit != 'true'
         run: deno install
 
-      - name: Run process startup benchmarks
+      - name: Run walltime benchmarks
         uses: CodSpeedHQ/action@9d332c4d90b43981c3e55ae8e38e68709996240f # v4.17.0
         with:
           mode: walltime
-          run: node bench/startup.bench.ts
+          run: node bench/walltime.ts
