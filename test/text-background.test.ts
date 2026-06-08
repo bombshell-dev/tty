@@ -42,9 +42,7 @@ describe("text background color", () => {
     let ansi = decode(
       term.render([
         open("root", { layout: { width: grow(), height: grow() } }),
-        // TODO: remove cast once Text props include bg.
-        // deno-lint-ignore no-explicit-any
-        text("Hi", { bg: bg.value } as any),
+        text("Hi", { bg: bg.value }),
         close(),
       ]).output,
     );
@@ -53,14 +51,12 @@ describe("text background color", () => {
     expect(beforeH).toContain(bg.sgr);
   });
 
-  it("fills only glyph cells, not trailing cells", () => {
+  it("resets the background before writing trailing cells", () => {
     let bg = randomTextBgColor();
     let ansi = decode(
       term.render([
         open("root", { layout: { width: grow(), height: grow() } }),
-        // TODO: remove cast once Text props include bg.
-        // deno-lint-ignore no-explicit-any
-        text("Hi", { bg: bg.value } as any),
+        text("Hi", { bg: bg.value }),
         close(),
       ]).output,
     );
@@ -68,7 +64,11 @@ describe("text background color", () => {
     let beforeH = ansi.slice(0, ansi.indexOf("H"));
     expect(beforeH).toContain(bg.sgr);
 
-    let afterHi = ansi.slice(ansi.indexOf("Hi") + 2);
+    let hi = ansi.indexOf("Hi");
+    expect(hi).toBeGreaterThanOrEqual(0);
+
+    let afterHi = ansi.slice(hi + 2);
     expect(afterHi).not.toContain(bg.sgr);
+    expect(afterHi.startsWith("\x1b[0m ")).toBe(true);
   });
 });
