@@ -641,9 +641,9 @@ The `open()` constructor currently accepts the following property groups in its
 `props` parameter:
 
 - **`layout`** — sizing (width and height, specified via sizing helpers),
-  padding (per-side), alignment (currently numeric enum values, with a planned
-  transition to string literals), direction (top-to-bottom or left-to-right),
-  and gap
+  padding (per-side), alignment (`alignX`: `"left"` | `"center"` | `"right"`;
+  `alignY`: `"top"` | `"center"` | `"bottom"`, defaulting to left/top when
+  omitted), direction (top-to-bottom or left-to-right), and gap
 - **`border`** — per-side border widths and border color
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
@@ -657,8 +657,7 @@ The `text()` constructor accepts: `color`, `bg`, `fontSize`, `letterSpacing`,
 `strikethrough`).
 
 These property groups represent the current implementation surface. New groups
-and fields have been added incrementally and more may follow. Alignment values
-are expected to transition from numeric to string-literal form.
+and fields have been added incrementally and more may follow.
 
 **Border width and layout interaction.** In the underlying layout engine (Clay),
 border configuration does not affect layout computation. This is Clay's intended

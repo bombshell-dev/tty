@@ -56,8 +56,20 @@ const Layout = Type.Object({
   direction: Type.Optional(
     Type.Union([Type.Literal("ltr"), Type.Literal("ttb")]),
   ),
-  alignX: Type.Optional(u8),
-  alignY: Type.Optional(u8),
+  alignX: Type.Optional(
+    Type.Union([
+      Type.Literal("left"),
+      Type.Literal("center"),
+      Type.Literal("right"),
+    ]),
+  ),
+  alignY: Type.Optional(
+    Type.Union([
+      Type.Literal("top"),
+      Type.Literal("center"),
+      Type.Literal("bottom"),
+    ]),
+  ),
 });
 
 const CornerRadius = Type.Object({

@@ -225,8 +225,8 @@ function key(ops: Op[], k: KeyDef, ctx: AppContext): void {
         width: fixed(w),
         height: grow(),
         padding: { left: 1, right: 1 },
-        alignX: 2,
-        alignY: 2,
+        alignX: "center",
+        alignY: "center",
       },
       bg,
       border: hover
@@ -565,8 +565,8 @@ function keyboard(ctx: AppContext): Op[] {
         width: grow(),
         height: grow(),
         direction: "ttb",
-        alignX: 2,
-        alignY: 2,
+        alignX: "center",
+        alignY: "center",
         padding: { left: 2, top: 1 },
       },
     }),
@@ -583,7 +583,7 @@ function keyboard(ctx: AppContext): Op[] {
       layout: {
         width: grow(),
         direction: "ltr",
-        alignY: 0,
+        alignY: "top",
         padding: { bottom: 1 },
       },
     }),
@@ -634,7 +634,7 @@ function keyboard(ctx: AppContext): Op[] {
 
   // config panel (right)
   ops.push(
-    open("", { layout: { width: grow(), direction: "ltr", alignX: 1 } }),
+    open("", { layout: { width: grow(), direction: "ltr", alignX: "right" } }),
   );
   configPanel(ops, ctx);
   ops.push(close());
@@ -648,7 +648,7 @@ function keyboard(ctx: AppContext): Op[] {
       layout: {
         direction: "ltr",
         gap: 3,
-        alignY: 1,
+        alignY: "bottom",
         padding: { left: 1, right: 1, top: 1, bottom: 1 },
       },
       border: { color: kbColor, left: 1, right: 1, top: 1, bottom: 1 },

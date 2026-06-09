@@ -333,7 +333,7 @@ function box(msg: string, fg: number, border: number): Op[] {
         height: grow(),
         direction: "ttb",
         padding: { left: 1 },
-        alignY: 2,
+        alignY: "center",
       },
       border: {
         color: border,
