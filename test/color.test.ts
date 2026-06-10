@@ -4,12 +4,17 @@ import { describe, expect, it } from "./suite.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
-type TextBgColor = {
+type BgColor = {
   value: number;
   sgr: string;
 };
 
-function randomTextBgColor(): TextBgColor {
+type Cell = {
+  ch: string;
+  bg?: string;
+};
+
+function randomBgColor(): BgColor {
   let r = 0;
   let g = 0;
   let b = 0;
@@ -30,6 +35,41 @@ function randomTextBgColor(): TextBgColor {
   };
 }
 
+function cells(ansi: string): Cell[] {
+  let result: Cell[] = [];
+  let bg: string | undefined;
+
+  for (let i = 0; i < ansi.length;) {
+    if (ansi[i] === "\x1b" && ansi[i + 1] === "[") {
+      let end = i + 2;
+      while (end < ansi.length && !/[A-Za-z]/.test(ansi[end])) {
+        end++;
+      }
+
+      let seq = ansi.slice(i, end + 1);
+      if (seq === "\x1b[0m") {
+        bg = undefined;
+      } else if (seq.startsWith("\x1b[48;2;") && seq.endsWith("m")) {
+        bg = seq.slice(0, -1);
+      }
+
+      i = end + 1;
+      continue;
+    }
+
+    result.push({ ch: ansi[i], bg });
+    i++;
+  }
+
+  return result;
+}
+
+function firstCell(cells: Cell[], ch: string): Cell {
+  let cell = cells.find((c) => c.ch === ch);
+  expect(cell).toBeDefined();
+  return cell!;
+}
+
 describe("foreground", () => {
   it("emits uncolored text with no foreground", async () => {
     let term = await createTerm({ width: 12, height: 1 });
@@ -43,7 +83,7 @@ describe("foreground", () => {
 describe("background", () => {
   it("fills border cells with the requested border-level bg", async () => {
     let term = await createTerm({ width: 12, height: 4 });
-    let bg = randomTextBgColor();
+    let bg = randomBgColor();
     let ansi = decode(
       term.render([
         open("box", {
@@ -59,19 +99,49 @@ describe("background", () => {
         }),
         text("Hi"),
         close(),
-      ]).output,
+      ], { mode: "line" }).output,
     );
 
-    let corner = ansi.indexOf("┌");
-    expect(corner).toBeGreaterThanOrEqual(0);
+    expect(ansi).toContain(`${bg.sgr}m┌`);
 
-    let beforeCorner = ansi.slice(0, corner);
-    expect(beforeCorner).toContain(bg.sgr);
+    let rendered = cells(ansi);
+    expect(firstCell(rendered, "┌").bg).toBe(bg.sgr);
+    expect(firstCell(rendered, "─").bg).toBe(bg.sgr);
+    expect(firstCell(rendered, "┐").bg).toBe(bg.sgr);
+    expect(firstCell(rendered, "│").bg).toBe(bg.sgr);
+  });
+
+  it("leaves existing border-cell bg unchanged when border bg is omitted", async () => {
+    let term = await createTerm({ width: 12, height: 4 });
+    let bg = randomBgColor();
+    let ansi = decode(
+      term.render([
+        open("box", {
+          layout: { width: fixed(8), height: fixed(3), direction: "ttb" },
+          bg: bg.value,
+          border: {
+            color: rgba(255, 255, 255),
+            left: 1,
+            right: 1,
+            top: 1,
+            bottom: 1,
+          },
+        }),
+        text("Hi"),
+        close(),
+      ], { mode: "line" }).output,
+    );
+
+    let rendered = cells(ansi);
+    expect(firstCell(rendered, "┌").bg).toBe(bg.sgr);
+    expect(firstCell(rendered, "─").bg).toBe(bg.sgr);
+    expect(firstCell(rendered, "┐").bg).toBe(bg.sgr);
+    expect(firstCell(rendered, "│").bg).toBe(bg.sgr);
   });
 
   it("fills glyph cells with the requested text-level bg", async () => {
     let term = await createTerm({ width: 20, height: 1 });
-    let bg = randomTextBgColor();
+    let bg = randomBgColor();
     let ansi = decode(
       term.render([
         open("root", { layout: { width: grow(), height: grow() } }),
@@ -86,7 +156,7 @@ describe("background", () => {
 
   it("resets border bg on subsequent frames without border bg", async () => {
     let term = await createTerm({ width: 12, height: 4 });
-    let bg = randomTextBgColor();
+    let bg = randomBgColor();
 
     // Frame 1: border with bg
     term.render([
@@ -123,16 +193,13 @@ describe("background", () => {
       ]).output,
     );
 
-    let corner = ansi.indexOf("┌");
-    expect(corner).toBeGreaterThanOrEqual(0);
-
-    let beforeCorner = ansi.slice(0, corner);
-    expect(beforeCorner).not.toContain(bg.sgr);
+    expect(ansi).not.toContain(bg.sgr);
+    expect(firstCell(cells(ansi), "┌").bg).toBeUndefined();
   });
 
   it("resets the background before writing trailing cells", async () => {
     let term = await createTerm({ width: 20, height: 1 });
-    let bg = randomTextBgColor();
+    let bg = randomBgColor();
     let ansi = decode(
       term.render([
         open("root", { layout: { width: grow(), height: grow() } }),
