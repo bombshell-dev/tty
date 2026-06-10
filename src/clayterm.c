@@ -304,6 +304,7 @@ static void render_border(struct Clayterm *ct, int x0, int y0, int x1, int y1,
                           Clay_RenderCommand *cmd) {
   Clay_BorderRenderData *b = &cmd->renderData.border;
   uint32_t fg = color(b->color);
+  /* userData is currently exclusively the packed border-bg word. */
   uint32_t bg = (uint32_t)(uintptr_t)cmd->userData;
   int top = b->width.top > 0;
   int bot = b->width.bottom > 0;

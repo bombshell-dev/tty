@@ -69,6 +69,7 @@ const CornerRadius = Type.Object({
 
 const Border = Type.Object({
   color: rgba,
+  bg: Type.Optional(rgba),
   left: Type.Optional(u8),
   right: Type.Optional(u8),
   top: Type.Optional(u8),
