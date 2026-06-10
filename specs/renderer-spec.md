@@ -663,9 +663,10 @@ are expected to transition from numeric to string-literal form.
 
 **Border background.** When `border.bg` is provided, the renderer MUST apply
 that background color to all cells occupied by border glyphs (corners,
-horizontal edges, and vertical edges). When `border.bg` is omitted, the renderer
-MUST NOT override the background in border cells; the terminal default
-background applies.
+horizontal edges, and vertical edges). When `border.bg` is omitted, border
+rendering MUST NOT override the background already present in each border cell;
+element backgrounds established by `open({ bg })` remain in effect, and the
+terminal default remains in effect where no element background applies.
 
 **Border width and layout interaction.** In the underlying layout engine (Clay),
 border configuration does not affect layout computation. This is Clay's intended
