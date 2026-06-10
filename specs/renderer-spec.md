@@ -644,8 +644,11 @@ The `open()` constructor currently accepts the following property groups in its
   padding (per-side), alignment (`alignX`: `"left"` | `"center"` | `"right"`;
   `alignY`: `"top"` | `"center"` | `"bottom"`, defaulting to left/top when
   omitted), direction (top-to-bottom or left-to-right), and gap
-- **`border`** — per-side border widths, border color, and border background
-  color
+- **`border`** — per-side border configuration. Each side field (`top`, `right`,
+  `bottom`, `left`) accepts either a scalar width or a structured object
+  `{ width, color?, bg? }`. The shared `color` field is required and is the
+  fallback foreground for every side; the optional shared `bg` field is the
+  fallback border-cell background for every side
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
 - **`clip`** — clip region configuration for scroll containers
@@ -709,12 +712,47 @@ The `text()` constructor accepts: `color`, `bg`, `fontSize`, `letterSpacing`,
 These property groups represent the current implementation surface. New groups
 and fields have been added incrementally and more may follow.
 
-**Border background.** When `border.bg` is provided, the renderer MUST apply
-that background color to all cells occupied by border glyphs (corners,
-horizontal edges, and vertical edges). When `border.bg` is omitted, border
-rendering MUST NOT override the background already present in each border cell;
-element backgrounds established by `open({ bg })` remain in effect, and the
-terminal default remains in effect where no element background applies.
+**Border sides.** Each border side is declared independently as either a scalar
+width (`top: 1`) or a structured object (`top: { width: 1, color?, bg? }`). The
+two forms are equivalent when the object form provides only `width`. A side is
+enabled when its resolved width is greater than zero; an omitted side or a side
+with width `0` MUST NOT be drawn. Scalar side declarations MUST keep their
+pre-existing behavior.
+
+**Border side colors (fallback resolution).** Side attributes resolve in a
+CSS-like shorthand/longhand fashion before rendering:
+
+- A structured side with `color` MUST render with that foreground color. A
+  scalar side, or a structured side that omits `color`, MUST fall back to the
+  shared `border.color`. The shared `color` remains required.
+- A structured side with `bg` MUST render border cells of that side with that
+  background color. A scalar side, or a structured side that omits `bg`, MUST
+  fall back to the shared `border.bg` when it is provided.
+- When neither the side nor the shared border provides `bg`, border rendering
+  MUST NOT override the background already present in each border cell of that
+  side; element backgrounds established by `open({ bg })` remain in effect, and
+  the terminal default remains in effect where no element background applies.
+
+Fallback resolution is performed on the TypeScript side before the frame is
+transferred; the WASM renderer consumes explicit per-side attributes and does
+not implement the public fallback rules.
+
+**Independent sides and corners.** Each enabled side renders as a straight edge
+(`─` for horizontal sides, `│` for vertical sides). A corner glyph MUST be
+rendered only when both adjacent sides for that corner are enabled; when either
+adjacent side is absent, the present side continues straight through the
+endpoint with no corner glyph. A left-only border is therefore a plain vertical
+line, and a top-plus-bottom border is two plain horizontal rules.
+
+**Corner styling approximation.** A terminal cell carries a single glyph,
+foreground, and background, so CSS-style diagonally split corners cannot be
+represented. When corners are rendered: top corners (`┌`, `┐`, and their rounded
+variants) MUST use the resolved attributes of the `top` side, and bottom corners
+(`└`, `┘`, and their rounded variants) MUST use the resolved attributes of the
+`bottom` side. Left and right side attributes apply to vertical edge cells
+excluding joined corner cells. Per-side attributes affect only the styling of
+corner cells; corner glyph shape selection (including rounded corners via
+`cornerRadius`) is unchanged.
 
 **Border width and layout interaction.** In the underlying layout engine (Clay),
 border configuration does not affect layout computation. This is Clay's intended

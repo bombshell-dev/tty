@@ -303,44 +303,55 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
 static void render_border(struct Clayterm *ct, int x0, int y0, int x1, int y1,
                           Clay_RenderCommand *cmd) {
   Clay_BorderRenderData *b = &cmd->renderData.border;
-  uint32_t fg = color(b->color);
-  /* userData is currently exclusively the packed border-bg word. */
-  uint32_t bg = (uint32_t)(uintptr_t)cmd->userData;
+  /* userData points at eight words in the command buffer carrying resolved
+   * per-side attributes as fg/bg pairs in top, right, bottom, left order.
+   * Fallback resolution (shared color/bg vs side overrides) happens on the
+   * TypeScript side; this renderer consumes explicit values only. The
+   * command buffer outlives the render pass within reduce(). */
+  const uint32_t *s = (const uint32_t *)cmd->userData;
+  uint32_t deffg = color(b->color);
+  uint32_t top_fg = s ? s[0] : deffg, top_bg = s ? s[1] : ATTR_DEFAULT;
+  uint32_t right_fg = s ? s[2] : deffg, right_bg = s ? s[3] : ATTR_DEFAULT;
+  uint32_t bot_fg = s ? s[4] : deffg, bot_bg = s ? s[5] : ATTR_DEFAULT;
+  uint32_t left_fg = s ? s[6] : deffg, left_bg = s ? s[7] : ATTR_DEFAULT;
   int top = b->width.top > 0;
   int bot = b->width.bottom > 0;
   int left = b->width.left > 0;
   int right = b->width.right > 0;
 
-  /* corners — rounded when corner radius > 0 */
+  /* corners — rounded when corner radius > 0. Drawn only when both adjacent
+   * sides are enabled; a terminal cell holds a single fg/bg, so top corners
+   * take the top side attributes and bottom corners take the bottom side
+   * attributes (deterministic approximation of CSS split corners). */
   uint32_t tl = b->cornerRadius.topLeft > 0 ? 0x256d : 0x250c;
   uint32_t tr = b->cornerRadius.topRight > 0 ? 0x256e : 0x2510;
   uint32_t bl = b->cornerRadius.bottomLeft > 0 ? 0x2570 : 0x2514;
   uint32_t br = b->cornerRadius.bottomRight > 0 ? 0x256f : 0x2518;
 
   if (top && left)
-    setcell(ct, x0, y0, tl, fg, bg);
+    setcell(ct, x0, y0, tl, top_fg, top_bg);
   if (top && right)
-    setcell(ct, x1 - 1, y0, tr, fg, bg);
+    setcell(ct, x1 - 1, y0, tr, top_fg, top_bg);
   if (bot && left)
-    setcell(ct, x0, y1 - 1, bl, fg, bg);
+    setcell(ct, x0, y1 - 1, bl, bot_fg, bot_bg);
   if (bot && right)
-    setcell(ct, x1 - 1, y1 - 1, br, fg, bg);
+    setcell(ct, x1 - 1, y1 - 1, br, bot_fg, bot_bg);
 
   /* horizontal edges */
   if (top)
     for (int x = x0 + left; x < x1 - right; x++)
-      setcell(ct, x, y0, 0x2500, fg, bg);
+      setcell(ct, x, y0, 0x2500, top_fg, top_bg);
   if (bot)
     for (int x = x0 + left; x < x1 - right; x++)
-      setcell(ct, x, y1 - 1, 0x2500, fg, bg);
+      setcell(ct, x, y1 - 1, 0x2500, bot_fg, bot_bg);
 
-  /* vertical edges */
+  /* vertical edges — excluding joined corner cells owned by top/bottom */
   if (left)
     for (int y = y0 + top; y < y1 - bot; y++)
-      setcell(ct, x0, y, 0x2502, fg, bg);
+      setcell(ct, x0, y, 0x2502, left_fg, left_bg);
   if (right)
     for (int y = y0 + top; y < y1 - bot; y++)
-      setcell(ct, x1 - 1, y, 0x2502, fg, bg);
+      setcell(ct, x1 - 1, y, 0x2502, right_fg, right_bg);
 }
 
 /* ── Command buffer helpers ───────────────────────────────────────── */
@@ -533,15 +544,18 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
       }
 
       if (mask & PROP_BORDER) {
-        decl.border.color = unpack_color(rd(buf, len, &i));
-
-        decl.userData = (void *)(uintptr_t)rd(buf, len, &i);
-
         uint32_t bw = rd(buf, len, &i);
         decl.border.width.left = bw & 0xff;
         decl.border.width.right = (bw >> 8) & 0xff;
         decl.border.width.top = (bw >> 16) & 0xff;
         decl.border.width.bottom = (bw >> 24) & 0xff;
+
+        /* Resolved per-side fg/bg attribute words (top, right, bottom,
+         * left). Routed to render_border via userData; the command buffer
+         * remains valid for the whole render pass. */
+        if (i + 8 <= len)
+          decl.userData = (void *)&buf[i];
+        i += 8;
       }
 
       if (mask & PROP_CLIP) {

@@ -132,6 +132,91 @@ describe("validate", () => {
       close(),
     ])).toBe(false);
   });
+
+  it("accepts structured border side objects", () => {
+    expect(validate([
+      open("x", {
+        border: {
+          color: 0xFF0000,
+          top: { width: 1 },
+          right: { width: 1, color: 0x00FF00 },
+          bottom: { width: 1, bg: 0x0000FF },
+          left: { width: 1, color: 0x00FF00, bg: 0x0000FF },
+        },
+      }),
+      close(),
+    ])).toBe(true);
+  });
+
+  it("rejects structured border side missing width", () => {
+    expect(validate([
+      { directive: 0x02, id: "x", border: { color: 0xFF0000, top: {} } },
+      close(),
+    ])).toBe(false);
+    expect(validate([
+      {
+        directive: 0x02,
+        id: "x",
+        border: { color: 0xFF0000, top: { color: 0x00FF00 } },
+      },
+      close(),
+    ])).toBe(false);
+  });
+
+  it("rejects invalid structured border side widths", () => {
+    for (let width of [-1, 1.5, 256]) {
+      expect(validate([
+        open("x", { border: { color: 0xFF0000, top: { width } } }),
+        close(),
+      ])).toBe(false);
+      expect(validate([
+        open("x", { border: { color: 0xFF0000, left: { width } } }),
+        close(),
+      ])).toBe(false);
+    }
+  });
+
+  it("rejects invalid structured border side colors", () => {
+    for (let color of [1.5, 0x1FFFFFFFF, -0x80000001]) {
+      expect(validate([
+        open("x", { border: { color: 0xFF0000, top: { width: 1, color } } }),
+        close(),
+      ])).toBe(false);
+    }
+  });
+
+  it("rejects invalid structured border side backgrounds", () => {
+    for (let bg of [1.5, 0x1FFFFFFFF, -0x80000001]) {
+      expect(validate([
+        open("x", { border: { color: 0xFF0000, top: { width: 1, bg } } }),
+        close(),
+      ])).toBe(false);
+    }
+  });
+
+  it("still rejects invalid scalar border side widths", () => {
+    for (let width of [-1, 1.5, 256]) {
+      expect(validate([
+        open("x", { border: { color: 0xFF0000, top: width } }),
+        close(),
+      ])).toBe(false);
+      expect(validate([
+        open("x", { border: { color: 0xFF0000, left: width } }),
+        close(),
+      ])).toBe(false);
+    }
+  });
+
+  it("rejects a border without shared color even with side colors", () => {
+    expect(validate([
+      {
+        directive: 0x02,
+        id: "x",
+        border: { top: { width: 1, color: 0xFF0000 } },
+      },
+      close(),
+    ])).toBe(false);
+  });
 });
 
 describe("validated", () => {
@@ -163,5 +248,44 @@ describe("validated", () => {
     // without weakening the TypeScript surface.
     expect(() => Reflect.apply(term.render, term, [[{ directive: 0xff }]]))
       .toThrow(TypeError);
+  });
+
+  it("renders valid structured border sides normally", () => {
+    let out = decode(
+      term.render([
+        open("box", {
+          layout: { width: grow(), height: grow() },
+          border: {
+            color: 0xFFFFFF,
+            top: { width: 1, color: 0xFF0000 },
+            right: 1,
+            bottom: { width: 1, bg: 0x0000FF },
+            left: { width: 1 },
+          },
+        }),
+        close(),
+      ]).output,
+    );
+    expect(out).toContain("┌");
+  });
+
+  it("throws on a structured border side missing width", () => {
+    let invalid = [
+      { directive: 0x02, id: "x", border: { color: 0xFF0000, top: {} } },
+      close(),
+    ];
+    // deno-lint-ignore no-explicit-any
+    expect(() => term.render(invalid as any)).toThrow(TypeError);
+  });
+
+  it("throws on an invalid structured border side color", () => {
+    expect(() =>
+      term.render([
+        open("x", {
+          border: { color: 0xFF0000, top: { width: 1, color: 1.5 } },
+        }),
+        close(),
+      ])
+    ).toThrow(TypeError);
   });
 });

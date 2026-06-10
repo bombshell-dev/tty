@@ -80,13 +80,22 @@ const CornerRadius = Type.Object({
   br: Type.Optional(u8),
 });
 
+const BorderSide = Type.Union([
+  u8,
+  Type.Object({
+    width: u8,
+    color: Type.Optional(rgba),
+    bg: Type.Optional(rgba),
+  }),
+]);
+
 const Border = Type.Object({
   color: rgba,
   bg: Type.Optional(rgba),
-  left: Type.Optional(u8),
-  right: Type.Optional(u8),
-  top: Type.Optional(u8),
-  bottom: Type.Optional(u8),
+  left: Type.Optional(BorderSide),
+  right: Type.Optional(BorderSide),
+  top: Type.Optional(BorderSide),
+  bottom: Type.Optional(BorderSide),
 });
 
 const Clip = Type.Object({

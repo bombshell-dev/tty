@@ -53,6 +53,26 @@ function packAxis(view: DataView, offset: number, axis: SizingAxis): number {
   return o;
 }
 
+function sideWidth(side: BorderSide | undefined): number {
+  return typeof side === "number" ? side : side?.width ?? 0;
+}
+
+function sideFg(side: BorderSide | undefined, shared: number): number {
+  let color = typeof side === "object" && side.color !== undefined
+    ? side.color
+    : shared;
+  return color & 0x00FFFFFF;
+}
+
+function sideBg(
+  side: BorderSide | undefined,
+  shared: number | undefined,
+): number {
+  let bg = typeof side === "object" && side.bg !== undefined ? side.bg : shared;
+  // ATTR_DEFAULT sentinel (bit 31 set) means "keep the existing cell bg"
+  return bg === undefined ? 0x80000000 : bg & 0x00FFFFFF;
+}
+
 function packString(
   view: DataView,
   bytes: Uint8Array,
@@ -162,21 +182,23 @@ export function pack(
 
         if (op.border) {
           let b = op.border;
-          view.setUint32(o, b.color, true);
-          o += 4;
-
-          // ATTR_DEFAULT sentinel (bit 31 set) means "use terminal default bg"
-          let bg = b.bg === undefined ? 0x80000000 : b.bg & 0x00FFFFFF;
-          view.setUint32(o, bg, true);
-          o += 4;
-
           view.setUint32(
             o,
-            (b.left ?? 0) | ((b.right ?? 0) << 8) | ((b.top ?? 0) << 16) |
-              ((b.bottom ?? 0) << 24),
+            sideWidth(b.left) | (sideWidth(b.right) << 8) |
+              (sideWidth(b.top) << 16) | (sideWidth(b.bottom) << 24),
             true,
           );
           o += 4;
+
+          // Resolved per-side attributes (CSS-like fallback expansion done
+          // here, not in C): fg/bg word pairs in top, right, bottom, left
+          // order. The C renderer consumes these as explicit values.
+          for (let side of [b.top, b.right, b.bottom, b.left]) {
+            view.setUint32(o, sideFg(side, b.color), true);
+            o += 4;
+            view.setUint32(o, sideBg(side, b.bg), true);
+            o += 4;
+          }
         }
 
         if (op.clip) {
@@ -300,6 +322,14 @@ export interface CloseElement {
   directive: typeof OP_CLOSE_ELEMENT;
 }
 
+export type BorderSide =
+  | number
+  | {
+    width: number;
+    color?: number;
+    bg?: number;
+  };
+
 export interface OpenElement {
   directive: typeof OP_OPEN_ELEMENT;
   id: string;
@@ -317,10 +347,10 @@ export interface OpenElement {
   border?: {
     color: number;
     bg?: number;
-    left?: number;
-    right?: number;
-    top?: number;
-    bottom?: number;
+    left?: BorderSide;
+    right?: BorderSide;
+    top?: BorderSide;
+    bottom?: BorderSide;
   };
   clip?: { horizontal?: boolean; vertical?: boolean };
   floating?: {
@@ -453,7 +483,7 @@ function packSize(ops: Op[]): number {
         if (op.layout) n += 6 * 4 + 4 + 4 + 4; // 2 axes (3 words each) + pad + gap + align
         if (op.bg !== undefined) n += 4;
         if (op.cornerRadius) n += 4;
-        if (op.border) n += 12;
+        if (op.border) n += 36; // widths word + 4 sides × (fg + bg)
         if (op.clip) n += 4;
         // x, y, expand width/height, parent, attach/pointer, clip/z
         if (op.floating) n += 7 * 4;
