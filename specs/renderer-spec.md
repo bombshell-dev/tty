@@ -403,6 +403,14 @@ render. The optional `props` parameter carries text styling configuration.
 
 Text directives MUST appear between a matching open/close pair.
 
+When `props.bg` is provided, the renderer MUST apply that background color only
+to cells occupied by glyphs emitted by that text directive. It MUST NOT fill
+trailing cells or other cells in the text element's bounding rectangle that are
+not occupied by emitted glyphs. When `props.bg` is omitted, text rendering MUST
+NOT override the background already present in each glyph cell; element
+backgrounds established by `open({ bg })` remain in effect, and the terminal
+default remains in effect where no element background applies.
+
 The set of styling properties accepted by `props` is part of the current
 implementation surface and may be extended.
 
@@ -636,9 +644,9 @@ The `open()` constructor currently accepts the following property groups in its
 `props` parameter:
 
 - **`layout`** — sizing (width and height, specified via sizing helpers),
-  padding (per-side), alignment (currently numeric enum values, with a planned
-  transition to string literals), direction (top-to-bottom or left-to-right),
-  and gap
+  padding (per-side), alignment (`alignX`: `"left"` | `"center"` | `"right"`;
+  `alignY`: `"top"` | `"center"` | `"bottom"`, defaulting to left/top when
+  omitted), direction (top-to-bottom or left-to-right), and gap
 - **`border`** — per-side border widths and border color
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
@@ -647,13 +655,12 @@ The `open()` constructor currently accepts the following property groups in its
   attach points, z-index)
 - **`scroll`** — scroll container configuration
 
-The `text()` constructor currently accepts: `color`, `fontSize`,
-`letterSpacing`, `lineHeight`, and attribute flags (`bold`, `italic`,
-`underline`, `strikethrough`).
+The `text()` constructor accepts: `color`, `bg`, `fontSize`, `letterSpacing`,
+`lineHeight`, and attribute flags (`bold`, `italic`, `underline`,
+`strikethrough`).
 
 These property groups represent the current implementation surface. New groups
-and fields have been added incrementally and more may follow. Alignment values
-are expected to transition from numeric to string-literal form.
+and fields have been added incrementally and more may follow.
 
 **Border width and layout interaction.** In the underlying layout engine (Clay),
 border configuration does not affect layout computation. This is Clay's intended

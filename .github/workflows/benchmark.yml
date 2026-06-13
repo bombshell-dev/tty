@@ -5,44 +5,149 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # `workflow_dispatch` allows CodSpeed to trigger backtest
-  # performance analysis in order to generate initial data.
+  # `workflow_dispatch` allows CodSpeed to trigger
   workflow_dispatch:
 
-permissions:
-  contents: read
-  id-token: write
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  benchmarks:
-    name: Run benchmarks
+  build:
+    name: Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # clone repo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
+        with:
+          deno-version: v2.x
+
+      - name: Cache WASM
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        id: wasm-cache
+        with:
+          path: |
+            clayterm.wasm
+            wasm.ts
+          key: wasm-${{ hashFiles('Makefile', 'src/**', 'tasks/bundle-wasm.ts') }}
+
+      - name: Build WASM
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: make
+
+      - name: Cache dependencies
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        id: deno-cache
+        with:
+          path: node_modules
+          key: deno-${{ hashFiles('deno.lock') }}
+
+      - name: Install dependencies
+        if: steps.deno-cache.outputs.cache-hit != 'true'
+        run: deno install
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-build
+          retention-days: 1
+          path: wasm.ts
+
+  simulation:
+    name: Run benchmarks (simulation)
+    needs: build
+    runs-on: codspeed-macro
+    permissions:
+      contents: read # clone repo
+      id-token: write # upload benchmark results to codspeed
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: true
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Setup Deno
-        uses: denoland/setup-deno@v2
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
         with:
           deno-version: v2.x
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22
+          node-version: 24
 
-      - name: Build WASM
-        run: make
+      - name: Download build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bench-build
+
+      - name: Restore dependencies
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        id: deno-cache
+        with:
+          path: node_modules
+          key: deno-${{ hashFiles('deno.lock') }}
 
       - name: Install dependencies
+        if: steps.deno-cache.outputs.cache-hit != 'true'
         run: deno install
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@9d332c4d90b43981c3e55ae8e38e68709996240f # v4.17.0
         with:
           mode: simulation
           # IMPORTANT! deno task bench fails in CI due to incompatible V8 bindings
           run: node bench/mod.ts
+
+  walltime:
+    name: Run benchmarks (walltime)
+    needs: build
+    runs-on: codspeed-macro
+    permissions:
+      contents: read # clone repo
+      id-token: write # upload benchmark results to codspeed
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
+        with:
+          deno-version: v2.x
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Download build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bench-build
+
+      - name: Restore dependencies
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        id: deno-cache
+        with:
+          path: node_modules
+          key: deno-codspeed-${{ runner.arch }}-${{ hashFiles('deno.lock') }}
+
+      - name: Install dependencies
+        if: steps.deno-cache.outputs.cache-hit != 'true'
+        run: deno install
+
+      - name: Run process startup benchmarks
+        uses: CodSpeedHQ/action@9d332c4d90b43981c3e55ae8e38e68709996240f # v4.17.0
+        with:
+          mode: walltime
+          run: node bench/startup.bench.ts

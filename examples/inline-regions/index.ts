@@ -3,12 +3,15 @@
  *
  * Shows the region lifecycle:
  *   1. Allocate space with raw newlines
- *   2. DSR — queries cursor position to compute `top`
+ *   2. Device Status Report (DSR) — queries cursor position to compute `top`
  *   3. CUP mode (all frames) — renders at `top`
  *   4. Commit — restore cursor past region, advance with \n
  */
 
-import { main, type Operation, sleep, until } from "effection";
+import { Buffer } from "node:buffer";
+import { readSync } from "node:fs";
+import process from "node:process";
+import { ensure, main, type Operation, sleep, until } from "effection";
 import {
   close,
   createInput,
@@ -29,9 +32,11 @@ import { cursor, settings } from "../../settings.ts";
 import { validated } from "../../validate.ts";
 
 const encode = (s: string) => new TextEncoder().encode(s);
-const write = (b: Uint8Array) => Deno.stdout.writeSync(b);
+const write = (b: Uint8Array) => process.stdout.write(Buffer.from(b));
 
+const WHITE = rgba(255, 255, 255);
 const GREEN = rgba(80, 250, 123);
+const GREEN_BG = rgba(20, 70, 38);
 const GRAY = rgba(100, 100, 100);
 const CYAN = rgba(139, 233, 253);
 
@@ -45,113 +50,18 @@ const RAINBOW = [RED, ORANGE, YELLOW, NGREEN, BLUE, VIOLET];
 
 const BRAILLE = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-function* queryCursor(): Operation<CursorEvent> {
-  let parser = yield* until(createInput({ escLatency: 100 }));
-  write(DSR());
-
-  let buf = new Uint8Array(32);
-  while (true) {
-    let n = Deno.stdin.readSync(buf);
-    if (n === null) continue;
-    let result = parser.scan(buf.subarray(0, n));
-    for (let ev of result.events) {
-      if (ev.type === "cursor") {
-        return ev;
-      }
-    }
-  }
-}
-
-function waitKey() {
-  let buf = new Uint8Array(32);
-  while (true) {
-    let n = Deno.stdin.readSync(buf);
-    if (n === null) continue;
-    for (let i = 0; i < n; i++) {
-      if (buf[i] === 0x03) {
-        Deno.stdin.setRaw(false);
-        write(SHOWCURSOR());
-        Deno.exit(0);
-      }
-    }
-    return;
-  }
-}
-
-function box(msg: string, fg: number, border: number): Op[] {
-  return [
-    open("root", {
-      layout: { width: grow(), height: grow(), direction: "ttb" },
-    }),
-    open("box", {
-      layout: {
-        width: grow(),
-        height: grow(),
-        direction: "ttb",
-        padding: { left: 1 },
-        alignY: 2,
-      },
-      border: {
-        color: border,
-        left: 1,
-        right: 1,
-        top: 1,
-        bottom: 1,
-      },
-      cornerRadius: { tl: 1, tr: 1, bl: 1, br: 1 },
-    }),
-    text(msg, { color: fg }),
-    close(),
-    close(),
-  ];
-}
-
-function* transaction(
-  height: number,
-  renderFrame: (frame: number) => Op[],
-  frames: number,
-  interval: number,
-): Operation<void> {
-  let { columns } = Deno.consoleSize();
-
-  write(encode("\n".repeat(height)));
-
-  let pos = yield* queryCursor();
-  /** 1-based terminal row where the region starts */
-  let row = pos.row - height + 1;
-
-  write(ESC("7"));
-  let tty = settings(cursor(false));
-  write(tty.apply);
-
-  let term = validated(
-    yield* until(createTerm({ width: columns, height })),
-  );
-  for (let i = 0; i < frames; i++) {
-    let result = term.render(renderFrame(i), { row });
-    write(new Uint8Array(result.output));
-    yield* sleep(interval);
-  }
-
-  write(tty.revert);
-  write(ESC("8"));
-  write(encode("\n"));
-}
-
-function say(msg: string) {
-  write(encode(msg + "\n"));
-}
-
-function pause() {
-  waitKey();
-  write(encode("\n"));
-}
-
 await main(function* () {
-  let { columns } = Deno.consoleSize();
-  Deno.stdin.setRaw(true);
+  let { columns } = terminalSize();
+  setRawMode(true);
   let tty = settings(cursor(false));
   write(tty.apply);
+
+  yield* ensure(() => {
+    // SGR reset sequence
+    setRawMode(false);
+    write(CSI("0m"));
+    write(tty.revert);
+  });
 
   // Introduction
   say("Clayterm can render entire scenes, but it can also render");
@@ -227,7 +137,7 @@ await main(function* () {
               direction: "ltr",
             },
           }),
-          text("✓ Frobnicated", { color: GREEN }),
+          text(" ✓ Frobnicated ", { color: WHITE, bg: GREEN_BG }),
           close(),
         ];
       }
@@ -338,6 +248,145 @@ await main(function* () {
 
   write(CSI("0m"));
   write(encode("\n"));
-  write(tty.revert);
-  Deno.stdin.setRaw(false);
 });
+
+function terminalSize(): { columns: number; rows: number } {
+  return process.stdout.isTTY
+    ? {
+      columns: process.stdout.columns ?? 80,
+      rows: process.stdout.rows ?? 24,
+    }
+    : { columns: 80, rows: 24 };
+}
+
+function setRawMode(enabled: boolean): void {
+  if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+    process.stdin.setRawMode(enabled);
+  }
+}
+
+function* queryCursor(): Operation<CursorEvent> {
+  let parser = yield* until(createInput({ escLatency: 100 }));
+  write(DSR());
+
+  let buf = Buffer.allocUnsafe(32);
+  while (true) {
+    let n: number;
+    try {
+      n = readSync(process.stdin.fd, buf, 0, buf.length, null);
+    } catch (error) {
+      if (
+        error && typeof error === "object" &&
+        ("code" in error && (error.code === "EAGAIN" || error.code === "EINTR"))
+      ) {
+        continue;
+      }
+      throw error;
+    }
+
+    if (n === 0) continue;
+    let result = parser.scan(buf.subarray(0, n));
+    for (let ev of result.events) {
+      if (ev.type === "cursor") {
+        return ev;
+      }
+    }
+  }
+}
+
+function waitKey(): void {
+  let buf = Buffer.allocUnsafe(32);
+  while (true) {
+    let n: number;
+    try {
+      n = readSync(process.stdin.fd, buf, 0, buf.length, null);
+    } catch (error) {
+      if (
+        error && typeof error === "object" &&
+        ("code" in error && (error.code === "EAGAIN" || error.code === "EINTR"))
+      ) {
+        continue;
+      }
+      throw error;
+    }
+
+    if (n === 0) continue;
+    for (let i = 0; i < n; i++) {
+      if (buf[i] === 0x03) {
+        setRawMode(false);
+        write(SHOWCURSOR());
+        process.exit(0);
+      }
+    }
+    return;
+  }
+}
+
+function box(msg: string, fg: number, border: number): Op[] {
+  return [
+    open("root", {
+      layout: { width: grow(), height: grow(), direction: "ttb" },
+    }),
+    open("box", {
+      layout: {
+        width: grow(),
+        height: grow(),
+        direction: "ttb",
+        padding: { left: 1 },
+        alignY: "center",
+      },
+      border: {
+        color: border,
+        left: 1,
+        right: 1,
+        top: 1,
+        bottom: 1,
+      },
+      cornerRadius: { tl: 1, tr: 1, bl: 1, br: 1 },
+    }),
+    text(msg, { color: fg }),
+    close(),
+    close(),
+  ];
+}
+
+function* transaction(
+  height: number,
+  renderFrame: (frame: number) => Op[],
+  frames: number,
+  interval: number,
+): Operation<void> {
+  let { columns } = terminalSize();
+
+  write(encode("\n".repeat(height)));
+
+  let pos = yield* queryCursor();
+  /** 1-based terminal row where the region starts */
+  let row = pos.row - height + 1;
+
+  write(ESC("7"));
+  let tty = settings(cursor(false));
+  write(tty.apply);
+
+  let term = validated(
+    yield* until(createTerm({ width: columns, height })),
+  );
+  for (let i = 0; i < frames; i++) {
+    let result = term.render(renderFrame(i), { row });
+    write(new Uint8Array(result.output));
+    yield* sleep(interval);
+  }
+
+  write(tty.revert);
+  write(ESC("8"));
+  write(encode("\n"));
+}
+
+function say(msg: string) {
+  write(encode(msg + "\n"));
+}
+
+function pause(): void {
+  waitKey();
+  write(encode("\n"));
+}

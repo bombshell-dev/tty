@@ -23,7 +23,8 @@ for consumers.
 
 ### Examples
 
-The application in this demo uses Clayterm for all layout and input parsing
+See this keyboard example and more in the [examples folder](examples/README.md).
+This demo uses Clayterm for all layout and input parsing.
 
 #### Keyboard Events
 

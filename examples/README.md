@@ -6,7 +6,8 @@ with information about your terminal, shell, operating system and any other
 information that could be pertinent to reproducing the issue.
 
 > [!NOTE]
-> Run the commands in this document from the repository root.
+> Run the commands in this document from the repository root. These examples use
+> `node:` terminal APIs so the same files can be run with either Deno or Node.
 
 ## Prerequisites
 
@@ -24,6 +25,8 @@ Run it with:
 
 ```sh
 deno run examples/keyboard/index.ts
+# or
+node examples/keyboard/index.ts
 ```
 
 What it shows:
@@ -40,6 +43,39 @@ Related files:
   events
 - `examples/keyboard/use-stdin.ts` adapts stdin into a byte stream for the demo
 
+#### Keyboard Events
+
+The input parser decodes raw terminal bytes into structured events. Here you can
+see each key event as the string "hello world" is typed.
+
+![Keyboard events demo](keyboard/keyboard-key-events.gif)
+
+#### Pointer Events
+
+Here we see hover styles applied to UI elements in response to the pointer
+state. Clay drives the hit testing; no manual coordinate math required.
+
+![Pointer events demo](keyboard/keyboard-pointer-events.gif)
+
+## Transitions
+
+Paths: `examples/keyboard/transitions.ts` and
+`examples/keyboard/clay-transitions.ts`
+
+Run them with:
+
+```sh
+deno run examples/keyboard/transitions.ts
+# or
+deno run examples/keyboard/clay-transitions.ts
+```
+
+What they show:
+
+- element transitions driven by changing layout and style properties
+- renderer `animating` state for scheduling follow-up frames
+- color and layout interpolation in an interactive keyboard/sidebar demo
+
 ## Inline Regions
 
 Path: `examples/inline-regions/index.ts`
@@ -48,12 +84,15 @@ Run it with:
 
 ```sh
 deno run examples/inline-regions/index.ts
+# or
+node examples/inline-regions/index.ts
 ```
 
 What it shows:
 
 - rendering animated regions into normal terminal scrollback
-- querying cursor position with DSR to place later frames correctly
+- querying cursor position with Device Status Report (DSR) to place later frames
+  correctly
 - updating a previously allocated region without taking over the whole screen
 - small animated demos including a spinner, a progress bar, and a nyan-cat-style
   sequence

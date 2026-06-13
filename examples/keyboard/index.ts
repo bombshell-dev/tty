@@ -1,4 +1,6 @@
 // deno-lint-ignore-file no-fallthrough
+import { Buffer } from "node:buffer";
+import process from "node:process";
 import {
   createChannel,
   each,
@@ -42,6 +44,160 @@ const highlight = rgba(255, 220, 80);
 
 const KEY_W = 5;
 const GAP = 1;
+const hovered = rgba(80, 80, 100);
+
+const flagNames:
+  (keyof Omit<AppContext, "mode" | "event" | "logged" | "log" | "entered">)[] =
+    [
+      "Disambiguate escape codes",
+      "Report event types",
+      "Report alternate keys",
+      "Report all keys as escapes",
+      "Report associated text",
+    ];
+
+const logEntries: { key: string; name: keyof EventFilter }[] = [
+  { key: "a", name: "keydown" },
+  { key: "b", name: "keyup" },
+  { key: "c", name: "keyrepeat" },
+  { key: "d", name: "mousedown" },
+  { key: "e", name: "mouseup" },
+  { key: "f", name: "mousemove" },
+  { key: "g", name: "wheel" },
+  { key: "h", name: "resize" },
+  { key: "i", name: "pointerenter" },
+  { key: "j", name: "pointerleave" },
+  { key: "k", name: "pointerclick" },
+];
+
+await main(function* () {
+  let { columns, rows } = terminalSize();
+
+  setRawMode(true);
+
+  let stdin = yield* useStdin();
+  let input = useInput(stdin);
+
+  let term = yield* until(createTerm({ width: columns, height: rows }));
+
+  let tty = settings(alternateBuffer(), cursor(false));
+  writeStdout(tty.apply);
+
+  let modality = recognizer();
+  let context = modality.next().value;
+
+  let flags = ttyFlags(context);
+  writeStdout(flags.apply);
+
+  yield* ensure(() => {
+    setRawMode(false);
+    writeStdout(flags.revert);
+    writeStdout(tty.revert);
+  });
+
+  let { output } = term.render(keyboard(context));
+
+  writeStdout(output);
+
+  let pointer = {
+    events: createChannel<PointerEvent, void>(),
+    state: undefined as { x: number; y: number; down: boolean } | undefined,
+  };
+
+  for (let event of yield* each(merge(input, pointer.events))) {
+    if (event.type === "keydown" && event.ctrl && event.key === "c") {
+      break;
+    }
+    if (event.type === "pointerenter") {
+      context.entered.add(event.id);
+    }
+    if (event.type === "pointerleave") {
+      context.entered.delete(event.id);
+    }
+
+    let prev = context.logged;
+    context = modality.next(event).value;
+    if (context.event && context.log[context.event.type as keyof EventFilter]) {
+      context = { ...context, logged: context.event };
+    } else {
+      context = { ...context, logged: prev };
+    }
+
+    flags = updateFlagsIfChanged(flags, ttyFlags(context));
+
+    if (context["Capture mouse events"]) {
+      if ("x" in event) {
+        pointer.state = {
+          x: event.x,
+          y: event.y,
+          down: event.type === "mousedown",
+        };
+      }
+    } else {
+      pointer.state = undefined;
+    }
+
+    let { output, events } = term.render(keyboard(context), {
+      pointer: pointer.state,
+    });
+
+    for (let event of events) {
+      yield* pointer.events.send(event);
+    }
+
+    writeStdout(output);
+
+    yield* each.next();
+  }
+});
+
+function terminalSize(): { columns: number; rows: number } {
+  return process.stdout.isTTY
+    ? {
+      columns: process.stdout.columns ?? 80,
+      rows: process.stdout.rows ?? 24,
+    }
+    : { columns: 80, rows: 24 };
+}
+
+function setRawMode(enabled: boolean): void {
+  if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+    process.stdin.setRawMode(enabled);
+  }
+}
+
+function writeStdout(bytes: Uint8Array): void {
+  process.stdout.write(Buffer.from(bytes));
+}
+
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function equalSetting(a: Setting, b: Setting): boolean {
+  return equalBytes(a.apply, b.apply) && equalBytes(a.revert, b.revert);
+}
+
+// Avoid rewriting terminal input modes on every mousemove. Deno's `node:` TTY
+// compatibility layer on Windows is sensitive to that churn even when the
+// effective settings are unchanged.
+function updateFlagsIfChanged(current: Setting, next: Setting): Setting {
+  if (equalSetting(current, next)) {
+    return current;
+  }
+
+  writeStdout(current.revert);
+  writeStdout(next.apply);
+  return next;
+}
 
 interface KeyDef {
   label: string;
@@ -58,8 +214,6 @@ function matches(k: KeyDef, event: InputEvent | PointerEvent): boolean {
     event.code.toUpperCase() === k.code.toUpperCase();
 }
 
-const hovered = rgba(80, 80, 100);
-
 function key(ops: Op[], k: KeyDef, ctx: AppContext): void {
   let pressed = ctx.event && matches(k, ctx.event);
   let hover = ctx.entered.has(`key:${k.code}`);
@@ -71,8 +225,8 @@ function key(ops: Op[], k: KeyDef, ctx: AppContext): void {
         width: fixed(w),
         height: grow(),
         padding: { left: 1, right: 1 },
-        alignX: 2,
-        alignY: 2,
+        alignX: "center",
+        alignY: "center",
       },
       bg,
       border: hover
@@ -328,30 +482,6 @@ function toggle(ops: Op[], enabled: boolean, name: string): void {
   );
 }
 
-const flagNames:
-  (keyof Omit<AppContext, "mode" | "event" | "logged" | "log" | "entered">)[] =
-    [
-      "Disambiguate escape codes",
-      "Report event types",
-      "Report alternate keys",
-      "Report all keys as escapes",
-      "Report associated text",
-    ];
-
-const logEntries: { key: string; name: keyof EventFilter }[] = [
-  { key: "a", name: "keydown" },
-  { key: "b", name: "keyup" },
-  { key: "c", name: "keyrepeat" },
-  { key: "d", name: "mousedown" },
-  { key: "e", name: "mouseup" },
-  { key: "f", name: "mousemove" },
-  { key: "g", name: "wheel" },
-  { key: "h", name: "resize" },
-  { key: "i", name: "pointerenter" },
-  { key: "j", name: "pointerleave" },
-  { key: "k", name: "pointerclick" },
-];
-
 function logToggle(
   ops: Op[],
   entries: typeof logEntries,
@@ -435,8 +565,8 @@ function keyboard(ctx: AppContext): Op[] {
         width: grow(),
         height: grow(),
         direction: "ttb",
-        alignX: 2,
-        alignY: 2,
+        alignX: "center",
+        alignY: "center",
         padding: { left: 2, top: 1 },
       },
     }),
@@ -453,7 +583,7 @@ function keyboard(ctx: AppContext): Op[] {
       layout: {
         width: grow(),
         direction: "ltr",
-        alignY: 0,
+        alignY: "top",
         padding: { bottom: 1 },
       },
     }),
@@ -504,7 +634,7 @@ function keyboard(ctx: AppContext): Op[] {
 
   // config panel (right)
   ops.push(
-    open("", { layout: { width: grow(), direction: "ltr", alignX: 1 } }),
+    open("", { layout: { width: grow(), direction: "ltr", alignX: "right" } }),
   );
   configPanel(ops, ctx);
   ops.push(close());
@@ -518,7 +648,7 @@ function keyboard(ctx: AppContext): Op[] {
       layout: {
         direction: "ltr",
         gap: 3,
-        alignY: 1,
+        alignY: "bottom",
         padding: { left: 1, right: 1, top: 1, bottom: 1 },
       },
       border: { color: kbColor, left: 1, right: 1, top: 1, bottom: 1 },
@@ -561,90 +691,6 @@ function ttyFlags(ctx: AppContext): Setting {
   }
   return settings(...parts);
 }
-
-await main(function* () {
-  let { columns, rows } = Deno.stdout.isTerminal()
-    ? Deno.consoleSize()
-    : { columns: 80, rows: 24 };
-
-  Deno.stdin.setRaw(true);
-
-  let stdin = yield* useStdin();
-  let input = useInput(stdin);
-
-  let term = yield* until(createTerm({ width: columns, height: rows }));
-
-  let tty = settings(alternateBuffer(), cursor(false));
-  Deno.stdout.writeSync(tty.apply);
-
-  let modality = recognizer();
-  let context = modality.next().value;
-
-  let flags = ttyFlags(context);
-  Deno.stdout.writeSync(flags.apply);
-
-  yield* ensure(() => {
-    Deno.stdout.writeSync(flags.revert);
-    Deno.stdout.writeSync(tty.revert);
-  });
-
-  let { output } = term.render(keyboard(context));
-
-  Deno.stdout.writeSync(output);
-
-  let pointer = {
-    events: createChannel<PointerEvent, void>(),
-    state: undefined as { x: number; y: number; down: boolean } | undefined,
-  };
-
-  for (let event of yield* each(merge(input, pointer.events))) {
-    if (event.type === "keydown" && event.ctrl && event.key === "c") {
-      break;
-    }
-    if (event.type === "pointerenter") {
-      context.entered.add(event.id);
-    }
-    if (event.type === "pointerleave") {
-      context.entered.delete(event.id);
-    }
-
-    let prev = context.logged;
-    context = modality.next(event).value;
-    if (context.event && context.log[context.event.type as keyof EventFilter]) {
-      context = { ...context, logged: context.event };
-    } else {
-      context = { ...context, logged: prev };
-    }
-
-    Deno.stdout.writeSync(flags.revert);
-    flags = ttyFlags(context);
-    Deno.stdout.writeSync(flags.apply);
-
-    if (context["Capture mouse events"]) {
-      if ("x" in event) {
-        pointer.state = {
-          x: event.x,
-          y: event.y,
-          down: event.type === "mousedown",
-        };
-      }
-    } else {
-      pointer.state = undefined;
-    }
-
-    let { output, events } = term.render(keyboard(context), {
-      pointer: pointer.state,
-    });
-
-    for (let event of events) {
-      yield* pointer.events.send(event);
-    }
-
-    Deno.stdout.writeSync(output);
-
-    yield* each.next();
-  }
-});
 
 function* recognizer(): Iterator<AppContext, never, InputEvent | PointerEvent> {
   let current: AppContext = {

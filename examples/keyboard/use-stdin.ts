@@ -8,12 +8,12 @@ import {
   type Stream,
   until,
 } from "effection";
+import process from "node:process";
 
 export function useStdin(): Operation<Stream<Uint8Array, void>> {
   return resource(function* (provide) {
     let channel = createChannel<Uint8Array, void>();
-
-    let iterator = Deno.stdin.readable[Symbol.asyncIterator]();
+    let iterator = process.stdin.iterator() as AsyncIterator<Uint8Array>;
 
     yield* spawn(function* () {
       let next = yield* until(iterator.next());

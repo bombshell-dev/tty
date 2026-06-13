@@ -1,0 +1,120 @@
+name: Size Report
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  size-report:
+    name: Size Report
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          submodules: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: setup deno
+        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
+        with:
+          deno-version: v2.x
+
+      - name: setup node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v4
+        with:
+          node-version: 24
+
+      - name: build (head)
+        run: make && deno task build:npm 0.0.0
+
+      - name: measure sizes (head)
+        run: |
+          cp tasks/measure-size.ts /tmp/measure-size.ts
+          deno run --allow-read /tmp/measure-size.ts > /tmp/head-sizes.json
+
+      - name: find merge base
+        id: base
+        run: |
+          SHA=$(git merge-base HEAD origin/${{ github.base_ref }})
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+      - name: checkout base commit
+        run: |
+          git checkout ${{ steps.base.outputs.sha }}
+          git submodule update --init --recursive
+
+      - name: build (base)
+        run: make && deno task build:npm 0.0.0
+
+      - name: measure sizes (base)
+        run: deno run --allow-read /tmp/measure-size.ts > /tmp/base-sizes.json
+
+      - name: post size report
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const head = JSON.parse(fs.readFileSync('/tmp/head-sizes.json', 'utf8'));
+            const base = JSON.parse(fs.readFileSync('/tmp/base-sizes.json', 'utf8'));
+
+            const total = (arr) => arr.reduce((acc, f) => acc + f.size, 0);
+            const headTotal = total(head);
+            const baseTotal = total(base);
+
+            const delta = headTotal - baseTotal;
+
+            const fmt = (n) => `${(n / 1024).toFixed(1)} KB`;
+            const fmtDelta = (n) =>
+              `${n > 0 ? '+' : ''}${(n / 1024).toFixed(1)} KB`;
+
+            if (delta === 0) return;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.startsWith('<!-- size-report -->'));
+
+            // Skip if the head sizes haven't changed since the last push
+            if (existing) {
+              const match = existing.body.match(/<!-- sizes:(\d+) -->/);
+              if (match && Number(match[1]) === headTotal) return;
+            }
+
+            const takeaway = delta < 0 ? 'Size Reduced' : 'Size Increased';
+
+            const body = [
+              '<!-- size-report -->',
+              `<!-- sizes:${headTotal} -->`,
+              `**${takeaway}** — ${fmtDelta(delta)}`,
+              '',
+              `${fmt(headTotal)} unpacked`,
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

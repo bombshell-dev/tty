@@ -278,7 +278,10 @@ static void render_rect(struct Clayterm *ct, int x0, int y0, int x1, int y1,
 }
 
 static void render_text(struct Clayterm *ct, int x0, int y0,
-                        Clay_TextRenderData *t) {
+                        Clay_RenderCommand *cmd) {
+
+  Clay_TextRenderData *t = &cmd->renderData.text;
+  uint32_t bg = (uint32_t)(uintptr_t)cmd->userData;
   uint32_t fg = color(t->textColor);
 
   /* text attrs are packed into the alpha channel by reduce() */
@@ -300,7 +303,7 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
     if (cw < 0)
       cw = 1;
     if (cw > 0) {
-      setcell(ct, x, y0, cp, fg, ATTR_DEFAULT);
+      setcell(ct, x, y0, cp, fg, bg);
       x += cw;
     }
     p += n;
@@ -591,6 +594,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
 
     case OP_TEXT: {
       uint32_t col = rd(buf, len, &i);
+      uint32_t bg = rd(buf, len, &i);
       uint32_t cfg = rd(buf, len, &i);
       uint32_t str_len = rd(buf, len, &i);
       int str_words = (str_len + 3) / 4;
@@ -600,6 +604,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       Clay_String text = {.length = (int32_t)str_len, .chars = str_chars};
 
       Clay_TextElementConfig config = {0};
+      config.userData = (void *)(uintptr_t)bg;
       config.textColor = unpack_color(col);
       config.fontSize = cfg & 0xff;
       config.fontId = (cfg >> 8) & 0xff;
@@ -643,7 +648,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       render_rect(ct, x0, y0, x1, y1, &cmd->renderData.rectangle);
       break;
     case CLAY_RENDER_COMMAND_TYPE_TEXT:
-      render_text(ct, x0, y0, &cmd->renderData.text);
+      render_text(ct, x0, y0, cmd);
       break;
     case CLAY_RENDER_COMMAND_TYPE_BORDER:
       render_border(ct, x0, y0, x1, y1, &cmd->renderData.border);

@@ -139,8 +139,8 @@ function button(
       layout: {
         direction: "ltr",
         padding: { left: 2, right: 2, top: 0, bottom: 0 },
-        alignX: 2,
-        alignY: 2,
+        alignX: "center",
+        alignY: "center",
         height: grow(),
       },
       bg: hovered ? BTN_HOVER : BTN_DEFAULT,
@@ -172,7 +172,7 @@ function view(state: State): Op[] {
         direction: "ltr",
         padding: { left: 2, right: 2, top: 0, bottom: 0 },
         gap: 2,
-        alignY: 2,
+        alignY: "center",
       },
       bg: TOPBAR_BG,
     }),
@@ -237,8 +237,8 @@ function view(state: State): Op[] {
           layout: {
             width: grow(),
             height: grow(),
-            alignX: 2,
-            alignY: 2,
+            alignX: "center",
+            alignY: "center",
           },
           border: {
             color: borderColor,
