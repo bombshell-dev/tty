@@ -406,6 +406,26 @@ Text directives MUST appear between a matching open/close pair.
 The set of styling properties accepted by `props` is part of the current
 implementation surface and may be extended.
 
+#### 8.3.4 snapshot
+
+```
+snapshot(ops: Op[]): Op
+```
+
+Creates a snapshot by pre-packing the given directive array into its transfer
+encoding. The returned value is an `Op` and can appear anywhere in a directive
+array where the original ops would have appeared. The internal representation is
+opaque.
+
+When the renderer encounters a snapshot during transfer, it copies the
+pre-packed bytes directly into the command buffer without re-encoding. The
+snapshot's ops MUST be structurally balanced (every `open` matched by a
+`close`).
+
+Snapshots enable higher-level frameworks to implement dirty tracking: a
+component whose inputs have not changed can reuse a previously created snapshot,
+avoiding the cost of re-packing its subtree each frame.
+
 ### 8.4 Sizing helpers
 
 These functions produce sizing-axis values for use in element layout
@@ -462,12 +482,23 @@ that do not match a preceding open, is invalid input. Callers SHOULD validate
 directive arrays before rendering. The renderer's behavior when given an invalid
 directive array is unspecified by this specification.
 
+A snapshot is semantically equivalent to splicing its source ops into the array
+at the snapshot's position. The renderer MUST produce identical layout and
+output regardless of whether ops are provided directly or via a snapshot.
+
 ### 9.2 Transfer to the WASM module
 
 As part of the render transaction, the directive array is transferred into a
 form that the WASM module can process. This transfer is handled internally by
 the renderer and is not an operation the caller performs or observes. The
 transfer mechanism is an implementation detail described in Section 12.1.
+
+If a frame exceeds transfer-buffer capacity while packing string content, the
+renderer MUST throw a descriptive `RangeError` that identifies the condition as
+a transfer-buffer, frame-capacity, or packing overflow. The renderer MUST NOT
+expose only the raw host-level TypedArray message `"offset is out of bounds"`
+for this condition. The error message SHOULD direct callers to render a smaller
+visible slice or reduce frame content.
 
 ### 9.3 Directive identity
 

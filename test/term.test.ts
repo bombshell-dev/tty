@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
-import { close, fixed, grow, open, rgba, text } from "../ops.ts";
+import {
+  close,
+  fixed,
+  grow,
+  type Op,
+  open,
+  rgba,
+  snapshot,
+  text,
+} from "../ops.ts";
 import { print } from "./print.ts";
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -188,6 +197,99 @@ describe("term", () => {
 
       expect(result.info.get("nonexistent")).toBeUndefined();
       expect(result.info.get("")).toBeUndefined();
+    });
+  });
+
+  describe("snapshot", () => {
+    it("produces identical output to direct ops", async () => {
+      let ops = [
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+          bg: rgba(0, 0, 128),
+        }),
+        open("child", {
+          layout: {
+            width: grow(),
+            padding: { left: 1 },
+            direction: "ttb",
+          },
+          border: {
+            color: rgba(255, 255, 255),
+            left: 1,
+            right: 1,
+            top: 1,
+            bottom: 1,
+          },
+        }),
+        text("snapshot test"),
+        close(),
+        close(),
+      ];
+
+      let direct = await createTerm({ width: 40, height: 10 });
+      let snapped = await createTerm({ width: 40, height: 10 });
+
+      let expected = direct.render(ops, { mode: "line" }).output;
+      let actual = snapped.render([snapshot(ops)], { mode: "line" }).output;
+
+      expect(decode(actual)).toEqual(decode(expected));
+    });
+
+    it("renders inside another element", async () => {
+      let child = snapshot([
+        open("child", {
+          layout: { width: grow(), direction: "ttb" },
+        }),
+        text("inner"),
+        close(),
+      ]);
+
+      let direct = await createTerm({ width: 20, height: 5 });
+      let snapped = await createTerm({ width: 20, height: 5 });
+
+      let wrapper = (content: Op[]) => [
+        open("root", {
+          layout: {
+            width: grow(),
+            height: grow(),
+            direction: "ttb",
+            padding: { left: 1, top: 1 },
+          },
+          border: {
+            color: rgba(255, 255, 255),
+            left: 1,
+            right: 1,
+            top: 1,
+            bottom: 1,
+          },
+        }),
+        ...content,
+        close(),
+      ];
+
+      let expected = direct.render(
+        wrapper([
+          open("child", {
+            layout: { width: grow(), direction: "ttb" },
+          }),
+          text("inner"),
+          close(),
+        ]),
+        { mode: "line" },
+      ).output;
+
+      let actual = snapped.render(
+        wrapper([child]),
+        { mode: "line" },
+      ).output;
+
+      expect(decode(actual)).toEqual(decode(expected));
+      expect(trim(print(decode(actual), 20, 5))).toEqual(`
+┌──────────────────┐
+│inner             │
+│                  │
+│                  │
+└──────────────────┘`.trim());
     });
   });
 

@@ -89,6 +89,34 @@ const Floating = Type.Object({
   zIndex: Type.Optional(u16),
 });
 
+const TransitionProperty = Type.Union([
+  Type.Literal("x"),
+  Type.Literal("y"),
+  Type.Literal("position"),
+  Type.Literal("width"),
+  Type.Literal("height"),
+  Type.Literal("size"),
+  Type.Literal("bg"),
+  Type.Literal("overlay"),
+  Type.Literal("borderColor"),
+  Type.Literal("borderWidth"),
+  Type.Literal("all"),
+]);
+
+const Easing = Type.Union([
+  Type.Literal("linear"),
+  Type.Literal("easeIn"),
+  Type.Literal("easeOut"),
+  Type.Literal("easeInOut"),
+]);
+
+const Transition = Type.Object({
+  duration: Type.Number({ minimum: 0 }),
+  easing: Type.Optional(Easing),
+  properties: Type.Array(TransitionProperty),
+  interactive: Type.Optional(Type.Boolean()),
+});
+
 /* ── Op types (discriminated on `directive`) ──────────────────────── */
 
 const CloseElement = Type.Object({ directive: Type.Literal(0x04) });
@@ -102,6 +130,7 @@ const OpenElement = Type.Object({
   border: Type.Optional(Border),
   clip: Type.Optional(Clip),
   floating: Type.Optional(Floating),
+  transition: Type.Optional(Transition),
 });
 
 const TextOp = Type.Object({

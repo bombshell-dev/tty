@@ -1,5 +1,5 @@
 import { describe, expect, it } from "./suite.ts";
-import { close, open, pack } from "../mod.ts";
+import { close, open, pack, snapshot } from "../mod.ts";
 
 describe("pack transition", () => {
   it("encodes a transition without throwing", () => {
@@ -38,5 +38,14 @@ describe("pack transition", () => {
     expect(withLen).toBeGreaterThan(withoutLen);
     // The transition block is exactly 8 bytes = 2 words.
     expect(withLen - withoutLen).toBe(2);
+  });
+
+  it("includes transition bytes when sizing snapshots", () => {
+    expect(() =>
+      snapshot([
+        open("a", { transition: { duration: 0.2, properties: ["x"] } }),
+        close(),
+      ])
+    ).not.toThrow();
   });
 });

@@ -5,6 +5,7 @@ import { easingByte, propertyMask } from "./ops-transitions.ts";
 const OP_OPEN_ELEMENT = 0x02;
 const OP_TEXT = 0x03;
 const OP_CLOSE_ELEMENT = 0x04;
+const OP_SNAPSHOT = 0x05;
 
 /* Property group masks for OPEN_ELEMENT */
 const PROP_LAYOUT = 0x01;
@@ -56,11 +57,27 @@ function packAxis(view: DataView, offset: number, axis: SizingAxis): number {
   return o;
 }
 
-function packString(view: DataView, bytes: Uint8Array, o: number): number {
+function packString(
+  view: DataView,
+  bytes: Uint8Array,
+  o: number,
+  end: number,
+  context: string,
+): number {
+  let paddedLength = Math.ceil(bytes.length / 4) * 4;
+  let next = o + 4 + paddedLength;
+  if (next > end) {
+    throw new RangeError(
+      `clayterm transfer buffer capacity exceeded while packing ${context} ` +
+        `(${next} byte offset, ${end} byte limit). ` +
+        `Render a smaller visible slice or reduce frame content.`,
+    );
+  }
+
   view.setUint32(o, bytes.length, true);
   o += 4;
   new Uint8Array(view.buffer).set(bytes, o);
-  o += Math.ceil(bytes.length / 4) * 4;
+  o += paddedLength;
   return o;
 }
 
@@ -86,7 +103,7 @@ export function pack(
         o += 4;
 
         let bytes = encoder.encode(op.id);
-        o = packString(view, bytes, o);
+        o = packString(view, bytes, o, end, "element id");
 
         let mask = 0;
         if (op.layout) mask |= PROP_LAYOUT;
@@ -196,6 +213,12 @@ export function pack(
         break;
       }
 
+      case OP_SNAPSHOT: {
+        new Uint8Array(mem).set(op.data, o);
+        o += op.data.length;
+        break;
+      }
+
       case OP_TEXT: {
         view.setUint32(o, OP_TEXT, true);
         o += 4;
@@ -212,7 +235,7 @@ export function pack(
         o += 4;
 
         let str = encoder.encode(op.content);
-        o = packString(view, str, o);
+        o = packString(view, str, o, end, "text content");
         break;
       }
     }
@@ -302,7 +325,12 @@ export interface Text {
   attrs?: number;
 }
 
-export type Op = OpenElement | Text | CloseElement;
+interface Snapshot {
+  directive: typeof OP_SNAPSHOT;
+  data: Uint8Array;
+}
+
+export type Op = OpenElement | Text | CloseElement | Snapshot;
 
 export function open(
   id: string,
@@ -320,4 +348,44 @@ export function text(
 
 export function close(): CloseElement {
   return { directive: OP_CLOSE_ELEMENT };
+}
+
+function packSize(ops: Op[]): number {
+  let n = 0;
+  for (let op of ops) {
+    switch (op.directive) {
+      case OP_CLOSE_ELEMENT:
+        n += 4;
+        break;
+      case OP_SNAPSHOT:
+        n += op.data.length;
+        break;
+      case OP_OPEN_ELEMENT: {
+        n += 4; // opcode
+        n += 4 + Math.ceil(encoder.encode(op.id).length / 4) * 4; // id string
+        n += 4; // mask
+        if (op.layout) n += 6 * 4 + 4 + 4 + 4; // 2 axes (3 words each) + pad + gap + align
+        if (op.bg !== undefined) n += 4;
+        if (op.cornerRadius) n += 4;
+        if (op.border) n += 8;
+        if (op.clip) n += 4;
+        if (op.floating) n += 16;
+        if (op.transition) n += 8;
+        break;
+      }
+      case OP_TEXT: {
+        n += 4 + 4 + 4; // opcode + color + cfg
+        n += 4 + Math.ceil(encoder.encode(op.content).length / 4) * 4; // string
+        break;
+      }
+    }
+  }
+  return n;
+}
+
+export function snapshot(ops: Op[]): Op {
+  let size = packSize(ops);
+  let buf = new ArrayBuffer(size);
+  let words = pack(ops, buf, 0, size);
+  return { directive: OP_SNAPSHOT, data: new Uint8Array(buf, 0, words * 4) };
 }
