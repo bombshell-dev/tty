@@ -190,9 +190,11 @@ export function pack(
           );
           o += 4;
 
-          // Resolved per-side attributes (CSS-like fallback expansion done
-          // here, not in C): fg/bg word pairs in top, right, bottom, left
-          // order. The C renderer consumes these as explicit values.
+          // Must match render_border() in src/clayterm.c.
+          // Resolve CSS-like side fallbacks here, then write eight required
+          // attribute words: fg/bg pairs in top, right, bottom, left order.
+          // C treats the presence and order of these words as a wire-format
+          // invariant and only consumes the explicit values.
           for (let side of [b.top, b.right, b.bottom, b.left]) {
             view.setUint32(o, sideFg(side, b.color), true);
             o += 4;

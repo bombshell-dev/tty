@@ -303,17 +303,26 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
 static void render_border(struct Clayterm *ct, int x0, int y0, int x1, int y1,
                           Clay_RenderCommand *cmd) {
   Clay_BorderRenderData *b = &cmd->renderData.border;
-  /* userData points at eight words in the command buffer carrying resolved
-   * per-side attributes as fg/bg pairs in top, right, bottom, left order.
-   * Fallback resolution (shared color/bg vs side overrides) happens on the
-   * TypeScript side; this renderer consumes explicit values only. The
-   * command buffer outlives the render pass within reduce(). */
+  /* Must match border packing in ops.ts.
+   * userData points at eight required words in the command buffer: resolved
+   * fg/bg pairs in top, right, bottom, left order. Fallback resolution
+   * (shared color/bg vs side overrides) happens on the TypeScript side; this
+   * renderer consumes explicit values only. The command buffer outlives the
+   * render pass within reduce(). Missing userData is a wire-format violation.
+   */
   const uint32_t *s = (const uint32_t *)cmd->userData;
-  uint32_t deffg = color(b->color);
-  uint32_t top_fg = s ? s[0] : deffg, top_bg = s ? s[1] : ATTR_DEFAULT;
-  uint32_t right_fg = s ? s[2] : deffg, right_bg = s ? s[3] : ATTR_DEFAULT;
-  uint32_t bot_fg = s ? s[4] : deffg, bot_bg = s ? s[5] : ATTR_DEFAULT;
-  uint32_t left_fg = s ? s[6] : deffg, left_bg = s ? s[7] : ATTR_DEFAULT;
+  if (s == NULL) {
+    __builtin_trap();
+  }
+
+  uint32_t top_fg = s[0];
+  uint32_t top_bg = s[1];
+  uint32_t right_fg = s[2];
+  uint32_t right_bg = s[3];
+  uint32_t bot_fg = s[4];
+  uint32_t bot_bg = s[5];
+  uint32_t left_fg = s[6];
+  uint32_t left_bg = s[7];
   int top = b->width.top > 0;
   int bot = b->width.bottom > 0;
   int left = b->width.left > 0;
