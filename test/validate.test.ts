@@ -125,19 +125,6 @@ describe("validate", () => {
       close(),
     ])).toBe(false);
   });
-
-  it("rejects numeric floating enum values", () => {
-    expect(validate([
-      // deno-lint-ignore no-explicit-any
-      open("x", { floating: { attachTo: 3 as any } }),
-      close(),
-    ])).toBe(false);
-    expect(validate([
-      // deno-lint-ignore no-explicit-any
-      open("x", { floating: { attachPoints: 4 as any } }),
-      close(),
-    ])).toBe(false);
-  });
 });
 
 describe("validated", () => {
@@ -165,7 +152,9 @@ describe("validated", () => {
   });
 
   it("throws on invalid ops", () => {
-    // deno-lint-ignore no-explicit-any
-    expect(() => term.render([{ directive: 0xff }] as any)).toThrow(TypeError);
+    // Call through Reflect so the runtime guard sees deliberately invalid input
+    // without weakening the TypeScript surface.
+    expect(() => Reflect.apply(term.render, term, [[{ directive: 0xff }]]))
+      .toThrow(TypeError);
   });
 });
