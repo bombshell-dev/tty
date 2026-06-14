@@ -274,8 +274,9 @@ describe("validated", () => {
       { directive: 0x02, id: "x", border: { color: 0xFF0000, top: {} } },
       close(),
     ];
-    // deno-lint-ignore no-explicit-any
-    expect(() => term.render(invalid as any)).toThrow(TypeError);
+    expect(() => Reflect.apply(term.render, term, [invalid])).toThrow(
+      TypeError,
+    );
   });
 
   it("throws on an invalid structured border side color", () => {

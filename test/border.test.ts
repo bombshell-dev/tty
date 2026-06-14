@@ -1,4 +1,4 @@
-import { close, fixed, open, rgba } from "../ops.ts";
+import { close, fixed, open, type OpenElement, rgba } from "../ops.ts";
 import { createTerm } from "../term.ts";
 import { describe, expect, it } from "./suite.ts";
 
@@ -101,8 +101,7 @@ const CORNERS = "┌┐└┘╭╮╰╯";
 
 /* ── Render helper ────────────────────────────────────────────────── */
 
-// deno-lint-ignore no-explicit-any
-type OpenProps = any;
+type OpenProps = Omit<OpenElement, "directive" | "id">;
 
 /** Renders an 8x4 "box" element at the origin of a 12x5 term in line
  * mode and parses the full-frame output into cells. Box corners are at
