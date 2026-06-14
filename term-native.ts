@@ -16,6 +16,15 @@ const BoundingBoxStruct = struct<BoundingBox>({
 
 const BOUNDING_BOX = offsets(BoundingBoxStruct);
 
+const WASM_PAGE_BYTES = 65536;
+const TEXT_TRANSFER_BUFFER_BYTES = 1024 * 1024;
+const CLAY_DEFAULT_MAX_ELEMENT_COUNT = 8192;
+
+// Conservative fixed wire-format budget per element. This covers the largest
+// non-text open/close element encoding we currently support; text, element id,
+// and snapshot payload bytes live in TEXT_TRANSFER_BUFFER_BYTES.
+const MAX_FIXED_ELEMENT_WIRE_BYTES = 116;
+
 export interface Native {
   memory: WebAssembly.Memory;
   statePtr: number;
@@ -92,10 +101,15 @@ export async function createTermNative(
   let heap = ct.__heap_base.value as number;
   let size = ct.clayterm_size(w, h);
 
-  // grow memory to fit heap + state + ops buffer (1MB headroom for ops)
-  let needed = heap + size + 1024 * 1024;
-  let pages = Math.ceil(needed / 65536);
-  let current = memory.buffer.byteLength / 65536;
+  // Grow memory once to fit heap + renderer state + fixed transfer buffer.
+  // The transfer budget is intentionally fixed: text/id/snapshot payload bytes
+  // get 1MB, and fixed op overhead gets one max-sized element per Clay element.
+  // Do not grow this dynamically per render; improve the wire format instead.
+  let transferBytes = TEXT_TRANSFER_BUFFER_BYTES +
+    CLAY_DEFAULT_MAX_ELEMENT_COUNT * MAX_FIXED_ELEMENT_WIRE_BYTES;
+  let needed = heap + size + transferBytes;
+  let pages = Math.ceil(needed / WASM_PAGE_BYTES);
+  let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
   if (pages > current) {
     memory.grow(pages - current);
   }
