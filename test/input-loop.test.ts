@@ -1,5 +1,5 @@
 import { describe, expect, it } from "./suite.ts";
-import { setTimeout as sleep } from 'node:timers/promises';
+import { setTimeout as sleep } from "node:timers/promises";
 import { createInput, type InputEvent, type InputOptions } from "../input.ts";
 
 function str(s: string): Uint8Array {
@@ -15,6 +15,23 @@ function concat(...parts: Uint8Array[]): Uint8Array {
     off += p.length;
   }
   return out;
+}
+
+function bytes(...parts: Array<string | Uint8Array>): Uint8Array {
+  return concat(...parts.map((p) => typeof p === "string" ? str(p) : p));
+}
+
+function arrowUp(): Uint8Array {
+  return str("\x1b[A");
+}
+
+function mousePress({ x, y }: { x: number; y: number }): Uint8Array {
+  // SGR coords are 1-based; callers pass 0-based to match emitted events.
+  return str(`\x1b[<0;${x + 1};${y + 1}M`);
+}
+
+function kittyAltKey(key: string): Uint8Array {
+  return str(`\x1b[${key.codePointAt(0)};3u`);
 }
 
 function sig(e: InputEvent): string {
@@ -74,13 +91,13 @@ function splitAt(buf: Uint8Array, offsets: number[]): Uint8Array[] {
 }
 
 describe("input event loop", () => {
-  let stream = concat(
-    str("hi"),
-    new Uint8Array([0x1b, 0x5b, 0x41]), // ArrowUp
-    str("\x1b[<0;35;12M"), // SGR mouse press
-    new Uint8Array([0xe4, 0xb8, 0xad]), // 中
-    str("\x1b[97;3u"), // Kitty a+Alt
-    new Uint8Array([0xf0, 0x9f, 0x8e, 0x89]), // 🎉
+  let stream = bytes(
+    "hi",
+    arrowUp(),
+    mousePress({ x: 34, y: 11 }),
+    "中",
+    kittyAltKey("a"),
+    "🎉",
   );
 
   let expected = [
@@ -107,7 +124,7 @@ describe("input event loop", () => {
 
   describe("pending ESC flush", () => {
     it("flushes a lone trailing ESC as Escape after the latency", async () => {
-      expect(await drive([str("hi"), new Uint8Array([0x1b])])).toEqual([
+      expect(await drive([bytes("hi"), str("\x1b")])).toEqual([
         "keydown:h",
         "keydown:i",
         "keydown:Escape",
@@ -115,21 +132,19 @@ describe("input event loop", () => {
     });
 
     it("resolves ESC as a sequence when the rest arrives next chunk", async () => {
-      expect(
-        await drive([new Uint8Array([0x1b]), new Uint8Array([0x5b, 0x41])]),
-      ).toEqual(["keydown:ArrowUp"]);
+      expect(await drive(splitAt(arrowUp(), [1]))).toEqual(["keydown:ArrowUp"]);
     });
   });
 
   it("handles a large mixed burst across many small chunks", async () => {
-    let unit = concat(
-      new Uint8Array([0x1b, 0x5b, 0x41]), // ArrowUp
-      str("ab"),
-      str("\x1b[<0;1;1M"), // mouse at 0,0
-      new Uint8Array([0xe4, 0xb8, 0xad]), // 中
+    let unit = bytes(
+      arrowUp(),
+      "ab",
+      mousePress({ x: 0, y: 0 }),
+      "中",
     );
     let n = 50;
-    let big = concat(...new Array(n).fill(unit));
+    let big = bytes(...new Array(n).fill(unit));
     let chunks: Uint8Array[] = [];
     for (let i = 0; i < big.length; i += 7) chunks.push(big.subarray(i, i + 7));
 
