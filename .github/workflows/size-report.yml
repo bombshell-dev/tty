@@ -35,7 +35,7 @@ jobs:
           node-version: 24
 
       - name: build (head)
-        run: make && deno task build:npm 0.0.0
+        run: make clean && make && deno task build:npm 0.0.0
 
       - name: measure sizes (head)
         run: |
@@ -54,7 +54,7 @@ jobs:
           git submodule update --init --recursive
 
       - name: build (base)
-        run: make && deno task build:npm 0.0.0
+        run: make clean && make && deno task build:npm 0.0.0
 
       - name: measure sizes (base)
         run: deno run --allow-read /tmp/measure-size.ts > /tmp/base-sizes.json
