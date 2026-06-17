@@ -1,5 +1,5 @@
 import { Bench } from "tinybench";
-import { withCodSpeed } from "@codspeed/tinybench-plugin";
+import { sync, withCodSpeed } from "./fixtures/utils.ts";
 import { close, fixed, grow, open, pack, rgba, text } from "../ops.ts";
 import type { Op } from "../ops.ts";
 
@@ -97,14 +97,18 @@ let buf = new ArrayBuffer(32768);
 let bench = withCodSpeed(new Bench({ name: "ops" }));
 
 bench
-  .add("pack complex layout", () => {
-    for (let i = 0; i < 1500; i++) pack(complexOps, buf, 0);
-    return Promise.resolve();
-  })
-  .add("pack large list", () => {
-    for (let i = 0; i < 250; i++) pack(listOps, buf, 0);
-    return Promise.resolve();
-  });
+  .add(
+    "pack complex layout",
+    sync(() => {
+      for (let i = 0; i < 1500; i++) pack(complexOps, buf, 0);
+    }),
+  )
+  .add(
+    "pack large list",
+    sync(() => {
+      for (let i = 0; i < 250; i++) pack(listOps, buf, 0);
+    }),
+  );
 
 await bench.run();
 console.table(bench.table());

@@ -1,6 +1,5 @@
 import { Bench } from "tinybench";
-import { withCodSpeed } from "@codspeed/tinybench-plugin";
-import { spawnFixture } from "./fixtures/utils.ts";
+import { spawnFixture, withCodSpeed } from "./fixtures/utils.ts";
 
 let bench = withCodSpeed(new Bench({ name: "startup" }));
 

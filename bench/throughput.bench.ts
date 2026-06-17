@@ -1,5 +1,5 @@
 import { Bench } from "tinybench";
-import { withCodSpeed } from "@codspeed/tinybench-plugin";
+import { sync, withCodSpeed } from "./fixtures/utils.ts";
 import { createInput } from "../input.ts";
 
 function str(s: string): Uint8Array {
@@ -33,15 +33,17 @@ let input = await createInput({ escLatency: 25 });
 
 let bench = withCodSpeed(new Bench({ name: "throughput" }));
 
-bench.add("input throughput (mixed corpus, chunked read loop)", () => {
-  let dispatched = 0;
-  for (let off = 0; off < corpus.length; off += READ) {
-    let { events } = input.scan(corpus.subarray(off, off + READ));
-    dispatched += events.length;
-  }
-  if (dispatched === 0) throw new Error("expected events");
-  return Promise.resolve();
-});
+bench.add(
+  "input throughput (mixed corpus, chunked read loop)",
+  sync(() => {
+    let dispatched = 0;
+    for (let off = 0; off < corpus.length; off += READ) {
+      let { events } = input.scan(corpus.subarray(off, off + READ));
+      dispatched += events.length;
+    }
+    if (dispatched === 0) throw new Error("expected events");
+  }),
+);
 
 await bench.run();
 console.table(bench.table());

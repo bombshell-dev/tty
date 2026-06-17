@@ -1,5 +1,5 @@
 import { Bench } from "tinybench";
-import { withCodSpeed } from "@codspeed/tinybench-plugin";
+import { sync, withCodSpeed } from "./fixtures/utils.ts";
 import { createTerm } from "../term.ts";
 import { close, fixed, grow, open, rgba, text } from "../ops.ts";
 import type { Op } from "../ops.ts";
@@ -103,18 +103,22 @@ let uiOps: Op[] = [
 let bench = withCodSpeed(new Bench({ name: "render" }));
 
 bench
-  .add("render mixed frames", () => {
-    for (let i = 0; i < 250; i++) {
-      term.render(i % 2 === 0 ? dashboardOps : uiOps);
-    }
-    return Promise.resolve();
-  })
-  .add("render steady diff", () => {
-    for (let i = 0; i < 250; i++) {
-      term.render(dashboardOps);
-    }
-    return Promise.resolve();
-  });
+  .add(
+    "render mixed frames",
+    sync(() => {
+      for (let i = 0; i < 250; i++) {
+        term.render(i % 2 === 0 ? dashboardOps : uiOps);
+      }
+    }),
+  )
+  .add(
+    "render steady diff",
+    sync(() => {
+      for (let i = 0; i < 250; i++) {
+        term.render(dashboardOps);
+      }
+    }),
+  );
 
 await bench.run();
 console.table(bench.table());
