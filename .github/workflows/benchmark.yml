@@ -37,8 +37,10 @@ jobs:
         id: wasm-cache
         with:
           path: |
-            clayterm.wasm
-            wasm.ts
+            layout.wasm
+            input.wasm
+            layout.wasm.ts
+            input.wasm.ts
           key: wasm-${{ hashFiles('Makefile', 'src/**', 'tasks/bundle-wasm.ts') }}
 
       - name: Build WASM
@@ -61,7 +63,9 @@ jobs:
         with:
           name: bench-build
           retention-days: 1
-          path: wasm.ts
+          path: |
+            layout.wasm.ts
+            input.wasm.ts
 
   simulation:
     name: Run benchmarks (simulation)

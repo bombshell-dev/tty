@@ -18,10 +18,12 @@ The local source build is driven by `make`.
 
 It generates:
 
-- `clayterm.wasm` — the compiled WebAssembly module built from the C sources
-- `wasm.ts` — a generated TypeScript file derived from `clayterm.wasm`
+- `layout.wasm` — the layout WebAssembly module built from the C sources
+- `input.wasm` — the input WebAssembly module built from the C sources
+- `layout.wasm.ts` — generated TypeScript derived from `layout.wasm`
+- `input.wasm.ts` — generated TypeScript derived from `input.wasm`
 
-`wasm.ts` is generated output, not hand-maintained source.
+These `.ts` files are generated output, not hand-maintained source.
 
 ## Clone the repo with submodules
 
@@ -182,8 +184,10 @@ make
 
 This should produce:
 
-- `clayterm.wasm`
-- `wasm.ts`
+- `layout.wasm`
+- `input.wasm`
+- `layout.wasm.ts`
+- `input.wasm.ts`
 
 For a clean rebuild:
 
@@ -197,7 +201,7 @@ Re-run `make` when:
 
 - you change files under `src/`
 - you update the `clay` submodule
-- `clayterm.wasm` or `wasm.ts` is missing
+- `layout.wasm`, `input.wasm`, `layout.wasm.ts`, or `input.wasm.ts` is missing
 - generated outputs look stale after switching branches or pulling changes
 
 When in doubt, use a clean rebuild:
@@ -247,7 +251,7 @@ make clean && make
 Symptoms may include:
 
 - target-related `clang` errors mentioning `wasm32`
-- linker failures while producing `clayterm.wasm`
+- linker failures while producing the `.wasm` outputs
 
 Recovery:
 
@@ -267,8 +271,8 @@ If the smoke test fails, fix the toolchain first and only then rerun `make`.
 
 Symptoms may include:
 
-- `clayterm.wasm` is missing
-- `wasm.ts` is missing
+- `layout.wasm` or `input.wasm` is missing
+- `layout.wasm.ts` or `input.wasm.ts` is missing
 - you changed `src/` or updated `clay/`, but the generated outputs do not match
 
 Recovery:
