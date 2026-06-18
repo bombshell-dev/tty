@@ -7,7 +7,10 @@
     "fmt:check": "deno fmt --check && clang-format --dry-run --Werror src/*.c src/*.h",
     "build:npm": "deno run -A tasks/build-npm.ts",
     "build:jsr": "deno run -A tasks/build-jsr.ts",
-    "bench": "deno run -A bench/mod.ts"
+    "bench": "deno run -A bench/mod.ts",
+    "gen-wcwidth": "deno run --allow-net --allow-write=src/wcwidth.c tasks/gen-wcwidth.ts",
+    "gen-wcwidth:check": "deno run --allow-net --allow-read=src/wcwidth.c tasks/gen-wcwidth.ts --check",
+    "verify": "deno task fmt:check && deno task gen-wcwidth:check"
   },
   "imports": {
     "@std/testing": "jsr:@std/testing@1",
