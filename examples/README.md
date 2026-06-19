@@ -81,3 +81,25 @@ What it shows:
 This example is useful if you want to embed transient or animated UI output into
 a normal command-line workflow instead of switching to a full-screen alternate
 buffer interface.
+
+## Flex Layout Controls
+
+Path: `examples/flex-layout-controls/index.ts`
+
+Run it with:
+
+```sh
+deno run examples/flex-layout-controls/index.ts
+# or
+node examples/flex-layout-controls/index.ts
+```
+
+What it shows:
+
+- every supported `layout.alignSelf` value: `auto`, `normal`, `stretch`,
+  `center`, `start`, `end`, `flex-start`, and `flex-end`
+- `stretch()` as explicit cross-axis fill sizing
+- `normal`/`stretch` align-self behavior for auto-like cross sizes
+- definite cross sizes (`fixed()` and `percent()`) staying definite under
+  stretch alignment
+- the practical guidance to use `grow()` for main-axis free-space distribution

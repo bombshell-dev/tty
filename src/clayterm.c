@@ -34,6 +34,17 @@
 #define PROP_CLIP 0x10
 #define PROP_FLOATING 0x20
 
+#define ALIGN_SELF_AUTO 0
+#define ALIGN_SELF_NORMAL 1
+#define ALIGN_SELF_STRETCH 2
+#define ALIGN_SELF_CENTER 3
+#define ALIGN_SELF_START 4
+#define ALIGN_SELF_END 5
+#define ALIGN_SELF_FLEX_START 6
+#define ALIGN_SELF_FLEX_END 7
+
+#define USER_ELEMENT_STACK_MAX 4096
+
 /* ── Instance state ───────────────────────────────────────────────── */
 
 #define MAX_ERRORS 32
@@ -52,6 +63,11 @@ struct Clayterm {
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
 };
+
+typedef struct UserElementFrame {
+  Clay_LayoutDirection direction;
+  int close_align_self_wrapper;
+} UserElementFrame;
 
 /* Memory layout inside the arena provided by the host:
  *   [Clayterm struct] [front cells] [back cells] [output buffer]
@@ -396,6 +412,104 @@ static Clay_SizingAxis decode_axis(uint32_t *buf, int len, int *i) {
   return axis;
 }
 
+static Clay_SizingAxis sizing_grow(float min, float max) {
+  Clay_SizingAxis axis = {0};
+  axis.type = CLAY__SIZING_TYPE_GROW;
+  axis.size.minMax.min = min;
+  axis.size.minMax.max = max;
+  return axis;
+}
+
+static Clay_SizingAxis grow_like_axis(Clay_SizingAxis axis) {
+  if (axis.type == CLAY__SIZING_TYPE_FIT ||
+      axis.type == CLAY__SIZING_TYPE_GROW) {
+    return sizing_grow(axis.size.minMax.min, axis.size.minMax.max);
+  }
+  return sizing_grow(0, 0);
+}
+
+static int axis_is_definite(Clay_SizingAxis axis) {
+  return axis.type == CLAY__SIZING_TYPE_FIXED ||
+         axis.type == CLAY__SIZING_TYPE_PERCENT;
+}
+
+static int should_move_main_axis_to_wrapper(Clay_SizingAxis axis) {
+  return axis.type == CLAY__SIZING_TYPE_FIXED ||
+         axis.type == CLAY__SIZING_TYPE_PERCENT ||
+         axis.type == CLAY__SIZING_TYPE_GROW;
+}
+
+static Clay_LayoutAlignmentX align_self_x(uint32_t align_self) {
+  switch (align_self) {
+  case ALIGN_SELF_CENTER:
+    return CLAY_ALIGN_X_CENTER;
+  case ALIGN_SELF_END:
+  case ALIGN_SELF_FLEX_END:
+    return CLAY_ALIGN_X_RIGHT;
+  default:
+    return CLAY_ALIGN_X_LEFT;
+  }
+}
+
+static Clay_LayoutAlignmentY align_self_y(uint32_t align_self) {
+  switch (align_self) {
+  case ALIGN_SELF_CENTER:
+    return CLAY_ALIGN_Y_CENTER;
+  case ALIGN_SELF_END:
+  case ALIGN_SELF_FLEX_END:
+    return CLAY_ALIGN_Y_BOTTOM;
+  default:
+    return CLAY_ALIGN_Y_TOP;
+  }
+}
+
+static void stretch_align_self_cross_axis(Clay_ElementDeclaration *decl,
+                                          Clay_LayoutDirection parent_dir,
+                                          uint32_t align_self) {
+  if (align_self != ALIGN_SELF_STRETCH && align_self != ALIGN_SELF_NORMAL)
+    return;
+
+  Clay_SizingAxis *cross = parent_dir == CLAY_TOP_TO_BOTTOM
+                               ? &decl->layout.sizing.width
+                               : &decl->layout.sizing.height;
+  if (!axis_is_definite(*cross)) {
+    *cross = grow_like_axis(*cross);
+  }
+}
+
+static void
+move_main_axis_to_align_self_wrapper(Clay_ElementDeclaration *decl,
+                                     Clay_LayoutDirection parent_dir) {
+  Clay_SizingAxis *main = parent_dir == CLAY_TOP_TO_BOTTOM
+                              ? &decl->layout.sizing.height
+                              : &decl->layout.sizing.width;
+  if (should_move_main_axis_to_wrapper(*main)) {
+    *main = sizing_grow(0, 0);
+  }
+}
+
+static void open_align_self_wrapper(Clay_LayoutDirection parent_dir,
+                                    uint32_t align_self,
+                                    Clay_ElementDeclaration child_decl) {
+  Clay_ElementDeclaration wrapper = {0};
+  wrapper.layout.layoutDirection = parent_dir;
+
+  if (parent_dir == CLAY_TOP_TO_BOTTOM) {
+    wrapper.layout.sizing.width = sizing_grow(0, 0);
+    wrapper.layout.sizing.height = child_decl.layout.sizing.height;
+    wrapper.layout.childAlignment.x = align_self_x(align_self);
+    wrapper.layout.childAlignment.y = CLAY_ALIGN_Y_TOP;
+  } else {
+    wrapper.layout.sizing.width = child_decl.layout.sizing.width;
+    wrapper.layout.sizing.height = sizing_grow(0, 0);
+    wrapper.layout.childAlignment.x = CLAY_ALIGN_X_LEFT;
+    wrapper.layout.childAlignment.y = align_self_y(align_self);
+  }
+
+  Clay__OpenElement();
+  Clay__ConfigureOpenElement(wrapper);
+}
+
 /* ── Public API ───────────────────────────────────────────────────── */
 
 static int align64(int n) { return (n + 63) & ~63; }
@@ -474,6 +588,8 @@ struct Clayterm *init(void *mem, int w, int h) {
 
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
   int i = 0;
+  UserElementFrame user_stack[USER_ELEMENT_STACK_MAX];
+  int user_depth = 0;
   ct->error_count = 0;
 
   Clay_BeginLayout();
@@ -489,17 +605,10 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
       char *id_chars = (char *)&buf[i];
       i += id_words;
 
-      if (id_len > 0) {
-        Clay_String str = {.length = (int32_t)id_len, .chars = id_chars};
-        Clay_ElementId eid = Clay__HashString(str, 0);
-        Clay__OpenElementWithId(eid);
-      } else {
-        Clay__OpenElement();
-      }
-
       /* read property mask */
       uint32_t mask = rd(buf, len, &i);
       Clay_ElementDeclaration decl = {0};
+      uint32_t align_self = ALIGN_SELF_AUTO;
 
       if (mask & PROP_LAYOUT) {
         decl.layout.sizing.width = decode_axis(buf, len, &i);
@@ -518,6 +627,8 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
         uint32_t al = rd(buf, len, &i);
         decl.layout.childAlignment.x = al & 0xff;
         decl.layout.childAlignment.y = (al >> 8) & 0xff;
+
+        align_self = rd(buf, len, &i);
       }
 
       if (mask & PROP_BG_COLOR) {
@@ -568,7 +679,37 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
         decl.floating.zIndex = (int16_t)(fd >> 8);
       }
 
+      int close_align_self_wrapper = 0;
+      int has_normal_flow_parent = user_depth > 0;
+      int is_floating = (mask & PROP_FLOATING) != 0;
+      Clay_LayoutDirection parent_dir =
+          has_normal_flow_parent ? user_stack[user_depth - 1].direction
+                                 : CLAY_LEFT_TO_RIGHT;
+
+      if (has_normal_flow_parent && !is_floating &&
+          align_self != ALIGN_SELF_AUTO) {
+        stretch_align_self_cross_axis(&decl, parent_dir, align_self);
+        open_align_self_wrapper(parent_dir, align_self, decl);
+        move_main_axis_to_align_self_wrapper(&decl, parent_dir);
+        close_align_self_wrapper = 1;
+      }
+
+      if (id_len > 0) {
+        Clay_String str = {.length = (int32_t)id_len, .chars = id_chars};
+        Clay_ElementId eid = Clay__HashString(str, 0);
+        Clay__OpenElementWithId(eid);
+      } else {
+        Clay__OpenElement();
+      }
+
       Clay__ConfigureOpenElement(decl);
+
+      if (user_depth < USER_ELEMENT_STACK_MAX) {
+        user_stack[user_depth++] = (UserElementFrame){
+            .direction = decl.layout.layoutDirection,
+            .close_align_self_wrapper = close_align_self_wrapper,
+        };
+      }
       break;
     }
 
@@ -596,9 +737,19 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
       break;
     }
 
-    case OP_CLOSE_ELEMENT:
+    case OP_CLOSE_ELEMENT: {
+      int close_align_self_wrapper = 0;
+      if (user_depth > 0) {
+        close_align_self_wrapper =
+            user_stack[user_depth - 1].close_align_self_wrapper;
+        user_depth--;
+      }
       Clay__CloseElement();
+      if (close_align_self_wrapper) {
+        Clay__CloseElement();
+      }
       break;
+    }
 
     default:
       break;

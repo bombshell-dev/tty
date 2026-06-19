@@ -38,7 +38,11 @@ const Fixed = Type.Object({
   value: Type.Number(),
 });
 
-const SizingAxis = Type.Union([Fit, Grow, Percent, Fixed]);
+const Stretch = Type.Object({
+  type: Type.Literal("stretch"),
+});
+
+const SizingAxis = Type.Union([Fit, Grow, Percent, Fixed, Stretch]);
 
 /* ── Sub-objects ──────────────────────────────────────────────────── */
 
@@ -48,6 +52,17 @@ const Padding = Type.Object({
   top: Type.Optional(u8),
   bottom: Type.Optional(u8),
 });
+
+const AlignSelf = Type.Union([
+  Type.Literal("auto"),
+  Type.Literal("normal"),
+  Type.Literal("stretch"),
+  Type.Literal("center"),
+  Type.Literal("start"),
+  Type.Literal("end"),
+  Type.Literal("flex-start"),
+  Type.Literal("flex-end"),
+]);
 
 const Layout = Type.Object({
   width: Type.Optional(SizingAxis),
@@ -71,6 +86,7 @@ const Layout = Type.Object({
       Type.Literal("bottom"),
     ]),
   ),
+  alignSelf: Type.Optional(AlignSelf),
 });
 
 const CornerRadius = Type.Object({
