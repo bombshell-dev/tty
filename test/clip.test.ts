@@ -112,4 +112,65 @@ describe("clip", () => {
 └─┘└────│
 `.trim());
   });
+
+  // Nesting clips past the renderer's tracking limit must not break push/pop
+  // symmetry: the over-deep levels coalesce into the deepest tracked clip, and
+  // closing them leaves the outer clip intact for a later sibling. With a
+  // border on the outermost nested clip, the over-deep frame must render
+  // identically to the depth-2 case above — the ruler marks the 8-wide outer
+  // bound and the sibling is cut there.
+  //   ┌─┐┌────│
+  //   │ ││clip│
+  //   └─┘└────│
+  it("preserves the outer clip for a sibling after over-deep nesting", async () => {
+    let term = await createTerm({ width: 14, height: 6 });
+
+    let nest: ReturnType<typeof open>[] = [];
+    for (let d = 0; d < 20; d++) {
+      nest.push(open(`deep${d}`, {
+        layout: { width: fixed(3), height: fixed(3), direction: "ttb" },
+        clip: { vertical: true, horizontal: true },
+        ...(d === 0 ? { border } : {}),
+      }));
+    }
+    let unnest = nest.map(() => close());
+
+    let result = term.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ltr" },
+      }),
+      open("outer", {
+        layout: { width: fixed(8), height: fixed(3), direction: "ltr" },
+        clip: { vertical: true, horizontal: true },
+      }),
+      ...nest,
+      ...unnest,
+      open("sibling", {
+        layout: {
+          width: fixed(10),
+          height: fixed(3),
+          direction: "ttb",
+          padding: pad,
+        },
+        border,
+      }),
+      text("clipped"),
+      close(),
+      close(),
+      open("ruler", {
+        layout: { width: fixed(1), height: fixed(3), direction: "ttb" },
+      }),
+      text("│\n│\n│"),
+      close(),
+      close(),
+    ]);
+
+    expect(trim(print(decode(result.output), 14, 6)).trim()).toEqual(`
+┌─┐┌────│
+│ ││clip│
+└─┘└────│
+`.trim());
+
+    expect(result.errors.map((e) => e.type)).toContain("CLIP_DEPTH_EXCEEDED");
+  });
 });

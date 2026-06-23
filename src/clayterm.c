@@ -41,6 +41,13 @@
 /* clip stack depth: nesting beyond this clamps to the deepest rect */
 #define CLIP_STACK_MAX 16
 
+/* Clayterm-specific error code, numbered past Clay's error enum (0..8).
+ * Mirrored by ERROR_TYPES in term.ts. */
+#define CLAYTERM_ERR_CLIP_DEPTH_EXCEEDED 9
+
+#define CLAYTERM_STR_(x) #x
+#define CLAYTERM_STR(x) CLAYTERM_STR_(x)
+
 typedef struct {
   int x, y, w, h;
 } ClipRect;
@@ -58,6 +65,11 @@ struct Clayterm {
   /* clip stack: nesting pushes intersected rects, leaving pops to restore */
   ClipRect clipstack[CLIP_STACK_MAX];
   int clipdepth;
+  /* untracked clip levels open beyond CLIP_STACK_MAX; popped without
+   * touching the tracked stack so push/pop stays symmetric */
+  int clipoverflow;
+  /* set once per frame when nesting first exceeds the tracked depth */
+  int clip_depth_exceeded;
   /* error collection */
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
@@ -428,6 +440,28 @@ static void clay_error(Clay_ErrorData err) {
   }
 }
 
+/* Surface a CLIP_DEPTH_EXCEEDED error once per frame. The message is a static
+ * literal, so its pointer lives in WASM linear memory and is readable by the
+ * host via error_message_ptr/length. */
+static void report_clip_depth_exceeded(struct Clayterm *ct) {
+  if (ct->clip_depth_exceeded)
+    return;
+  ct->clip_depth_exceeded = 1;
+  if (ct->error_count >= MAX_ERRORS)
+    return;
+  static const char msg[] =
+      "clip nesting exceeds tracked depth limit of " CLAYTERM_STR(
+          CLIP_STACK_MAX) "; over-deep clips coalesced into the deepest "
+                          "tracked region";
+  ct->errors[ct->error_count++] = (Clay_ErrorData){
+      .errorType = (Clay_ErrorType)CLAYTERM_ERR_CLIP_DEPTH_EXCEEDED,
+      .errorText = {.isStaticallyAllocated = true,
+                    .length = (int32_t)(sizeof(msg) - 1),
+                    .chars = msg},
+      .userData = ct,
+  };
+}
+
 int error_count(struct Clayterm *ct) { return ct->error_count; }
 
 int error_type(struct Clayterm *ct, int index) {
@@ -622,6 +656,8 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
   ct->lastfg = ct->lastbg = 0xffffffff;
   ct->lastx = ct->lasty = -1;
   ct->clipdepth = 0;
+  ct->clipoverflow = 0;
+  ct->clip_depth_exceeded = 0;
   ct->clipping = 0;
 
   cells_fill(ct->back, ct->w, ct->h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);
@@ -668,15 +704,27 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
       if (ct->clipdepth < CLIP_STACK_MAX) {
         ClipRect r = {nx0, ny0, nw, nh};
         ct->clipstack[ct->clipdepth++] = r;
+        ct->clipping = 1;
+        ct->clipx = nx0;
+        ct->clipy = ny0;
+        ct->clipw = nw;
+        ct->cliph = nh;
+      } else {
+        /* Out of tracked slots: coalesce this level into the deepest tracked
+         * region (leave the active rect untouched) and remember to pop it
+         * without disturbing the tracked stack. */
+        ct->clipoverflow++;
+        report_clip_depth_exceeded(ct);
       }
-      ct->clipping = 1;
-      ct->clipx = nx0;
-      ct->clipy = ny0;
-      ct->clipw = nw;
-      ct->cliph = nh;
       break;
     }
     case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:
+      if (ct->clipoverflow > 0) {
+        /* Closing an untracked level: nothing was pushed, so leave the tracked
+         * stack and active rect alone. */
+        ct->clipoverflow--;
+        break;
+      }
       if (ct->clipdepth > 0)
         ct->clipdepth--;
       if (ct->clipdepth > 0) {
