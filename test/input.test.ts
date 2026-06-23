@@ -715,6 +715,66 @@ describe("input", () => {
     });
   });
 
+  describe("OSC 22 pointer shape reports", () => {
+    it("parses a current-shape reply terminated by ST", () => {
+      let result = input.scan(str("\x1b]22;pointer\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "pointershape",
+        report: "pointer",
+      });
+    });
+
+    it("parses a reply terminated by BEL", () => {
+      let result = input.scan(str("\x1b]22;text\x07"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "pointershape",
+        report: "text",
+      });
+    });
+
+    it("parses an empty-stack reply (0)", () => {
+      let result = input.scan(str("\x1b]22;0\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "pointershape",
+        report: "0",
+      });
+    });
+
+    it("parses a support-query reply (comma list) verbatim", () => {
+      let result = input.scan(str("\x1b]22;1,0,1\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "pointershape",
+        report: "1,0,1",
+      });
+    });
+
+    it("buffers a reply split across scans", () => {
+      let first = input.scan(str("\x1b]22;poin"));
+      expect(first.events.length).toBe(0);
+      let second = input.scan(str("ter\x1b\\"));
+      expect(second.events.length).toBe(1);
+      expect(second.events[0]).toMatchObject({
+        type: "pointershape",
+        report: "pointer",
+      });
+    });
+
+    it("parses a reply interleaved with other input", () => {
+      let result = input.scan(str("a\x1b]22;default\x1b\\b"));
+      expect(result.events.length).toBe(3);
+      expect(result.events[0]).toMatchObject({ type: "keydown", key: "a" });
+      expect(result.events[1]).toMatchObject({
+        type: "pointershape",
+        report: "default",
+      });
+      expect(result.events[2]).toMatchObject({ type: "keydown", key: "b" });
+    });
+  });
+
   describe("UTF-8", () => {
     it("parses 2-byte UTF-8 (é)", () => {
       let result = input.scan(bytes(0xc3, 0xa9));
