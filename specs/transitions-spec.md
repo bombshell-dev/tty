@@ -535,16 +535,6 @@ and interpolating it in layout.
 
 ---
 
-## 14. Demos
-
-One demo accompanies v1:
-
-**`demo/transitions.ts`** — exercises v1 transitions meaningfully in a terminal
-context (e.g., a collapsing sidebar or a colored highlight that fades between
-states). Purpose: surface real-world API sharp edges.
-
----
-
 ## Appendix A. Relationship to the Renderer Specification
 
 This specification extends, but does not modify, the renderer specification.
