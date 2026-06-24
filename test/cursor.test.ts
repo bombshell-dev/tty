@@ -8,8 +8,7 @@ function shown(bytes: Uint8Array | undefined): string | undefined {
   return bytes === undefined ? undefined : decoder.decode(bytes);
 }
 
-const PUSH = (shape: string) => `\x1b]22;>${shape}\x1b\\`;
-const POP = `\x1b]22;<\x1b\\`;
+const SET = (shape: string) => `\x1b]22;${shape}\x1b\\`;
 
 // ┌─root (40x10, ltr)──────────────────┐
 // │┌─btn (20x10)──┐┌─field (20x10)───┐│
@@ -51,12 +50,12 @@ describe("pointer shape tracking", () => {
     expect(result.cursor).toBeUndefined();
   });
 
-  it("pushes the shape when the pointer enters a declaring element", () => {
+  it("sets the shape when the pointer enters a declaring element", () => {
     let result = term.render(layout(), {
       pointer: { x: 5, y: 5, down: false },
       trackCursor: true,
     });
-    expect(shown(result.cursor)).toBe(PUSH("pointer"));
+    expect(shown(result.cursor)).toBe(SET("pointer"));
   });
 
   it("emits nothing on a subsequent frame over the same element", () => {
@@ -71,7 +70,7 @@ describe("pointer shape tracking", () => {
     expect(result.cursor).toBeUndefined();
   });
 
-  it("pops then pushes when moving between elements of different shapes", () => {
+  it("sets the new shape when moving between elements of different shapes", () => {
     term.render(layout(), {
       pointer: { x: 5, y: 5, down: false },
       trackCursor: true,
@@ -80,10 +79,10 @@ describe("pointer shape tracking", () => {
       pointer: { x: 25, y: 5, down: false },
       trackCursor: true,
     });
-    expect(shown(result.cursor)).toBe(POP + PUSH("text"));
+    expect(shown(result.cursor)).toBe(SET("text"));
   });
 
-  it("pops when the pointer leaves all declaring elements", () => {
+  it("restores default when the pointer leaves all declaring elements", () => {
     term.render(layout(), {
       pointer: { x: 5, y: 5, down: false },
       trackCursor: true,
@@ -92,16 +91,16 @@ describe("pointer shape tracking", () => {
       pointer: { x: 100, y: 100, down: false },
       trackCursor: true,
     });
-    expect(shown(result.cursor)).toBe(POP);
+    expect(shown(result.cursor)).toBe(SET("default"));
   });
 
-  it("pops when the pointer is removed entirely", () => {
+  it("restores default when the pointer is removed entirely", () => {
     term.render(layout(), {
       pointer: { x: 5, y: 5, down: false },
       trackCursor: true,
     });
     let result = term.render(layout(), { trackCursor: true });
-    expect(shown(result.cursor)).toBe(POP);
+    expect(shown(result.cursor)).toBe(SET("default"));
   });
 
   it("uses the topmost (innermost) declaring element's shape", () => {
@@ -123,7 +122,7 @@ describe("pointer shape tracking", () => {
       pointer: { x: 2, y: 2, down: false },
       trackCursor: true,
     });
-    expect(shown(result.cursor)).toBe(PUSH("pointer"));
+    expect(shown(result.cursor)).toBe(SET("pointer"));
   });
 
   it("emits nothing when the hovered element declares no shape", () => {

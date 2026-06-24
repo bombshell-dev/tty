@@ -889,15 +889,19 @@ if (r.cursor) stdout.write(r.cursor);
 4. When the shape changed, populates `result.cursor` with the OSC 22 bytes that
    effect the transition. When nothing changed, `result.cursor` is absent.
 
-**Save and restore (kitty stack).** Transitions use the kitty pointer-shape
-_stack_ rather than bare set, so the terminal's prior shape is preserved:
+**Setting and restoring.** Transitions use the bare _set_ form of OSC 22 for
+portability — kitty and Ghostty both honor it, whereas the kitty push/pop
+_stack_ extension is silently ignored by set-only terminals (Ghostty parses the
+whole payload after `22;` as a literal shape name, so a `>`/`<` prefix is not a
+valid shape and is dropped):
 
-- Entering an element with a declared shape pushes it (`OSC 22 ; >shape ST`).
-- Returning to no declared shape pops back to what the terminal had before
-  (`OSC 22 ; < ST`).
+- Entering an element with a declared shape sets it (`OSC 22 ; shape ST`).
+- Returning to no declared shape restores the base by setting `default`
+  (`OSC 22 ; default ST`).
 
-This means the renderer never needs to know or assume the terminal's base shape;
-the stack restores it.
+The base shape is assumed to be `default` (the ordinary pointer); the renderer
+does not attempt to restore a non-default prior shape. Callers targeting kitty
+exclusively who want exact save/restore can drive the push/pop helpers manually.
 
 **Capability detection and graceful degradation.** Before relying on tracking,
 the caller MAY query support. The OSC 22 query is sent through the normal output
@@ -905,10 +909,10 @@ path (it is a separate, caller-initiated byte sequence, not part of `output`),
 and the terminal's reply arrives on the **input** stream, where it is decoded as
 a `PointerShapeEvent` (see [Input Specification](input-spec.md), Section 5.1).
 Correlating the reply with the query is the caller's responsibility, preserving
-the renderer/input independence (INV-7). Terminals that do not implement OSC 22
-(or implement only the set operation, such as Ghostty) never reply and may not
-honor push/pop; on these terminals tracking degrades to a no-op or a best-effort
-set, and the absence of a reply within a timeout is the unsupported signal.
+the renderer/input independence (INV-7). Because tracking uses the bare set
+form, it works on set-only terminals (such as Ghostty) as well as kitty; only
+terminals that do not implement OSC 22 at all ignore it entirely, and the
+absence of a reply within a timeout is the unsupported signal.
 
 **OSC 22 byte helpers.** The byte sequences above are produced by small,
 caller-usable helpers (set, push, pop, and query builders). These are the first
