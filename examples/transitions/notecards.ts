@@ -41,8 +41,8 @@ import {
   mouseTracking,
   settings,
 } from "../../settings.ts";
-import { useInput } from "./use-input.ts";
-import { useStdin } from "./use-stdin.ts";
+import { useInput } from "../use-input.ts";
+import { useStdin } from "../use-stdin.ts";
 
 const DEFAULT_PALETTE = [
   rgba(225, 138, 50),

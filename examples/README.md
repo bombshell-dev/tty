@@ -59,15 +59,14 @@ state. Clay drives the hit testing; no manual coordinate math required.
 
 ## Transitions
 
-Paths: `examples/keyboard/transitions.ts` and
-`examples/keyboard/clay-transitions.ts`
+Paths: `examples/transitions/sidebar.ts` and `examples/transitions/notecards.ts`
 
 Run them with:
 
 ```sh
-deno run examples/keyboard/transitions.ts
+deno run examples/transitions/sidebar.ts
 # or
-deno run examples/keyboard/clay-transitions.ts
+deno run examples/transitions/notecards.ts
 ```
 
 What they show:

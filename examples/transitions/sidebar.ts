@@ -30,8 +30,8 @@ import {
   text,
 } from "../../mod.ts";
 import { alternateBuffer, cursor, settings } from "../../settings.ts";
-import { useInput } from "./use-input.ts";
-import { useStdin } from "./use-stdin.ts";
+import { useInput } from "../use-input.ts";
+import { useStdin } from "../use-stdin.ts";
 
 const SIDEBAR_BG_OPEN = rgba(80, 80, 140);
 const SIDEBAR_BG_CLOSED = rgba(30, 30, 50);
