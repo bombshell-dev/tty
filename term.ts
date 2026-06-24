@@ -1,5 +1,10 @@
-import { type Op, pack } from "./ops.ts";
+import { isOpen, type Op, pack } from "./ops.ts";
 import { type BoundingBox, createTermNative } from "./term-native.ts";
+import {
+  type CursorShape,
+  POPPOINTERSHAPE,
+  PUSHPOINTERSHAPE,
+} from "./termcodes.ts";
 
 export interface TermOptions {
   height: number;
@@ -25,6 +30,15 @@ export interface RenderOptions {
     y: number;
     down: boolean;
   };
+
+  /**
+   * Track the mouse pointer shape across frames. When enabled, the element
+   * currently under the pointer that declares a `cursor` shape drives the
+   * terminal's mouse pointer, and {@link RenderResult.cursor} carries the OSC 22
+   * bytes for any change. Requires `pointer` to be provided for the shape to
+   * follow the cursor. See the renderer specification, Section 12.6.
+   */
+  trackCursor?: boolean;
 }
 
 export type PointerEvent =
@@ -64,6 +78,14 @@ export interface RenderResult {
   events: PointerEvent[];
   info: RenderInfo;
   errors: ClayError[];
+
+  /**
+   * OSC 22 bytes that update the terminal's mouse pointer shape this frame.
+   * Present only when `trackCursor` is enabled and the shape changed; write it
+   * to the terminal separately from `output`. See the renderer specification,
+   * Section 12.6.
+   */
+  cursor?: Uint8Array;
 }
 
 export interface Term {
@@ -78,6 +100,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
   let prev = new Set<string>();
   let pressed = new Set<string>();
   let wasDown = false;
+  let cursorShape: CursorShape | null = null;
 
   return {
     render(ops: Op[], options?: RenderOptions): RenderResult {
@@ -97,9 +120,8 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         native.length(statePtr),
       );
 
-      let current = new Set(
-        options?.pointer ? native.getPointerOverIds() : [],
-      );
+      let overIds = options?.pointer ? native.getPointerOverIds() : [];
+      let current = new Set(overIds);
       let down = options?.pointer?.down ?? false;
       let events: PointerEvent[] = [];
 
@@ -132,6 +154,33 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       prev = current;
       wasDown = down;
 
+      let cursor: Uint8Array | undefined;
+      if (options?.trackCursor) {
+        let active: CursorShape | null = null;
+        if (overIds.length > 0) {
+          let shapes = new Map<string, CursorShape>();
+          for (let op of ops) {
+            if (isOpen(op) && op.cursor) shapes.set(op.id, op.cursor);
+          }
+          // pointerOverIds is outermost-first; the innermost (topmost)
+          // declaring element wins, so scan from the end.
+          for (let i = overIds.length - 1; i >= 0; i--) {
+            let shape = shapes.get(overIds[i]);
+            if (shape) {
+              active = shape;
+              break;
+            }
+          }
+        }
+        if (active !== cursorShape) {
+          let parts: Uint8Array[] = [];
+          if (cursorShape !== null) parts.push(POPPOINTERSHAPE());
+          if (active !== null) parts.push(PUSHPOINTERSHAPE(active));
+          cursor = concat(parts);
+          cursorShape = active;
+        }
+      }
+
       let info: RenderInfo = {
         get(id: string): ElementInfo | undefined {
           let bounds = native.getElementBounds(id);
@@ -152,7 +201,19 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         });
       }
 
-      return { output, events, info, errors };
+      return { output, events, info, errors, cursor };
     },
   };
+}
+
+function concat(parts: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (let part of parts) total += part.length;
+  let out = new Uint8Array(total);
+  let offset = 0;
+  for (let part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
 }
