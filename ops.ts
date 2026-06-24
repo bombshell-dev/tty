@@ -1,5 +1,24 @@
-import type { Transition } from "./ops-transitions.ts";
-import { easingByte, propertyMask } from "./ops-transitions.ts";
+export type TransitionProperty =
+  | "x"
+  | "y"
+  | "position"
+  | "width"
+  | "height"
+  | "size"
+  | "bg"
+  | "overlay"
+  | "borderColor"
+  | "borderWidth"
+  | "all";
+
+export type Easing = "linear" | "easeIn" | "easeOut" | "easeInOut";
+
+export interface Transition {
+  duration: number;
+  easing?: Easing;
+  properties: TransitionProperty[];
+  interactive?: boolean;
+}
 
 /* Command buffer opcodes — mirrors ops.h */
 const OP_OPEN_ELEMENT = 0x02;
@@ -409,4 +428,63 @@ export function snapshot(ops: Op[]): Op {
   let buf = new ArrayBuffer(size);
   let words = pack(ops, buf, 0, size);
   return { directive: OP_SNAPSHOT, data: new Uint8Array(buf, 0, words * 4) };
+}
+
+const TP_X = 1;
+const TP_Y = 2;
+const TP_WIDTH = 4;
+const TP_HEIGHT = 8;
+const TP_BG = 16;
+const TP_OVERLAY = 32;
+const TP_BORDER_COLOR = 128;
+const TP_BORDER_WIDTH = 256;
+
+const TP_POSITION = TP_X | TP_Y;
+const TP_SIZE = TP_WIDTH | TP_HEIGHT;
+const TP_ALL = TP_X | TP_Y | TP_WIDTH | TP_HEIGHT |
+  TP_BG | TP_OVERLAY | TP_BORDER_COLOR | TP_BORDER_WIDTH;
+
+function propertyMask(name: TransitionProperty): number {
+  switch (name) {
+    case "x":
+      return TP_X;
+    case "y":
+      return TP_Y;
+    case "position":
+      return TP_POSITION;
+    case "width":
+      return TP_WIDTH;
+    case "height":
+      return TP_HEIGHT;
+    case "size":
+      return TP_SIZE;
+    case "bg":
+      return TP_BG;
+    case "overlay":
+      return TP_OVERLAY;
+    case "borderColor":
+      return TP_BORDER_COLOR;
+    case "borderWidth":
+      return TP_BORDER_WIDTH;
+    case "all":
+      return TP_ALL;
+  }
+}
+
+const EASING_LINEAR = 0;
+const EASING_EASE_IN = 1;
+const EASING_EASE_OUT = 2;
+const EASING_EASE_IN_OUT = 3;
+
+function easingByte(easing: Easing): number {
+  switch (easing) {
+    case "linear":
+      return EASING_LINEAR;
+    case "easeIn":
+      return EASING_EASE_IN;
+    case "easeOut":
+      return EASING_EASE_OUT;
+    case "easeInOut":
+      return EASING_EASE_IN_OUT;
+  }
 }
