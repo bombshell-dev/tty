@@ -11,6 +11,7 @@ import {
   EVENT_CURSOR,
   EVENT_KEY,
   EVENT_MOUSE,
+  EVENT_POINTERSHAPE,
   EVENT_RESIZE,
   KEY_ALT_LEFT,
   KEY_ALT_RIGHT,
@@ -371,6 +372,22 @@ export interface CursorEvent {
   column: number;
 }
 
+/**
+ * Reply to an OSC 22 mouse-pointer-shape query.
+ *
+ * Emitted when the terminal answers a pointer-shape query (sent by the
+ * output side) on the input stream. The `report` is the raw payload the
+ * terminal returned between `OSC 22 ;` and the terminator — for example a
+ * shape name (`"pointer"`), `"0"` for an empty stack, or a comma-separated
+ * list of `1`/`0` support flags. The parser does not interpret it;
+ * correlating a reply with the query that produced it is the caller's
+ * responsibility.
+ */
+export interface PointerShapeEvent {
+  type: "pointershape";
+  report: string;
+}
+
 import type { PointerEvent } from "./term.ts";
 
 export type InputEvent =
@@ -381,6 +398,7 @@ export type InputEvent =
   | WheelEvent
   | ResizeEvent
   | CursorEvent
+  | PointerShapeEvent
   | PointerEvent;
 
 /**
@@ -683,6 +701,12 @@ function mapEvent(native: NativeInputEvent): InputEvent {
     }
     case EVENT_CURSOR: {
       return { type: "cursor", row: native.y, column: native.x };
+    }
+    case EVENT_POINTERSHAPE: {
+      return {
+        type: "pointershape",
+        report: new TextDecoder().decode(new Uint8Array(native.report)),
+      };
     }
     default: {
       return mapKeyEvent(native);

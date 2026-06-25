@@ -1,3 +1,5 @@
+import type { CursorShape } from "./termcodes.ts";
+
 /* Command buffer opcodes — mirrors ops.h */
 const OP_OPEN_ELEMENT = 0x02;
 const OP_TEXT = 0x03;
@@ -355,6 +357,14 @@ export interface OpenElement {
     bottom?: BorderSide;
   };
   clip?: { horizontal?: boolean; vertical?: boolean };
+  /**
+   * Mouse pointer shape to request while the pointer is over this element.
+   *
+   * This is a pure annotation: it does not affect layout or output and is not
+   * sent to the WASM module. It is consumed only when pointer-shape tracking is
+   * enabled via the `trackCursor` render option.
+   */
+  cursor?: CursorShape;
   floating?: {
     x?: number;
     y?: number;
@@ -466,6 +476,11 @@ export function text(
 
 export function close(): CloseElement {
   return { directive: OP_CLOSE_ELEMENT };
+}
+
+/** Narrow an `Op` to an element-open directive. */
+export function isOpen(op: Op): op is OpenElement {
+  return op.directive === OP_OPEN_ELEMENT;
 }
 
 function packSize(ops: Op[]): number {

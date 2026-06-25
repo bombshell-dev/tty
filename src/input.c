@@ -616,6 +616,67 @@ static int parse_cursor(struct InputState *st, struct InputEvent *ev) {
   return PARSE_NEED_MORE;
 }
 
+/* Parse an OSC 22 mouse-pointer-shape reply: ESC ] 22 ; <payload> <term>
+ * where <term> is ST (ESC \) or BEL (0x07). The payload is surfaced verbatim;
+ * the parser does not interpret it. Only OSC 22 is recognized here. */
+static int parse_osc(struct InputState *st, struct InputEvent *ev) {
+  if (st->len < 2)
+    return PARSE_NEED_MORE;
+  if (st->buf[0] != '\x1b' || st->buf[1] != ']')
+    return PARSE_ERR;
+
+  /* numeric OSC code */
+  int i = 2;
+  int code = -1;
+  while (i < st->len && st->buf[i] >= '0' && st->buf[i] <= '9') {
+    if (code == -1)
+      code = 0;
+    code = code * 10 + (st->buf[i] - '0');
+    i++;
+  }
+  if (i >= st->len)
+    return PARSE_NEED_MORE; /* code digits not yet terminated */
+  if (code != 22 || st->buf[i] != ';')
+    return PARSE_ERR; /* only OSC 22 with a payload separator */
+  i++;                /* skip ';' */
+
+  /* payload runs until ST (ESC \) or BEL */
+  int payload_start = i;
+  int payload_end = -1;
+  int term_len = 0;
+  while (i < st->len) {
+    uint8_t c = (uint8_t)st->buf[i];
+    if (c == 0x07) {
+      payload_end = i;
+      term_len = 1;
+      break;
+    }
+    if (c == 0x1b) {
+      if (i + 1 >= st->len)
+        return PARSE_NEED_MORE;
+      if (st->buf[i + 1] != '\\')
+        return PARSE_ERR; /* ESC not forming ST inside payload */
+      payload_end = i;
+      term_len = 2;
+      break;
+    }
+    i++;
+  }
+  if (payload_end == -1)
+    return PARSE_NEED_MORE; /* terminator not seen yet */
+
+  int n = payload_end - payload_start;
+  if (n > MAX_REPORT_BYTES)
+    n = MAX_REPORT_BYTES; /* truncate overly long payloads */
+  for (int j = 0; j < n; j++)
+    ev->report[j] = (uint8_t)st->buf[payload_start + j];
+  ev->report_len = (uint16_t)n;
+  ev->type = EVENT_POINTERSHAPE;
+
+  shift(st, payload_end + term_len);
+  return PARSE_OK;
+}
+
 /* Parse Kitty-enhanced legacy CSI sequences (non-u terminators).
  * Format: CSI [number] [; mod[:action]] terminator
  * Handles A-D, F, H, P, Q, S, ~ terminators with optional :action */
@@ -975,6 +1036,22 @@ int input_scan(struct InputState *st, const char *buf, int len, double now) {
         }
         /* pending — caller should retry after timeout */
         return accepted;
+      }
+
+      /* try OSC (ESC ]) — pointer-shape replies */
+      {
+        struct InputEvent oev;
+        memset(&oev, 0, sizeof(oev));
+        int rv = parse_osc(st, &oev);
+        if (rv == PARSE_OK) {
+          struct InputEvent *ev = emit(st);
+          *ev = oev;
+          st->esc_time = 0;
+          continue;
+        }
+        if (rv == PARSE_NEED_MORE) {
+          return accepted;
+        }
       }
 
       /* try trie match */
