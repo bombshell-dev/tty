@@ -120,7 +120,7 @@ export async function createTermNative(
     reduce: ct.reduce,
     output: ct.output,
     length: ct.length,
-    animating: ct.animating as Native["animating"],
+    animating: ct.animating,
     setPointer(x: number, y: number, down: boolean) {
       let view = new DataView(memory.buffer);
       view.setFloat32(opsBuf, x, true);
