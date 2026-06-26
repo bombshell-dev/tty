@@ -32,8 +32,8 @@ import {
   type Setting,
   settings,
 } from "../../settings.ts";
-import { useInput } from "./use-input.ts";
-import { useStdin } from "./use-stdin.ts";
+import { useInput } from "../use-input.ts";
+import { useStdin } from "../use-stdin.ts";
 
 const active = rgba(60, 120, 220);
 const inactive = rgba(50, 50, 60);

@@ -57,6 +57,24 @@ state. Clay drives the hit testing; no manual coordinate math required.
 
 ![Pointer events demo](keyboard/keyboard-pointer-events.gif)
 
+## Transitions
+
+Paths: `examples/transitions/sidebar.ts` and `examples/transitions/notecards.ts`
+
+Run them with:
+
+```sh
+deno run examples/transitions/sidebar.ts
+# or
+deno run examples/transitions/notecards.ts
+```
+
+What they show:
+
+- element transitions driven by changing layout and style properties
+- renderer `animating` state for scheduling follow-up frames
+- color and layout interpolation in an interactive keyboard/sidebar demo
+
 ## Inline Regions
 
 Path: `examples/inline-regions/index.ts`

@@ -19,6 +19,20 @@ describe("validate", () => {
     expect(validate([])).toBe(true);
   });
 
+  it("accepts transition ops", () => {
+    expect(validate([
+      open("x", {
+        transition: {
+          duration: 0.2,
+          easing: "easeOut",
+          properties: ["x", "bg"],
+          interactive: true,
+        },
+      }),
+      close(),
+    ])).toBe(true);
+  });
+
   it("rejects ops with wrong directive", () => {
     expect(validate([{ directive: 0xff }])).toBe(false);
   });
@@ -29,6 +43,23 @@ describe("validate", () => {
 
   it("rejects text missing content", () => {
     expect(validate([{ directive: 0x03 }])).toBe(false);
+  });
+
+  it("rejects invalid transition properties", () => {
+    expect(validate([
+      open("x", {
+        // deno-lint-ignore no-explicit-any
+        transition: { duration: 0.2, properties: ["opacity" as any] },
+      }),
+      close(),
+    ])).toBe(false);
+  });
+
+  it("rejects negative transition duration", () => {
+    expect(validate([
+      open("x", { transition: { duration: -1, properties: ["x"] } }),
+      close(),
+    ])).toBe(false);
   });
 
   it("rejects non-array", () => {

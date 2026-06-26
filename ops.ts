@@ -1,3 +1,25 @@
+export type TransitionProperty =
+  | "x"
+  | "y"
+  | "position"
+  | "width"
+  | "height"
+  | "size"
+  | "bg"
+  | "overlay"
+  | "borderColor"
+  | "borderWidth"
+  | "all";
+
+export type Easing = "linear" | "easeIn" | "easeOut" | "easeInOut";
+
+export interface Transition {
+  duration: number;
+  easing?: Easing;
+  properties: TransitionProperty[];
+  interactive?: boolean;
+}
+
 /* Command buffer opcodes — mirrors ops.h */
 const OP_OPEN_ELEMENT = 0x02;
 const OP_TEXT = 0x03;
@@ -11,6 +33,7 @@ const PROP_CORNER_RADIUS = 0x04;
 const PROP_BORDER = 0x08;
 const PROP_CLIP = 0x10;
 const PROP_FLOATING = 0x20;
+const PROP_TRANSITION = 0x40;
 
 const encoder = new TextEncoder();
 
@@ -128,6 +151,7 @@ export function pack(
         if (op.border) mask |= PROP_BORDER;
         if (op.clip) mask |= PROP_CLIP;
         if (op.floating) mask |= PROP_FLOATING;
+        if (op.transition) mask |= PROP_TRANSITION;
         view.setUint32(o, mask, true);
         o += 4;
 
@@ -239,6 +263,21 @@ export function pack(
             true,
           );
           o += 4;
+        }
+
+        if (op.transition) {
+          let t = op.transition;
+          let pmask = 0;
+          for (let name of t.properties) pmask |= propertyMask(name);
+
+          view.setFloat32(o, t.duration, true);
+          o += 4;
+          view.setUint16(o, pmask, true);
+          o += 2;
+          view.setUint8(o, easingByte(t.easing ?? "linear"));
+          o += 1;
+          view.setUint8(o, t.interactive ? 1 : 0);
+          o += 1;
         }
         break;
       }
@@ -366,6 +405,7 @@ export interface OpenElement {
     clipTo?: ClipTo;
     zIndex?: number;
   };
+  transition?: Transition;
 }
 
 export type AttachPoint =
@@ -489,6 +529,7 @@ function packSize(ops: Op[]): number {
         if (op.clip) n += 4;
         // x, y, expand width/height, parent, attach/pointer, clip/z
         if (op.floating) n += 7 * 4;
+        if (op.transition) n += 8;
         break;
       }
       case OP_TEXT: {
@@ -506,4 +547,63 @@ export function snapshot(ops: Op[]): Op {
   let buf = new ArrayBuffer(size);
   let words = pack(ops, buf, 0, size);
   return { directive: OP_SNAPSHOT, data: new Uint8Array(buf, 0, words * 4) };
+}
+
+const TP_X = 1;
+const TP_Y = 2;
+const TP_WIDTH = 4;
+const TP_HEIGHT = 8;
+const TP_BG = 16;
+const TP_OVERLAY = 32;
+const TP_BORDER_COLOR = 128;
+const TP_BORDER_WIDTH = 256;
+
+const TP_POSITION = TP_X | TP_Y;
+const TP_SIZE = TP_WIDTH | TP_HEIGHT;
+const TP_ALL = TP_X | TP_Y | TP_WIDTH | TP_HEIGHT |
+  TP_BG | TP_OVERLAY | TP_BORDER_COLOR | TP_BORDER_WIDTH;
+
+function propertyMask(name: TransitionProperty): number {
+  switch (name) {
+    case "x":
+      return TP_X;
+    case "y":
+      return TP_Y;
+    case "position":
+      return TP_POSITION;
+    case "width":
+      return TP_WIDTH;
+    case "height":
+      return TP_HEIGHT;
+    case "size":
+      return TP_SIZE;
+    case "bg":
+      return TP_BG;
+    case "overlay":
+      return TP_OVERLAY;
+    case "borderColor":
+      return TP_BORDER_COLOR;
+    case "borderWidth":
+      return TP_BORDER_WIDTH;
+    case "all":
+      return TP_ALL;
+  }
+}
+
+const EASING_LINEAR = 0;
+const EASING_EASE_IN = 1;
+const EASING_EASE_OUT = 2;
+const EASING_EASE_IN_OUT = 3;
+
+function easingByte(easing: Easing): number {
+  switch (easing) {
+    case "linear":
+      return EASING_LINEAR;
+    case "easeIn":
+      return EASING_EASE_IN;
+    case "easeOut":
+      return EASING_EASE_OUT;
+    case "easeInOut":
+      return EASING_EASE_IN_OUT;
+  }
 }

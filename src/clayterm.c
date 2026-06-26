@@ -12,12 +12,21 @@
  */
 
 #include "clayterm.h"
+#include "transitions.h"
 #include "../clay/clay.h"
 #include "buffer.h"
 #include "cell.h"
 #include "mem.h"
 #include "utf8.h"
 #include "wcwidth.h"
+
+/* Module-level pointer to the Term currently executing reduce().
+ * Set/cleared around each render pass so transition handlers (which Clay
+ * invokes with no userData — see Clay_TransitionCallbackArguments) can
+ * report back to the right Term's animating_count. Revisit once
+ * nicbarker/clay#603 lands userData on transition callbacks; then the
+ * handler can resolve its Term from args directly and this can go away. */
+struct Clayterm *ct_active_context = NULL;
 
 /* ── Command buffer protocol ──────────────────────────────────────── */
 
@@ -33,6 +42,7 @@
 #define PROP_BORDER 0x08
 #define PROP_CLIP 0x10
 #define PROP_FLOATING 0x20
+#define PROP_TRANSITION 0x40
 
 /* ── Instance state ───────────────────────────────────────────────── */
 
@@ -73,6 +83,7 @@ struct Clayterm {
   /* error collection */
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
+  int animating_count;
 };
 
 /* Memory layout inside the arena provided by the host:
@@ -536,9 +547,12 @@ struct Clayterm *init(void *mem, int w, int h) {
   return ct;
 }
 
-void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
+void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
+            float deltaTime) {
   int i = 0;
+  ct_active_context = ct;
   ct->error_count = 0;
+  ct->animating_count = 0;
 
   Clay_BeginLayout();
 
@@ -635,6 +649,22 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
         decl.floating.zIndex = (int16_t)(fd >> 8);
       }
 
+      if (mask & PROP_TRANSITION) {
+        float duration = rdf(buf, len, &i);
+        uint32_t props_and_flags = rd(buf, len, &i);
+        uint16_t props = props_and_flags & 0xFFFF;
+        uint8_t easing = (props_and_flags >> 16) & 0xFF;
+        uint8_t interactive = (props_and_flags >> 24) & 0xFF;
+
+        decl.transition.handler = ct_handler_for(easing);
+        decl.transition.duration = duration;
+        decl.transition.properties = (Clay_TransitionProperty)props;
+        decl.transition.interactionHandling =
+            interactive
+                ? CLAY_TRANSITION_ALLOW_INTERACTIONS_WHILE_TRANSITIONING_POSITION
+                : CLAY_TRANSITION_DISABLE_INTERACTIONS_WHILE_TRANSITIONING_POSITION;
+      }
+
       Clay__ConfigureOpenElement(decl);
       break;
     }
@@ -659,7 +689,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
       /* attrs byte -> alpha channel for render_text to extract */
       config.textColor.a = (float)((cfg >> 24) & 0xff);
 
-      Clay__OpenTextElement(text, Clay__StoreTextElementConfig(config));
+      Clay__OpenTextElement(text, config);
       break;
     }
 
@@ -672,7 +702,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
     }
   }
 
-  Clay_RenderCommandArray cmds = Clay_EndLayout();
+  Clay_RenderCommandArray cmds = Clay_EndLayout(deltaTime);
 
   /* reset output state */
   ct->out.length = 0;
@@ -771,11 +801,15 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row) {
   } else {
     present_cups(ct, row);
   }
+
+  ct_active_context = NULL;
 }
 
 char *output(struct Clayterm *ct) { return ct->out.data; }
 
 int length(struct Clayterm *ct) { return ct->out.length; }
+
+int animating(struct Clayterm *ct) { return ct->animating_count; }
 
 int get_element_bounds(const char *name, int name_len, float *out) {
   Clay_String str = {.length = name_len, .chars = name};
