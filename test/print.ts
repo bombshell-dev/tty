@@ -15,6 +15,7 @@ export function print(ansi: string, w: number, h: number): string {
   let x = 0;
   let y = 0;
   let i = 0;
+  let lastCh = " "; // preceding graphic character, for REP (CSI b)
 
   while (i < ansi.length) {
     if (ansi[i] === "\x1b" && ansi[i + 1] === "[") {
@@ -34,6 +35,15 @@ export function print(ansi: string, w: number, h: number): string {
         let parts = params.split(";");
         y = (parseInt(parts[0]) || 1) - 1;
         x = (parseInt(parts[1]) || 1) - 1;
+      } else if (cmd === "b") {
+        // REP: repeat the preceding graphic character `params` times
+        let n = parseInt(params) || 0;
+        for (let r = 0; r < n; r++) {
+          if (x >= 0 && x < w && y >= 0 && y < h) {
+            grid[y][x] = lastCh;
+          }
+          x++;
+        }
       } else if (cmd === "m") {
         // SGR — ignore
       }
@@ -46,6 +56,7 @@ export function print(ansi: string, w: number, h: number): string {
       // regular character — could be multi-byte UTF-8
       let cp = ansi.codePointAt(i)!;
       let ch = String.fromCodePoint(cp);
+      lastCh = ch;
       if (x >= 0 && x < w && y >= 0 && y < h) {
         grid[y][x] = ch;
       }
