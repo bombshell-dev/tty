@@ -352,6 +352,21 @@ describe("term", () => {
     expect(ansi).toMatch(/\x1b\[1;3H\x1b\[\?25h$/);
   });
 
+  it("uses the first caret declaration when multiple are present", () => {
+    let ansi = decode(
+      term.render([
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        text("AA", { caret: 1 }),
+        text("BB", { caret: 2 }),
+        close(),
+      ]).output,
+    );
+    // First caret: offset 1 of "AA" → column 2, row 1.
+    expect(ansi).toMatch(/\x1b\[1;2H\x1b\[\?25h$/);
+  });
+
   it("accounts for wide characters when positioning the caret", () => {
     let ansi = decode(
       term.render([
