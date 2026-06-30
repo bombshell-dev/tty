@@ -88,12 +88,14 @@ struct Clayterm {
    * first text node carrying a caret declaration per frame, then locates
    * the corresponding cell after Clay layout. had_caret_last_frame is the
    * only cross-frame bit retained. */
-  const char *caret_text_chars;   /* start of caret-bearing text node's bytes, or NULL */
-  int caret_text_length;          /* byte length of that text node */
-  uint32_t caret_offset;          /* code-point offset within that text node */
-  int caret_x, caret_y;           /* resolved cell (column, row), valid only when caret_text_chars != NULL */
-  int has_caret;                  /* 1 when the current frame placed a caret */
-  int had_caret_last_frame;       /* 1 when the previous frame placed a caret */
+  const char
+      *caret_text_chars; /* start of caret-bearing text node's bytes, or NULL */
+  int caret_text_length; /* byte length of that text node */
+  uint32_t caret_offset; /* code-point offset within that text node */
+  int caret_x, caret_y;  /* resolved cell (column, row), valid only when
+                            caret_text_chars != NULL */
+  int has_caret;         /* 1 when the current frame placed a caret */
+  int had_caret_last_frame; /* 1 when the previous frame placed a caret */
 };
 
 /* Memory layout inside the arena provided by the host:

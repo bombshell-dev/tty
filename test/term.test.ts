@@ -1,3 +1,4 @@
+// deno-lint-ignore-file no-control-regex
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
 import {
@@ -130,7 +131,7 @@ describe("term", () => {
       let out = decode(
         term.render(box("hello world"), { mode: "line" }).output,
       );
-      // deno-lint-ignore no-control-regex
+
       expect(out).not.toMatch(/\x1b\[\d+;\d+H/);
       expect(out.split("\n").length).toBe(5);
       expect(trim(print(out, 20, 5))).toEqual(`

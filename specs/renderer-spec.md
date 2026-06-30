@@ -337,62 +337,56 @@ nests clip regions more deeply than the renderer can track:
 ### 7.6 Hardware cursor visibility and positioning
 
 A `text()` directive MAY declare a `caret` property whose value is a
-non-negative integer code-point offset into the directive's `content`.
-`0` means "before the first code point"; `[...content].length` means
-"after the last." Offsets in between sit immediately before the cell
-where the corresponding code point would render.
+non-negative integer code-point offset into the directive's `content`. `0` means
+"before the first code point"; `[...content].length` means "after the last."
+Offsets in between sit immediately before the cell where the corresponding code
+point would render.
 
-The cell where a declared caret sits is the cell at which the code
-point at the caret's offset would be drawn given the layout engine's
-text wrapping. For an offset `N`:
+The cell where a declared caret sits is the cell at which the code point at the
+caret's offset would be drawn given the layout engine's text wrapping. For an
+offset `N`:
 
-- If `N < [...content].length`, the caret's cell is the display
-  position of the `N`-th code point (zero-indexed) within the rendered
-  text.
-- If `N == [...content].length`, the caret's cell is one display
-  position past the last rendered code point: on the same wrapped line
-  if there is room, or at the start of the next line if the layout
-  wraps at the end.
-- If `N > [...content].length` or `N < 0`, behavior is unspecified;
-  callers must keep offsets within bounds.
+- If `N < [...content].length`, the caret's cell is the display position of the
+  `N`-th code point (zero-indexed) within the rendered text.
+- If `N == [...content].length`, the caret's cell is one display position past
+  the last rendered code point: on the same wrapped line if there is room, or at
+  the start of the next line if the layout wraps at the end.
+- If `N > [...content].length` or `N < 0`, behavior is unspecified; callers must
+  keep offsets within bounds.
 
-Display position accounts for code points wider than one cell (CJK,
-fullwidth forms, some emoji): such code points occupy two cells, and
-the caret sits at the first cell of the pair. Cell widths are
-determined by the same measurement the renderer uses to lay out the
-text itself.
+Display position accounts for code points wider than one cell (CJK, fullwidth
+forms, some emoji): such code points occupy two cells, and the caret sits at the
+first cell of the pair. Cell widths are determined by the same measurement the
+renderer uses to lay out the text itself.
 
-The renderer manages the terminal's hardware cursor based on the
-presence of `caret:` declarations:
+The renderer manages the terminal's hardware cursor based on the presence of
+`caret:` declarations:
 
-- When the current frame contains one or more `caret:` declarations,
-  the rendered `output` MUST, when written to the terminal, leave the
-  hardware cursor visible at the cell where the first declared caret
-  (in directive order) sits.
+- When the current frame contains one or more `caret:` declarations, the
+  rendered `output` MUST, when written to the terminal, leave the hardware
+  cursor visible at the cell where the first declared caret (in directive order)
+  sits.
 
 - When the current frame contains no `caret:` declarations:
-  - If the previous frame contained one, the rendered `output` MUST
-    leave the hardware cursor hidden.
-  - Otherwise, the rendered `output` MUST NOT include
-    cursor-positioning or cursor-visibility bytes; the caller's
-    cursor state is preserved.
+  - If the previous frame contained one, the rendered `output` MUST leave the
+    hardware cursor hidden.
+  - Otherwise, the rendered `output` MUST NOT include cursor-positioning or
+    cursor-visibility bytes; the caller's cursor state is preserved.
 
 The byte-level path the renderer takes to satisfy these outcomes is
-implementation-defined. The renderer MAY hide the cursor before cell
-writes to prevent flicker, MAY omit such a hide for in-place edits
-where flicker is acceptable, MAY emit only a CUP when the caret has
-moved within an already-visible state, MAY use whatever escape-sequence
-path it judges appropriate. Only the post-frame cursor state above is
-normative.
+implementation-defined. The renderer MAY hide the cursor before cell writes to
+prevent flicker, MAY omit such a hide for in-place edits where flicker is
+acceptable, MAY emit only a CUP when the caret has moved within an
+already-visible state, MAY use whatever escape-sequence path it judges
+appropriate. Only the post-frame cursor state above is normative.
 
-If more than one `caret:` declaration is present in a frame, the
-renderer SHOULD use the first in directive order for the hardware
-cursor. Behavior for additional declarations is intentionally
-unspecified, leaving room for a future multi-cursor extension without
-breaking this contract.
+If more than one `caret:` declaration is present in a frame, the renderer SHOULD
+use the first in directive order for the hardware cursor. Behavior for
+additional declarations is intentionally unspecified, leaving room for a future
+multi-cursor extension without breaking this contract.
 
-This responsibility is limited to the hardware cursor's position and
-visibility. Cursor shape and blink rate remain caller-managed.
+This responsibility is limited to the hardware cursor's position and visibility.
+Cursor shape and blink rate remain caller-managed.
 
 ---
 
