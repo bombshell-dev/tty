@@ -12,17 +12,12 @@ import {
   rgba,
   text,
 } from "../../mod.ts";
-import {
-  alternateBuffer,
-  progressiveInput,
-  settings,
-} from "../../settings.ts";
+import { alternateBuffer, progressiveInput, settings } from "../../settings.ts";
 import { useInput } from "../use-input.ts";
 import { useStdin } from "../use-stdin.ts";
 
 const bg = rgba(20, 20, 30);
 const inputBg = rgba(35, 35, 50);
-const border = rgba(80, 100, 160);
 const label = rgba(180, 180, 200);
 const hint = rgba(80, 80, 100);
 
@@ -97,79 +92,40 @@ await main(function* () {
 });
 
 function frame(value: string, caret: number): Op[] {
-  let ops: Op[] = [];
-
-  ops.push(
+  return [
     open("root", {
       layout: {
         width: grow(),
         height: grow(),
         direction: "ttb",
-        alignX: "center",
-        alignY: "center",
-        padding: { left: 4, right: 4, top: 2, bottom: 2 },
+        padding: { left: 2, right: 2, top: 1, bottom: 1 },
+        gap: 1,
       },
       bg,
     }),
-  );
-
-  // Input row: "Name:" label + input box
-  ops.push(
-    open("input-row", {
-      layout: {
-        direction: "ltr",
-        gap: 2,
-        height: fixed(3),
-        alignY: "center",
-      },
-    }),
-  );
-
-  ops.push(
-    open("label", {
-      layout: {
-        width: fixed(6),
-        height: fixed(1),
-        alignX: "right",
-        alignY: "center",
-      },
-    }),
+    open("label", { layout: { height: fixed(1) } }),
     text("Name:", { color: label }),
     close(),
-  );
-
-  ops.push(
     open("input-box", {
       layout: {
         width: fixed(40),
         height: fixed(1),
         padding: { left: 1, right: 1 },
-        alignY: "center",
       },
       bg: inputBg,
-      border: { color: border, left: 1, right: 1, top: 1, bottom: 1 },
     }),
-    text(value, { color: label, caret }),
+    // A single space stands in for an empty value: Clay does not emit a
+    // text render command for an empty string, which means the renderer
+    // cannot resolve the caret's cell when the field is empty. The space
+    // is invisible against the input background. When the renderer
+    // gains a fallback for empty-text carets, drop the `|| " "`.
+    text(value || " ", { color: label, caret }),
     close(),
-  );
-
-  ops.push(close()); // input-row
-
-  // Hint line
-  ops.push(
-    open("hint", {
-      layout: {
-        height: fixed(1),
-        padding: { top: 1 },
-      },
-    }),
+    open("hint", { layout: { height: fixed(1) } }),
     text("← → move  Backspace delete  Esc or Ctrl+C exit", { color: hint }),
     close(),
-  );
-
-  ops.push(close()); // root
-
-  return ops;
+    close(),
+  ];
 }
 
 function terminalSize(): { columns: number; rows: number } {
