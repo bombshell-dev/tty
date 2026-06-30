@@ -352,6 +352,20 @@ describe("term", () => {
     expect(ansi).toMatch(/\x1b\[1;3H\x1b\[\?25h$/);
   });
 
+  it("emits no cursor bytes when no caret has ever been declared", () => {
+    let ansi = decode(
+      term.render([
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        text("Hi"),
+        close(),
+      ]).output,
+    );
+    expect(ansi).not.toContain("\x1b[?25h");
+    expect(ansi).not.toContain("\x1b[?25l");
+  });
+
   it("hides the cursor when transitioning from caret-present to caret-absent", () => {
     // First frame: caret declared.
     term.render([
