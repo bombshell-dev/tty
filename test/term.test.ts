@@ -337,6 +337,21 @@ describe("term", () => {
     });
   });
 
+  it("emits CUP and DECTCEM-show when a caret is declared", () => {
+    let ansi = decode(
+      term.render([
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        text("Hello", { caret: 2 }),
+        close(),
+      ]).output,
+    );
+    // Caret at code-point offset 2 → cell after "He" → terminal column 3, row 1.
+    // CUP: ESC [ row ; col H. DECTCEM-show: ESC [ ? 25 h.
+    expect(ansi).toMatch(/\x1b\[1;3H\x1b\[\?25h$/);
+  });
+
   describe("row offset", () => {
     it("renders two frames at the offset position", async () => {
       let term = await createTerm({ width: 20, height: 5 });

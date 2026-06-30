@@ -84,6 +84,16 @@ struct Clayterm {
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
   int animating_count;
+  /* Caret state for hardware-cursor management. The renderer records the
+   * first text node carrying a caret declaration per frame, then locates
+   * the corresponding cell after Clay layout. had_caret_last_frame is the
+   * only cross-frame bit retained. */
+  const char *caret_text_chars;   /* start of caret-bearing text node's bytes, or NULL */
+  int caret_text_length;          /* byte length of that text node */
+  uint32_t caret_offset;          /* code-point offset within that text node */
+  int caret_x, caret_y;           /* resolved cell (column, row), valid only when caret_text_chars != NULL */
+  int has_caret;                  /* 1 when the current frame placed a caret */
+  int had_caret_last_frame;       /* 1 when the previous frame placed a caret */
 };
 
 /* Memory layout inside the arena provided by the host:
@@ -234,6 +244,19 @@ static void present_cups(struct Clayterm *ct, int row) {
       x += w;
     }
   }
+
+  /* Hardware cursor management: per the spec's outcome contract,
+   * leave the cursor visible at the caret cell if a caret was declared
+   * this frame; otherwise hide it if and only if a caret was declared
+   * last frame. When neither this frame nor any prior frame declared
+   * a caret, emit nothing. */
+  if (ct->has_caret) {
+    emit_cursor(ct, ct->caret_x, ct->caret_y, row);
+    buf_str(&ct->out, "\x1b[?25h");
+  } else if (ct->had_caret_last_frame) {
+    buf_str(&ct->out, "\x1b[?25l");
+  }
+  ct->had_caret_last_frame = ct->has_caret;
 }
 
 /**
@@ -297,6 +320,72 @@ static void render_rect(struct Clayterm *ct, int x0, int y0, int x1, int y1,
   for (int y = y0; y < y1; y++)
     for (int x = x0; x < x1; x++)
       setcell(ct, x, y, ' ', ATTR_DEFAULT, bg);
+}
+
+/**
+ * Locate the cell where the caret should be rendered given the per-line
+ * text commands produced by Clay's wrap pass. Iterates render commands
+ * in order, accumulating code points consumed across slices that belong
+ * to the caret text node, until the caret's code-point offset is reached.
+ */
+static void locate_caret(struct Clayterm *ct, Clay_RenderCommandArray *cmds) {
+  if (ct->caret_text_chars == NULL) {
+    return;
+  }
+  const char *node_start = ct->caret_text_chars;
+  const char *node_end = node_start + ct->caret_text_length;
+  uint32_t target = ct->caret_offset;
+  uint32_t accumulated = 0;
+
+  for (int32_t j = 0; j < cmds->length; j++) {
+    Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(cmds, j);
+    if (cmd->commandType != CLAY_RENDER_COMMAND_TYPE_TEXT) {
+      continue;
+    }
+    Clay_TextRenderData *t = &cmd->renderData.text;
+    const char *slice = t->stringContents.chars;
+    int slice_len = t->stringContents.length;
+    if (slice < node_start || slice >= node_end) {
+      continue;
+    }
+    /* count code points in this slice */
+    uint32_t slice_cps = 0;
+    int x_cells = 0;
+    const char *p = slice;
+    int rem = slice_len;
+    while (rem > 0) {
+      uint32_t cp;
+      int n = utf8_decode(&cp, p);
+      if (n <= 0) {
+        n = 1;
+        cp = 0xfffd;
+      }
+      if (accumulated + slice_cps == target) {
+        ct->caret_x = (int)cmd->boundingBox.x + x_cells;
+        ct->caret_y = (int)cmd->boundingBox.y;
+        return;
+      }
+      int cw = wcwidth(cp);
+      if (cw < 0) {
+        cw = 1;
+      }
+      x_cells += cw;
+      slice_cps++;
+      p += n;
+      rem -= n;
+    }
+    if (accumulated + slice_cps == target) {
+      /* caret sits just after this slice's last code point */
+      ct->caret_x = (int)cmd->boundingBox.x + x_cells;
+      ct->caret_y = (int)cmd->boundingBox.y;
+      return;
+    }
+    accumulated += slice_cps;
+  }
+  /* offset out of range: behavior is unspecified by the spec; leave
+   * caret_x/caret_y at their sentinel -1 values and let the emission
+   * step suppress visibility. */
+  ct->has_caret = 0;
 }
 
 static void render_text(struct Clayterm *ct, int x0, int y0,
@@ -553,6 +642,12 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   ct_active_context = ct;
   ct->error_count = 0;
   ct->animating_count = 0;
+  ct->caret_text_chars = NULL;
+  ct->caret_text_length = 0;
+  ct->caret_offset = 0;
+  ct->caret_x = -1;
+  ct->caret_y = -1;
+  ct->has_caret = 0;
 
   Clay_BeginLayout();
 
@@ -673,10 +768,21 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       uint32_t col = rd(buf, len, &i);
       uint32_t bg = rd(buf, len, &i);
       uint32_t cfg = rd(buf, len, &i);
+      uint32_t caret = rd(buf, len, &i);
       uint32_t str_len = rd(buf, len, &i);
       int str_words = (str_len + 3) / 4;
       char *str_chars = (char *)&buf[i];
       i += str_words;
+
+      /* Record the FIRST caret declaration per frame for the
+       * single-hardware-cursor contract; later declarations are
+       * intentionally ignored (multi-cursor is unspecified). */
+      if (caret != 0xFFFFFFFF && ct->caret_text_chars == NULL) {
+        ct->caret_text_chars = str_chars;
+        ct->caret_text_length = (int)str_len;
+        ct->caret_offset = caret;
+        ct->has_caret = 1;
+      }
 
       Clay_String text = {.length = (int32_t)str_len, .chars = str_chars};
 
@@ -703,6 +809,9 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   }
 
   Clay_RenderCommandArray cmds = Clay_EndLayout(deltaTime);
+
+  /* resolve caret cell from this frame's text commands */
+  locate_caret(ct, &cmds);
 
   /* reset output state */
   ct->out.length = 0;
