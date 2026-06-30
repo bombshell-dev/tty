@@ -672,7 +672,9 @@ terminal-management operations:
 
 These are the caller's responsibility. The renderer's output contains only the
 escape sequences needed to render the frame content (cursor positioning for cell
-writes, SGR attributes for styling, and UTF-8 text).
+writes, SGR attributes for styling, and UTF-8 text) and, when a `caret`
+declaration is present, the cursor-positioning and cursor-visibility sequences
+specified in §7.6.
 
 ### 11.3 The renderer does not own application lifecycle
 
