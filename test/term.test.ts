@@ -352,6 +352,20 @@ describe("term", () => {
     expect(ansi).toMatch(/\x1b\[1;3H\x1b\[\?25h$/);
   });
 
+  it("places the caret one cell past the last character when offset == length", () => {
+    let ansi = decode(
+      term.render([
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        text("Hi", { caret: 2 }),
+        close(),
+      ]).output,
+    );
+    // After "Hi": column 3, row 1.
+    expect(ansi).toMatch(/\x1b\[1;3H\x1b\[\?25h$/);
+  });
+
   it("emits no cursor bytes when no caret has ever been declared", () => {
     let ansi = decode(
       term.render([
