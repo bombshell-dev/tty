@@ -352,6 +352,28 @@ describe("term", () => {
     expect(ansi).toMatch(/\x1b\[1;3H\x1b\[\?25h$/);
   });
 
+  it("places the caret on the correct wrapped line", async () => {
+    let narrow = await createTerm({ width: 5, height: 4 });
+    let ansi = decode(
+      narrow.render([
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        text("hello world", { caret: 7 }),
+        close(),
+      ]).output,
+    );
+    // Caret at code-point 7 of "hello world" → after "hello w" → between
+    // "w" and "o" on the second wrapped line. Exact column depends on Clay's
+    // wrap point: assert row 2 and column at least 2.
+    let cupMatch = ansi.match(/\x1b\[(\d+);(\d+)H\x1b\[\?25h$/);
+    expect(cupMatch).not.toBeNull();
+    let row = parseInt(cupMatch![1], 10);
+    let col = parseInt(cupMatch![2], 10);
+    expect(row).toBe(2);
+    expect(col).toBeGreaterThanOrEqual(2);
+  });
+
   it("places the caret one cell past the last character when offset == length", () => {
     let ansi = decode(
       term.render([
