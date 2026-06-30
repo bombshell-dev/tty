@@ -352,6 +352,21 @@ describe("term", () => {
     expect(ansi).toMatch(/\x1b\[1;3H\x1b\[\?25h$/);
   });
 
+  it("accounts for wide characters when positioning the caret", () => {
+    let ansi = decode(
+      term.render([
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        // 中 is a wide character (2 cells). Caret at offset 1 means
+        // "after 中", i.e. column 3 (terminal cols are 1-based).
+        text("中hi", { caret: 1 }),
+        close(),
+      ]).output,
+    );
+    expect(ansi).toMatch(/\x1b\[1;3H\x1b\[\?25h$/);
+  });
+
   it("places the caret on the correct wrapped line", async () => {
     let narrow = await createTerm({ width: 5, height: 4 });
     let ansi = decode(
