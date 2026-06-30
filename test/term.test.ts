@@ -352,6 +352,28 @@ describe("term", () => {
     expect(ansi).toMatch(/\x1b\[1;3H\x1b\[\?25h$/);
   });
 
+  it("hides the cursor when transitioning from caret-present to caret-absent", () => {
+    // First frame: caret declared.
+    term.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      text("Hi", { caret: 1 }),
+      close(),
+    ]);
+    // Second frame: no caret. Output must include DECTCEM-hide.
+    let ansi = decode(
+      term.render([
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        text("Hi"),
+        close(),
+      ]).output,
+    );
+    expect(ansi).toContain("\x1b[?25l");
+  });
+
   describe("row offset", () => {
     it("renders two frames at the offset position", async () => {
       let term = await createTerm({ width: 20, height: 5 });
