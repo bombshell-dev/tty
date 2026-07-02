@@ -11,15 +11,17 @@ This specification describes Clayterm's terminal input parsing surface: the API
 for decoding raw terminal byte sequences into structured events.
 
 Input parsing is architecturally independent from rendering (see
-[Renderer Specification](renderer-spec.md), INV-8). The two concerns share a
+[Renderer Specification](renderer-spec.md), INV-7). The two concerns share a
 compiled WASM binary for loading efficiency, but neither depends on the other's
-state, types, or API surface.
+state, types, or API surface. Both consume the shared capability layer defined
+in the [Terminfo Specification](terminfo-spec.md); the input parser is
+additionally that layer's runtime write path (see Section 6).
 
-This specification is currently non-normative. The input API has clear design
-intent but has undergone more revision than the rendering core and faces known
-upcoming forces that will reshape it (Kitty progressive enhancement field
-surfacing, terminfo binary parsing). It is written to document the current
-surface and guide future stabilization.
+This specification is currently non-normative except where noted. The input API
+has clear design intent but has undergone more revision than the rendering core
+and faces known upcoming forces that will reshape it (Kitty progressive
+enhancement field surfacing). It is written to document the current surface and
+guide future stabilization.
 
 ---
 
@@ -31,6 +33,8 @@ surface and guide future stabilization.
 - The scan API and its return type
 - The `InputEvent` discriminated union and its variants
 - The ESC timeout resolution model
+- Terminfo integration: key sequence loading and capability query response
+  recognition (Section 6, normative)
 
 ### Out of scope
 
@@ -74,8 +78,16 @@ Options:
   responsiveness (lower values) and correct disambiguation of ESC-prefixed
   sequences (higher values).
 
-- **`terminfo`** — A `Uint8Array` of raw terminfo binary. Accepted but C-side
-  parsing is not yet implemented.
+- **`terminfo`** — A `TermInfo` handle from `queryTermInfo()` (see
+  [Terminfo Specification](terminfo-spec.md) §10). Attaches the parser to the
+  handle's shared memory and capability struct. Terminal-specific key sequences
+  from the handle's terminfo bytes are loaded into the parser's sequence trie at
+  initialization (Section 6.1), and the parser becomes the capability struct's
+  runtime writer (Section 6.2). When omitted, the parser operates standalone
+  with xterm default sequences and a private capability struct.
+
+  The previous `Uint8Array` form of this option is replaced by the handle form;
+  raw bytes are supplied via `queryTermInfo({ terminfo: bytes })`.
 
 ### 4.2 Scan
 
@@ -135,7 +147,50 @@ has already been extended with fields that are not yet mapped to the TS types).
 
 ---
 
-## 6. Deferred / Future Areas
+## 6. Terminfo Integration
+
+_This section is normative. It defines the input parser's two roles in the
+capability layer specified by the [Terminfo Specification](terminfo-spec.md)._
+
+### 6.1 Key sequences from terminfo
+
+When attached to a `TermInfo` handle whose terminfo bytes are present, the
+parser MUST load the terminal's `key_*` string capabilities into its escape
+sequence trie at initialization, before any scan. Terminfo-supplied sequences
+take precedence over the built-in xterm defaults when they conflict; defaults
+remain registered for sequences the terminfo entry does not define.
+
+The key capabilities consumed are the `key_*` string range mapped to existing
+`KEY_*` codes: arrows (`kcuu1`, `kcud1`, `kcub1`, `kcuf1`), function keys
+(`kf1`–`kf12`), editing keys (`khome`, `kend`, `kich1`, `kdch1`, `kpp`, `knp`),
+and backtab (`kcbt`). Key capabilities with no corresponding `KEY_*` code are
+ignored.
+
+Strings are read directly from the raw terminfo bytes in the shared region; they
+are not copied into the capability struct.
+
+### 6.2 Query response recognition
+
+The parser is the runtime write path for the capability struct. During a normal
+scan — with responses potentially interleaved with user input — it MUST
+recognize and consume the probe responses listed in Terminfo Specification §9.1:
+OSC 10/11/12 theme color reports, OSC 21 kitty color reports, OSC 22 pointer
+shape reports, XTGETTCAP DCS replies, DECRPM mode-2026 reports, kitty keyboard
+flag reports, kitty graphics APC replies, and the DA1 device attributes report.
+
+For each recognized response the parser updates the corresponding struct fields,
+sets the `confirmed` bit, and increments the generation, per Terminfo
+Specification §6. Responses are consumed silently: they MUST NOT surface as
+`InputEvent`s, and bytes belonging to a recognized response MUST NOT leak into
+adjacent events.
+
+When the parser is standalone (no handle), responses are still recognized and
+consumed — writing into the parser's private struct — so stray replies never
+corrupt the event stream.
+
+---
+
+## 7. Deferred / Future Areas
 
 _These topics are explicitly excluded from this specification. Their omission is
 intentional, not an oversight._
@@ -143,9 +198,6 @@ intentional, not an oversight._
 **Full Kitty progressive enhancement event types.** The C-side input parser
 struct has been extended for progressive enhancement fields. The TypeScript
 event types have not been updated to surface them.
-
-**Terminfo binary parsing.** The input API accepts a `terminfo` option, but
-C-side parsing is not implemented.
 
 **Whether input parsing should be a separate package.** Architecturally
 independent from the renderer but currently co-located. The distribution
