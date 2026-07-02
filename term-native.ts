@@ -52,46 +52,67 @@ export interface Native {
   errorCount(ct: number): number;
   errorType(ct: number, index: number): number;
   errorMessage(ct: number, index: number): string;
+  setTermInfo(ct: number, tiPtr: number): void;
 }
 
 import { compiled } from "./wasm.ts";
 
+/**
+ * Attachment surface provided by a TermInfo handle: the shared memory,
+ * its bump allocator, and the capability struct pointer. See
+ * terminfo.ts internals().
+ */
+export interface TermAttach {
+  memory: WebAssembly.Memory;
+  exports: Record<string, CallableFunction>;
+  structPtr: number;
+  alloc(size: number, align?: number): number;
+}
+
 export async function createTermNative(
   w: number,
   h: number,
+  attach?: TermAttach,
 ): Promise<Native> {
-  let memory = new WebAssembly.Memory({ initial: 2 });
+  let memory = attach?.memory ?? new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
 
-  let instance = await WebAssembly.instantiate(compiled, {
-    env: { memory },
-    clay: {
-      measureTextFunction(
-        ret: number,
-        text: number,
-        _config: number,
-        _userData: number,
-      ) {
-        exports.measure(ret, text);
+  if (attach) {
+    // Reuse the handle's instance: instantiating the module again over
+    // the shared memory would rewrite its data segments and clobber
+    // static state already initialized there.
+    Object.assign(exports, attach.exports);
+  } else {
+    let instance = await WebAssembly.instantiate(compiled, {
+      env: { memory },
+      clay: {
+        measureTextFunction(
+          ret: number,
+          text: number,
+          _config: number,
+          _userData: number,
+        ) {
+          exports.measure(ret, text);
+        },
+        queryScrollOffsetFunction(
+          ret: number,
+          _elementId: number,
+          _userData: number,
+        ) {
+          let view = new DataView(memory.buffer);
+          view.setFloat32(ret, 0, true);
+          view.setFloat32(ret + 4, 0, true);
+        },
       },
-      queryScrollOffsetFunction(
-        ret: number,
-        _elementId: number,
-        _userData: number,
-      ) {
-        let view = new DataView(memory.buffer);
-        view.setFloat32(ret, 0, true);
-        view.setFloat32(ret + 4, 0, true);
-      },
-    },
-  });
+    });
 
-  Object.assign(exports, instance.exports);
+    Object.assign(exports, instance.exports);
+  }
 
   let ct = exports as unknown as {
     __heap_base: WebAssembly.Global;
     clayterm_size(w: number, h: number): number;
-    init(mem: number, w: number, h: number): number;
+    init(mem: number, w: number, h: number, ti: number): number;
     reduce(
       ct: number,
       buf: number,
@@ -112,6 +133,7 @@ export async function createTermNative(
     error_type(ct: number, index: number): number;
     error_message_length(ct: number, index: number): number;
     error_message_ptr(ct: number, index: number): number;
+    clayterm_set_terminfo(ct: number, ti: number): void;
   };
 
   // The transfer budget is intentionally fixed: text/id/snapshot payload bytes
@@ -123,21 +145,28 @@ export async function createTermNative(
   let statePtr!: number;
   let opsBuf = 0;
 
-  // Renderer state and the fixed transfer buffer share linear memory as
-  // [heap: state][opsBuf]; opsBuf moves when the state size changes. Memory is
-  // grown to fit but never reclaimed, so a downsize keeps the high-water mark
-  // (renderer-spec 7.7).
+  // Renderer state and the fixed transfer buffer share linear memory.
+  // In standalone mode: [heap: state][opsBuf]; opsBuf moves on resize.
+  // In attach mode: arena and opsBuf are bump-allocated from shared memory;
+  // opsBuf is fixed after the first call; resize bump-allocs a new arena.
+  // Memory grows to fit but is never reclaimed (renderer-spec 7.7).
   function layout(lw: number, lh: number): void {
-    let heap = ct.__heap_base.value as number;
-    let size = ct.clayterm_size(lw, lh);
-    let needed = heap + size + transferBytes;
-    let pages = Math.ceil(needed / WASM_PAGE_BYTES);
-    let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
-    if (pages > current) {
-      memory.grow(pages - current);
+    let sz = ct.clayterm_size(lw, lh);
+    if (attach) {
+      let arena = attach.alloc(sz);
+      if (!opsBuf) opsBuf = attach.alloc(transferBytes, 4);
+      statePtr = ct.init(arena, lw, lh, attach.structPtr);
+    } else {
+      let heap = ct.__heap_base.value as number;
+      let needed = heap + sz + transferBytes;
+      let pages = Math.ceil(needed / WASM_PAGE_BYTES);
+      let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
+      if (pages > current) {
+        memory.grow(pages - current);
+      }
+      statePtr = ct.init(heap, lw, lh, 0);
+      opsBuf = (heap + sz + 3) & ~3;
     }
-    statePtr = ct.init(heap, lw, lh);
-    opsBuf = (heap + size + 3) & ~3;
   }
   layout(w, h);
 
@@ -203,6 +232,9 @@ export async function createTermNative(
       let p = ct.error_message_ptr(ptr, index);
       let decoder = new TextDecoder();
       return decoder.decode(new Uint8Array(memory.buffer, p, len));
+    },
+    setTermInfo(ptr: number, tiPtr: number): void {
+      ct.clayterm_set_terminfo(ptr, tiPtr);
     },
   };
 }

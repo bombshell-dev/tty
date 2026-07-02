@@ -28,6 +28,7 @@ EXPORTS = \
   -Wl,--export=error_type \
   -Wl,--export=error_message_length \
   -Wl,--export=error_message_ptr \
+  -Wl,--export=clayterm_set_terminfo \
   -Wl,--export=input_size \
   -Wl,--export=input_init \
   -Wl,--export=input_scan \

@@ -145,6 +145,13 @@ const PROBE = encoder.encode(
 
 interface TermInfoNative {
   memory: WebAssembly.Memory;
+  /**
+   * The handle's WASM instance exports. Attached consumers reuse this
+   * instance rather than instantiating the module again: instantiation
+   * rewrites the module's data segments, which would clobber the static
+   * state of anything already initialized in the shared memory.
+   */
+  exports: Record<string, CallableFunction>;
   structPtr: number;
   bytesPtr: number;
   bytesLen: number;
@@ -228,10 +235,13 @@ export async function queryTermInfo(
   }
 
   let memory = new WebAssembly.Memory({ initial: 4 });
+  let allExports: Record<string, CallableFunction> = {};
   let instance = await WebAssembly.instantiate(compiled, {
     env: { memory },
     clay: {
-      measureTextFunction() {},
+      measureTextFunction(ret: number, text: number) {
+        allExports.measure(ret, text);
+      },
       queryScrollOffsetFunction(ret: number) {
         let view = new DataView(memory.buffer);
         view.setFloat32(ret, 0, true);
@@ -239,6 +249,7 @@ export async function queryTermInfo(
       },
     },
   });
+  Object.assign(allExports, instance.exports);
 
   let exports = instance.exports as unknown as {
     __heap_base: WebAssembly.Global;
@@ -278,7 +289,14 @@ export async function queryTermInfo(
     exports.terminfo_grant(structPtr, FLAG_TRUECOLOR);
   }
 
-  let native: TermInfoNative = { memory, structPtr, bytesPtr, bytesLen, alloc };
+  let native: TermInfoNative = {
+    memory,
+    exports: allExports,
+    structPtr,
+    bytesPtr,
+    bytesLen,
+    alloc,
+  };
 
   let handle: TermInfo = {
     get capabilities(): Capabilities {

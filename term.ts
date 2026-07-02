@@ -1,9 +1,25 @@
 import { type Op, pack } from "./ops.ts";
-import { type BoundingBox, createTermNative } from "./term-native.ts";
+import {
+  type BoundingBox,
+  createTermNative,
+  type TermAttach,
+} from "./term-native.ts";
+import { internals, type TermInfo } from "./terminfo.ts";
 
 export interface TermOptions {
   height: number;
   width: number;
+
+  /**
+   * TermInfo handle from queryTermInfo(). Attaches the Term to the
+   * handle's shared capability struct, which gates emission (color
+   * encoding ladder, synchronized output, full redraw on capability
+   * change — see specs/renderer-spec.md section 7.8).
+   *
+   * If no handle is provided the Term uses the baseline capabilities
+   * (256-color emission).
+   */
+  terminfo?: TermInfo;
 }
 
 /**
@@ -22,8 +38,9 @@ export interface TermResizeEvent {
  * non-resize events are ignored).
  */
 export type UpdateOptions =
-  | { width: number; height: number }
-  | { events: ReadonlyArray<TermResizeEvent | { type: string }> };
+  | { width: number; height: number; terminfo?: TermInfo }
+  | { events: ReadonlyArray<TermResizeEvent | { type: string }>; terminfo?: TermInfo }
+  | { terminfo: TermInfo | undefined };
 
 export interface RenderOptions {
   mode?: "line";
@@ -100,8 +117,19 @@ export interface Term {
 }
 
 export async function createTerm(options: TermOptions): Promise<Term> {
-  let { width, height } = options;
-  let native = await createTermNative(width, height);
+  let { width, height, terminfo: currentTerminfo } = options;
+
+  let currentAttach: TermAttach | undefined;
+  if (currentTerminfo) {
+    let ti = internals(currentTerminfo);
+    if (ti.termAttached) {
+      throw new Error("TermInfo handle is already attached to a Term");
+    }
+    ti.termAttached = true;
+    currentAttach = ti;
+  }
+
+  let native = await createTermNative(width, height, currentAttach);
   let { memory } = native;
 
   let prev = new Set<string>();
@@ -213,29 +241,50 @@ export async function createTerm(options: TermOptions): Promise<Term> {
             h = r.height;
           }
         }
-        if (w === undefined || h === undefined) {
-          return;
-        }
-      } else {
+      } else if ("width" in options) {
         w = options.width;
         h = options.height;
       }
-      if (
-        !Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0
-      ) {
-        throw new RangeError(`invalid terminal dimensions ${w}x${h}`);
+
+      if (w !== undefined && h !== undefined) {
+        if (
+          !Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0
+        ) {
+          throw new RangeError(`invalid terminal dimensions ${w}x${h}`);
+        }
+        if (w !== width || h !== height) {
+          width = w;
+          height = h;
+          native.update(w, h);
+          prev = new Set();
+          pressed = new Set();
+          wasDown = false;
+          lastRenderAt = undefined;
+          wasAnimating = false;
+        }
       }
-      if (w === width && h === height) {
-        return;
+
+      if ("terminfo" in options) {
+        let newTerminfo = (options as { terminfo: TermInfo | undefined })
+          .terminfo;
+        if (newTerminfo !== currentTerminfo) {
+          if (currentTerminfo) internals(currentTerminfo).termAttached = false;
+          let newStructPtr = 0;
+          if (newTerminfo) {
+            let ti = internals(newTerminfo);
+            if (ti.termAttached) {
+              throw new Error("TermInfo handle is already attached to a Term");
+            }
+            ti.termAttached = true;
+            currentAttach = ti;
+            newStructPtr = ti.structPtr;
+          } else {
+            currentAttach = undefined;
+          }
+          currentTerminfo = newTerminfo;
+          native.setTermInfo(native.statePtr, newStructPtr);
+        }
       }
-      width = w;
-      height = h;
-      native.update(w, h);
-      prev = new Set();
-      pressed = new Set();
-      wasDown = false;
-      lastRenderAt = undefined;
-      wasAnimating = false;
     },
   };
 }

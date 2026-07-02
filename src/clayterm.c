@@ -101,6 +101,13 @@ struct Clayterm {
       caret_y;   /* resolved cell (column, row); -1 sentinel until placed */
   int has_caret; /* 1 when the current frame will emit a cursor */
   int had_caret_last_frame; /* 1 when the previous frame emitted a cursor */
+  /* capability struct (shared or private) and the generation of the
+   * last emitted frame; a mismatch forces a full redraw */
+  struct TermInfo *ti;
+  struct TermInfo ti_private;
+  uint32_t ti_generation;
+  /* color encoding for the current frame: 0 truecolor, 1 = 256, 2 = 16 */
+  int depth;
 };
 
 /* Memory layout inside the arena provided by the host:
@@ -110,6 +117,8 @@ struct Clayterm {
  * full-screen redraws with truecolor SGR sequences on every cell.
  */
 #define OUT_BYTES_PER_CELL 64
+/* headroom for the frame-scoped synchronized-output wrap */
+#define OUT_WRAP_BYTES 32
 
 /* ── Cell buffer ops ──────────────────────────────────────────────── */
 
@@ -137,6 +146,80 @@ static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
 
 /* ── Escape sequence generation ───────────────────────────────────── */
 
+static int dist2(int r1, int g1, int b1, int r2, int g2, int b2) {
+  int dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+  return dr * dr + dg * dg + db * db;
+}
+
+/* Nearest xterm 256-color palette entry: 6x6x6 cube (levels 0, 95, 135,
+ * 175, 215, 255) vs 24-step grayscale ramp (8, 18, … 238), whichever is
+ * closer. Matches the tmux/xterm colour_find_rgb approach. */
+static int xterm256(int r, int g, int b) {
+  static const int q2c[6] = {0, 95, 135, 175, 215, 255};
+  int qr = r < 48 ? 0 : r < 115 ? 1 : (r - 35) / 40;
+  int qg = g < 48 ? 0 : g < 115 ? 1 : (g - 35) / 40;
+  int qb = b < 48 ? 0 : b < 115 ? 1 : (b - 35) / 40;
+
+  int avg = (r + g + b) / 3;
+  int gi = avg > 238 ? 23 : (avg - 3) / 10;
+  if (gi < 0)
+    gi = 0;
+  int gray = 8 + 10 * gi;
+
+  if (dist2(r, g, b, gray, gray, gray) <
+      dist2(r, g, b, q2c[qr], q2c[qg], q2c[qb]))
+    return 232 + gi;
+  return 16 + 36 * qr + 6 * qg + qb;
+}
+
+/* Nearest of the 16 ANSI colors (xterm default palette). */
+static int ansi16(int r, int g, int b) {
+  static const uint8_t palette[16][3] = {
+      {0, 0, 0},       {205, 0, 0},   {0, 205, 0},   {205, 205, 0},
+      {0, 0, 238},     {205, 0, 205}, {0, 205, 205}, {229, 229, 229},
+      {127, 127, 127}, {255, 0, 0},   {0, 255, 0},   {255, 255, 0},
+      {92, 92, 255},   {255, 0, 255}, {0, 255, 255}, {255, 255, 255},
+  };
+  int best = 0;
+  int best_d = 0x7fffffff;
+  for (int i = 0; i < 16; i++) {
+    int d = dist2(r, g, b, palette[i][0], palette[i][1], palette[i][2]);
+    if (d < best_d) {
+      best_d = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/* Emit one color under the frame's encoding ladder (renderer-spec 7.6):
+ * truecolor, 256-color, or 16-color SGR. */
+static void emit_color(struct Clayterm *ct, uint32_t c, int is_bg) {
+  int r = (int)((c >> 16) & 0xff);
+  int g = (int)((c >> 8) & 0xff);
+  int b = (int)(c & 0xff);
+
+  if (ct->depth == 0) {
+    buf_str(&ct->out, is_bg ? "\x1b[48;2;" : "\x1b[38;2;");
+    buf_num(&ct->out, r);
+    buf_put(&ct->out, ";", 1);
+    buf_num(&ct->out, g);
+    buf_put(&ct->out, ";", 1);
+    buf_num(&ct->out, b);
+    buf_put(&ct->out, "m", 1);
+  } else if (ct->depth == 1) {
+    buf_str(&ct->out, is_bg ? "\x1b[48;5;" : "\x1b[38;5;");
+    buf_num(&ct->out, xterm256(r, g, b));
+    buf_put(&ct->out, "m", 1);
+  } else {
+    int i = ansi16(r, g, b);
+    int code = i < 8 ? (is_bg ? 40 : 30) + i : (is_bg ? 100 : 90) + (i - 8);
+    buf_str(&ct->out, "\x1b[");
+    buf_num(&ct->out, code);
+    buf_put(&ct->out, "m", 1);
+  }
+}
+
 static void emit_attr(struct Clayterm *ct, uint32_t fg, uint32_t bg) {
   if (fg == ct->lastfg && bg == ct->lastbg)
     return;
@@ -160,27 +243,11 @@ static void emit_attr(struct Clayterm *ct, uint32_t fg, uint32_t bg) {
   if (fg & ATTR_STRIKEOUT)
     buf_str(&ct->out, "\x1b[9m");
 
-  /* foreground truecolor */
-  if (!(fg & ATTR_DEFAULT)) {
-    buf_str(&ct->out, "\x1b[38;2;");
-    buf_num(&ct->out, (fg >> 16) & 0xff);
-    buf_put(&ct->out, ";", 1);
-    buf_num(&ct->out, (fg >> 8) & 0xff);
-    buf_put(&ct->out, ";", 1);
-    buf_num(&ct->out, fg & 0xff);
-    buf_put(&ct->out, "m", 1);
-  }
+  if (!(fg & ATTR_DEFAULT))
+    emit_color(ct, fg, 0);
 
-  /* background truecolor */
-  if (!(bg & ATTR_DEFAULT)) {
-    buf_str(&ct->out, "\x1b[48;2;");
-    buf_num(&ct->out, (bg >> 16) & 0xff);
-    buf_put(&ct->out, ";", 1);
-    buf_num(&ct->out, (bg >> 8) & 0xff);
-    buf_put(&ct->out, ";", 1);
-    buf_num(&ct->out, bg & 0xff);
-    buf_put(&ct->out, "m", 1);
-  }
+  if (!(bg & ATTR_DEFAULT))
+    emit_color(ct, bg, 1);
 
   ct->lastfg = fg;
   ct->lastbg = bg;
@@ -572,7 +639,7 @@ int clayterm_size(int w, int h) {
   set_clay_capacity(w, h);
   int cell_count = w * h;
   int cell_bytes = cell_count * (int)sizeof(Cell);
-  int out_bytes = cell_count * OUT_BYTES_PER_CELL;
+  int out_bytes = cell_count * OUT_BYTES_PER_CELL + OUT_WRAP_BYTES;
   int clay_bytes = (int)Clay_MinMemorySize();
   return align8((int)sizeof(struct Clayterm)) + align8(cell_bytes) /* front */
          + align8(cell_bytes)                                      /* back */
@@ -629,12 +696,12 @@ int error_message_ptr(struct Clayterm *ct, int index) {
   return (int)ct->errors[index].errorText.chars;
 }
 
-struct Clayterm *init(void *mem, int w, int h) {
+struct Clayterm *init(void *mem, int w, int h, struct TermInfo *ti) {
   set_clay_capacity(w, h);
   struct Clayterm *ct = (struct Clayterm *)mem;
   int cell_count = w * h;
   int cell_bytes = align8(cell_count * (int)sizeof(Cell));
-  int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL);
+  int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL + OUT_WRAP_BYTES);
   char *base = (char *)mem + align8((int)sizeof(struct Clayterm));
 
   char *clay_mem = base + cell_bytes * 2 + out_bytes;
@@ -649,12 +716,16 @@ struct Clayterm *init(void *mem, int w, int h) {
       .h = h,
       .front = (Cell *)base,
       .back = (Cell *)(base + cell_bytes),
-      .out = {base + cell_bytes * 2, 0, cell_count * OUT_BYTES_PER_CELL},
+      .out = {base + cell_bytes * 2, 0,
+              cell_count * OUT_BYTES_PER_CELL + OUT_WRAP_BYTES},
       .lastfg = 0xffffffff,
       .lastbg = 0xffffffff,
       .lastx = -1,
       .lasty = -1,
   };
+
+  ct->ti = ti ? ti : terminfo_init(&ct->ti_private);
+  ct->ti_generation = ct->ti->generation;
 
   // initialize back buffer with spaces and default fg/bg
   cells_fill(ct->back, w, h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);
@@ -662,6 +733,11 @@ struct Clayterm *init(void *mem, int w, int h) {
   // initialize front buffer with zeros. Every cell will be
   cells_fill(ct->front, w, h, 0, 0, 0);
   return ct;
+}
+
+void clayterm_set_terminfo(struct Clayterm *ct, struct TermInfo *ti) {
+  ct->ti = ti ? ti : terminfo_init(&ct->ti_private);
+  ct->ti_generation = 0;
 }
 
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
@@ -872,6 +948,21 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   ct->clip_depth_exceeded = 0;
   ct->clipping = 0;
 
+  /* capability gating: pick the color encoding for this frame, and on a
+   * generation change invalidate the front buffer so the frame is
+   * emitted as a complete redraw under the new capabilities */
+  if (ct->ti->flags & TERMINFO_TRUECOLOR) {
+    ct->depth = 0;
+  } else if (ct->ti->colors >= 256) {
+    ct->depth = 1;
+  } else {
+    ct->depth = 2;
+  }
+  if (ct->ti->generation != ct->ti_generation) {
+    ct->ti_generation = ct->ti->generation;
+    cells_fill(ct->front, ct->w, ct->h, 0, 0, 0);
+  }
+
   cells_fill(ct->back, ct->w, ct->h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);
 
   /* walk Clay render commands into back buffer */
@@ -974,7 +1065,20 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   if (mode == 1) {
     present_lines(ct);
   } else {
+    /* synchronized output (renderer-spec 7.6): frame-scoped wrap, only
+     * when confirmed and only around non-empty output */
+    int sync = (ct->ti->flags & TERMINFO_SYNC) != 0;
+    if (sync)
+      buf_str(&ct->out, "\x1b[?2026h");
+    int start = ct->out.length;
     present_cups(ct, row);
+    if (sync) {
+      if (ct->out.length == start) {
+        ct->out.length = 0;
+      } else {
+        buf_str(&ct->out, "\x1b[?2026l");
+      }
+    }
   }
 
   ct_active_context = NULL;
