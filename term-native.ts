@@ -50,42 +50,62 @@ export interface Native {
 
 import { compiled } from "./wasm.ts";
 
+/**
+ * Attachment surface provided by a TermInfo handle: the shared memory,
+ * its bump allocator, and the capability struct pointer. See
+ * terminfo.ts internals().
+ */
+export interface TermAttach {
+  memory: WebAssembly.Memory;
+  exports: Record<string, CallableFunction>;
+  structPtr: number;
+  alloc(size: number, align?: number): number;
+}
+
 export async function createTermNative(
   w: number,
   h: number,
+  attach?: TermAttach,
 ): Promise<Native> {
-  let memory = new WebAssembly.Memory({ initial: 2 });
+  let memory = attach?.memory ?? new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
 
-  let instance = await WebAssembly.instantiate(compiled, {
-    env: { memory },
-    clay: {
-      measureTextFunction(
-        ret: number,
-        text: number,
-        _config: number,
-        _userData: number,
-      ) {
-        exports.measure(ret, text);
+  if (attach) {
+    // Reuse the handle's instance: instantiating the module again over
+    // the shared memory would rewrite its data segments and clobber
+    // static state already initialized there.
+    Object.assign(exports, attach.exports);
+  } else {
+    let instance = await WebAssembly.instantiate(compiled, {
+      env: { memory },
+      clay: {
+        measureTextFunction(
+          ret: number,
+          text: number,
+          _config: number,
+          _userData: number,
+        ) {
+          exports.measure(ret, text);
+        },
+        queryScrollOffsetFunction(
+          ret: number,
+          _elementId: number,
+          _userData: number,
+        ) {
+          let view = new DataView(memory.buffer);
+          view.setFloat32(ret, 0, true);
+          view.setFloat32(ret + 4, 0, true);
+        },
       },
-      queryScrollOffsetFunction(
-        ret: number,
-        _elementId: number,
-        _userData: number,
-      ) {
-        let view = new DataView(memory.buffer);
-        view.setFloat32(ret, 0, true);
-        view.setFloat32(ret + 4, 0, true);
-      },
-    },
-  });
+    });
 
-  Object.assign(exports, instance.exports);
+    Object.assign(exports, instance.exports);
+  }
 
   let ct = exports as unknown as {
     __heap_base: WebAssembly.Global;
     clayterm_size(w: number, h: number): number;
-    init(mem: number, w: number, h: number): number;
+    init(mem: number, w: number, h: number, ti: number): number;
     reduce(
       ct: number,
       buf: number,
@@ -108,24 +128,32 @@ export async function createTermNative(
     error_message_ptr(ct: number, index: number): number;
   };
 
-  let heap = ct.__heap_base.value as number;
   let size = ct.clayterm_size(w, h);
 
-  // Grow memory once to fit heap + renderer state + fixed transfer buffer.
   // The transfer budget is intentionally fixed: text/id/snapshot payload bytes
   // get 1MB, and fixed op overhead gets one max-sized element per Clay element.
   // Do not grow this dynamically per render; improve the wire format instead.
   let transferBytes = TEXT_TRANSFER_BUFFER_BYTES +
     CLAY_DEFAULT_MAX_ELEMENT_COUNT * MAX_FIXED_ELEMENT_WIRE_BYTES;
-  let needed = heap + size + transferBytes;
-  let pages = Math.ceil(needed / WASM_PAGE_BYTES);
-  let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
-  if (pages > current) {
-    memory.grow(pages - current);
-  }
 
-  let statePtr = ct.init(heap, w, h);
-  let opsBuf = (heap + size + 3) & ~3;
+  let statePtr: number;
+  let opsBuf: number;
+  if (attach) {
+    let arena = attach.alloc(size);
+    opsBuf = attach.alloc(transferBytes, 4);
+    statePtr = ct.init(arena, w, h, attach.structPtr);
+  } else {
+    // Grow memory once to fit heap + renderer state + fixed transfer buffer.
+    let heap = ct.__heap_base.value as number;
+    let needed = heap + size + transferBytes;
+    let pages = Math.ceil(needed / WASM_PAGE_BYTES);
+    let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
+    if (pages > current) {
+      memory.grow(pages - current);
+    }
+    statePtr = ct.init(heap, w, h, 0);
+    opsBuf = (heap + size + 3) & ~3;
+  }
 
   return {
     memory,

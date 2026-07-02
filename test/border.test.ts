@@ -1,5 +1,10 @@
 import { close, fixed, open, type OpenElement, rgba } from "../ops.ts";
 import { createTerm } from "../term.ts";
+import { trueColorTermInfo } from "./caps.ts";
+
+async function trueColorTerm(options: { width: number; height: number }) {
+  return await createTerm({ ...options, terminfo: await trueColorTermInfo() });
+}
 import { describe, expect, it } from "./suite.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -107,7 +112,7 @@ type OpenProps = Omit<OpenElement, "directive" | "id">;
  * mode and parses the full-frame output into cells. Box corners are at
  * (0,0), (7,0), (0,3), (7,3). */
 async function renderBox(props: OpenProps): Promise<ParsedCell[]> {
-  let term = await createTerm({ width: 12, height: 5 });
+  let term = await trueColorTerm({ width: 12, height: 5 });
   let ansi = decode(
     term.render([
       open("box", {
@@ -256,7 +261,7 @@ describe("structured sides", () => {
   });
 
   it("does not retain a prior frame's side bg", async () => {
-    let term = await createTerm({ width: 12, height: 5 });
+    let term = await trueColorTerm({ width: 12, height: 5 });
     let frame = (bg?: number) => [
       open("box", {
         layout: { width: fixed(8), height: fixed(4) },
@@ -442,8 +447,8 @@ describe("directive model", () => {
 
 describe("instances", () => {
   it("does not share side attributes between Term instances", async () => {
-    let a = await createTerm({ width: 12, height: 5 });
-    let b = await createTerm({ width: 12, height: 5 });
+    let a = await trueColorTerm({ width: 12, height: 5 });
+    let b = await trueColorTerm({ width: 12, height: 5 });
 
     let frame = (top: number, bottom: number) => [
       open("box", {

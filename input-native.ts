@@ -176,6 +176,7 @@ export interface InputNative {
  */
 export interface InputAttach {
   memory: WebAssembly.Memory;
+  exports: Record<string, CallableFunction>;
   structPtr: number;
   bytesPtr: number;
   bytesLen: number;
@@ -190,19 +191,28 @@ export async function createInputNative(
 ): Promise<InputNative> {
   let memory = attach?.memory ?? new WebAssembly.Memory({ initial: 4 });
 
-  let instance = await WebAssembly.instantiate(compiled, {
-    env: { memory },
-    clay: {
-      measureTextFunction() {},
-      queryScrollOffsetFunction(ret: number) {
-        let v = new DataView(memory.buffer);
-        v.setFloat32(ret, 0, true);
-        v.setFloat32(ret + 4, 0, true);
+  let raw: unknown;
+  if (attach) {
+    // Reuse the handle's instance: instantiating the module again over
+    // the shared memory would rewrite its data segments and clobber
+    // static state already initialized there.
+    raw = attach.exports;
+  } else {
+    let instance = await WebAssembly.instantiate(compiled, {
+      env: { memory },
+      clay: {
+        measureTextFunction() {},
+        queryScrollOffsetFunction(ret: number) {
+          let v = new DataView(memory.buffer);
+          v.setFloat32(ret, 0, true);
+          v.setFloat32(ret + 4, 0, true);
+        },
       },
-    },
-  });
+    });
+    raw = instance.exports;
+  }
 
-  let exports = instance.exports as unknown as {
+  let exports = raw as {
     __heap_base: WebAssembly.Global;
     input_size(): number;
     input_init(
