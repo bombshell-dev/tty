@@ -31,7 +31,11 @@ EXPORTS = \
   -Wl,--export=input_scan \
   -Wl,--export=input_count \
   -Wl,--export=input_event \
-  -Wl,--export=input_delay
+  -Wl,--export=input_delay \
+  -Wl,--export=terminfo_size \
+  -Wl,--export=terminfo_init \
+  -Wl,--export=terminfo_parse \
+  -Wl,--export=terminfo_grant
 
 LDFLAGS = -Wl,--no-entry \
           -Wl,--import-memory \
