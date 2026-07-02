@@ -40,6 +40,8 @@ Transitions are specified separately in the
 - The directive model and core helpers
 - Element identity and frame semantics
 - Boundary responsibilities (what Clayterm owns and what it does not)
+- Capability-gated emission (Section 7.6; the capability layer itself is
+  specified in the [Terminfo Specification](terminfo-spec.md))
 
 ### In scope (non-normative, descriptive)
 
@@ -58,6 +60,9 @@ Transitions are specified separately in the
 - Demo applications
 - The crankterm project or any specific framework built on Clayterm
 - Input parsing (see [Clayterm Input Specification](input-spec.md))
+- Terminfo parsing and capability probing (see
+  [Terminfo Specification](terminfo-spec.md)); this specification consumes the
+  capability struct, it does not define it
 
 ---
 
@@ -232,7 +237,10 @@ function scope.
 concern MUST remain independent. Neither MUST depend on the other's state,
 types, or API surface. They MAY share a compiled WASM binary for loading
 efficiency, but this is an implementation convenience, not an architectural
-coupling.
+coupling. Both MAY consume the shared capability layer defined in the
+[Terminfo Specification](terminfo-spec.md); the renderer reads the capability
+struct and the input parser writes it, but neither observes the other through it
+beyond the capability facts it carries.
 
 ---
 
@@ -334,6 +342,57 @@ nests clip regions more deeply than the renderer can track:
   (see §12.3) before returning, so the caller can detect that some clipping was
   not applied.
 
+### 7.6 Capability-gated emission
+
+A Term instance attached to a `TermInfo` handle (see
+[Terminfo Specification](terminfo-spec.md)) reads the capability struct at the
+start of each render transaction and gates its output accordingly. This consumes
+capabilities; it never writes them (Terminfo Specification TINV-4).
+
+**Color encoding ladder.** The renderer MUST select its SGR color encoding from
+the capability struct:
+
+- `trueColor` set → 24-bit SGR (`38;2;r;g;b` / `48;2;r;g;b`)
+- otherwise `colors` ≥ 256 → 256-color SGR (`38;5;n` / `48;5;n`), mapping RGB to
+  the nearest entry of the 6×6×6 color cube and 24-step grayscale ramp
+- otherwise → 16-color SGR (`30–37`, `90–97` and background equivalents),
+  mapping RGB to the nearest of the 16 ANSI colors
+
+The nearest-color quantization method is implementation-defined but MUST be
+deterministic: the same RGB input always maps to the same palette entry within a
+process.
+
+**Back-color-erase.** When the `bce` capability is set, the renderer MAY use
+erase sequences that rely on the terminal filling cleared cells with the current
+background. When it is clear, the renderer MUST NOT depend on that behavior.
+
+**Synchronized output.** When the `syncOutput` capability is set, the renderer
+MUST wrap each non-empty cursor-update-mode frame in the synchronized output
+protocol: `CSI ? 2026 h` (begin synchronized update) before the first output
+byte and `CSI ? 2026 l` (end synchronized update) after the last, within the
+same output buffer. The wrap is frame-scoped: begin and end always appear in the
+same render transaction's output, so no terminal state persists between frames
+(see §11.2). When the capability is unset, the wrap MUST NOT be emitted.
+Line-mode output is never wrapped.
+
+The wrap complements — never replaces — cell diffing. Emitting only changed
+cells (§4.4) remains the primary defense against tearing on terminals without
+mode 2026 and the dominant reduction in bytes sent, per the
+[guidance modern emulators publish for TUI developers](https://ghostty.org/docs/help/synchronized-output);
+the wrap adds atomic frame presentation on terminals that support it.
+
+**Generation invalidation.** The renderer MUST compare the capability struct's
+generation counter on each render transaction. When it differs from the
+generation of the previously emitted frame, the renderer MUST invalidate its
+diff state and emit the frame as a complete redraw, so that no cell on screen
+retains bytes encoded under superseded capabilities.
+
+A Term with no `TermInfo` handle uses the baseline capabilities (Terminfo
+Specification §7.1): 256-color emission. Per the progressive-enhancement
+invariant (Terminfo Specification TINV-5), truecolor emission requires positive
+evidence — a terminfo entry, environment evidence, or a probe reply — which
+supersedes the renderer's historical unconditional truecolor output.
+
 ---
 
 ## 8. Public Rendering API
@@ -344,12 +403,21 @@ included. See Section 5 for what this section does and does not freeze._
 ### 8.1 Term creation
 
 ```
-createTerm(options: { width: number; height: number }): Promise<Term>
+createTerm(options: {
+  width: number;
+  height: number;
+  terminfo?: TermInfo;
+}): Promise<Term>
 ```
 
 Creates a new Term instance bound to the specified terminal dimensions. The
 returned promise resolves when the renderer is ready. The `width` and `height`
 parameters specify the terminal dimensions in character cells.
+
+The optional `terminfo` handle (from `queryTermInfo()`; see
+[Terminfo Specification](terminfo-spec.md) §10) attaches the Term to a shared
+capability struct that gates emission per §7.6. When omitted, the Term operates
+standalone with default capabilities.
 
 ### 8.2 Render invocation
 
@@ -614,6 +682,10 @@ terminal-management operations:
 These are the caller's responsibility. The renderer's output contains only the
 escape sequences needed to render the frame content (cursor positioning for cell
 writes, SGR attributes for styling, and UTF-8 text).
+
+The synchronized-output frame wrap (§7.6) is not terminal-state management in
+this sense: mode 2026 is begun and ended within a single frame's output and
+never persists across render transactions.
 
 ### 11.3 The renderer does not own application lifecycle
 
