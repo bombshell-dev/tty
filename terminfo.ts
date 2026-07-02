@@ -149,6 +149,9 @@ interface TermInfoNative {
   bytesPtr: number;
   bytesLen: number;
   alloc(size: number, align?: number): number;
+  /* At most one Input and one Term may attach (terminfo-spec 10.3). */
+  inputAttached?: boolean;
+  termAttached?: boolean;
 }
 
 /**

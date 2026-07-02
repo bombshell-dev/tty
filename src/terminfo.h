@@ -28,6 +28,11 @@
 #define TERMINFO_THEME_BG (1u << 13)
 #define TERMINFO_THEME_CURSOR (1u << 14)
 
+/* Probe-fence marker: set in `confirmed` (never in `flags`) when a DA1
+ * device attributes report is recognized. The queryTermInfo probe
+ * window uses it to detect completion. */
+#define TERMINFO_DA1 (1u << 31)
+
 struct TermInfo {
   uint32_t generation;
   uint32_t colors;
@@ -78,5 +83,18 @@ int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *ti);
  * Bumps the generation only when the flags actually change.
  */
 void terminfo_grant(struct TermInfo *ti, uint32_t flags);
+
+/**
+ * Look up a standard string capability in a compiled terminfo entry.
+ * Bounds-checked against len; works for both storage formats.
+ *
+ * @param bytes    Compiled terminfo entry.
+ * @param len      Byte length.
+ * @param index    Standard string capability index (ncurses Caps).
+ * @param out_len  Receives the string length (excluding NUL).
+ * @return         Pointer into bytes, or NULL when absent/malformed.
+ */
+const char *terminfo_str(const uint8_t *bytes, int len, int index,
+                         int *out_len);
 
 #endif

@@ -156,6 +156,50 @@ static int parse_ext(const uint8_t *b, int len, int off, int numw,
   return 0;
 }
 
+const char *terminfo_str(const uint8_t *bytes, int len, int index,
+                         int *out_len) {
+  if (!bytes || len < 12 || index < 0)
+    return 0;
+  uint16_t magic = rd_u16(bytes, 0);
+  int numw;
+  if (magic == TI_MAGIC_LEGACY) {
+    numw = 2;
+  } else if (magic == TI_MAGIC_EXTENDED) {
+    numw = 4;
+  } else {
+    return 0;
+  }
+
+  int name_size = rd_i16(bytes, 2);
+  int bool_count = rd_i16(bytes, 4);
+  int num_count = rd_i16(bytes, 6);
+  int str_count = rd_i16(bytes, 8);
+  int table_len = rd_i16(bytes, 10);
+  if (name_size < 0 || bool_count < 0 || num_count < 0 || str_count < 0 ||
+      table_len < 0)
+    return 0;
+  if (index >= str_count)
+    return 0;
+
+  int nums_off = 12 + name_size + bool_count;
+  if (nums_off & 1)
+    nums_off++;
+  int strs_off = nums_off + num_count * numw;
+  int table_off = strs_off + str_count * 2;
+  if (table_off + table_len > len)
+    return 0;
+
+  int v = rd_i16(bytes, strs_off + index * 2);
+  if (v < 0 || v >= table_len)
+    return 0;
+  int n = ti_strnlen(bytes + table_off + v, table_len - v);
+  if (n == 0)
+    return 0;
+  if (out_len)
+    *out_len = n;
+  return (const char *)(bytes + table_off + v);
+}
+
 int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *ti) {
   if (len < 12)
     return 1;
