@@ -39,7 +39,10 @@ export interface TermResizeEvent {
  */
 export type UpdateOptions =
   | { width: number; height: number; terminfo?: TermInfo }
-  | { events: ReadonlyArray<TermResizeEvent | { type: string }>; terminfo?: TermInfo }
+  | {
+    events: ReadonlyArray<TermResizeEvent | { type: string }>;
+    terminfo?: TermInfo;
+  }
   | { terminfo: TermInfo | undefined };
 
 export interface RenderOptions {

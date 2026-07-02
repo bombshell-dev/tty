@@ -7,6 +7,8 @@
  */
 
 import { queryTermInfo } from "../terminfo.ts";
+import { createInput } from "../input.ts";
+import { createTerm } from "../term.ts";
 import {
   CLAYTERM_16,
   CLAYTERM_DIRECT,
@@ -312,5 +314,77 @@ describe("probe", () => {
     });
     expect(Date.now() - before).toBeLessThan(1000);
     expect(ti.capabilities).toEqual(BASELINE);
+  });
+});
+
+describe("probe fence", () => {
+  it("resolves on the DA1 fence and applies probe responses", async () => {
+    let input = mockInput();
+    let output = mockOutput();
+    let promise = queryTermInfo({
+      env: {},
+      input: input.stream,
+      output: output.stream,
+      timeout: 5000,
+    });
+
+    // wait for the probe write, then answer like a capable terminal
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(output.written.length).toBe(1);
+    let before = Date.now();
+    input.feed(new TextEncoder().encode(
+      "\x1b]11;rgb:1e1e/2a2a/3b3b\x1b\\" +
+        "\x1bP1+r524742\x1b\\" +
+        "\x1b[?2026;2$y" +
+        "\x1b[?1u" +
+        "\x1b_Gi=31;OK\x1b\\" +
+        "\x1b[?65;1;9c",
+    ));
+
+    let ti = await promise;
+    expect(Date.now() - before).toBeLessThan(1000);
+    let caps = ti.capabilities;
+    expect(caps.theme.background).toEqual({ r: 0x1e, g: 0x2a, b: 0x3b });
+    expect(caps.trueColor).toBe(true);
+    expect(caps.syncOutput).toBe(true);
+    expect(caps.kittyKeyboard).toBe(true);
+    expect(caps.kittyGraphics).toBe(true);
+  });
+
+  it("keeps unanswered capabilities at their static values", async () => {
+    let input = mockInput();
+    let output = mockOutput();
+    let promise = queryTermInfo({
+      env: {},
+      input: input.stream,
+      output: output.stream,
+      timeout: 5000,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    // a terminal that only answers DA1
+    input.feed(new TextEncoder().encode("\x1b[?1;2c"));
+
+    let ti = await promise;
+    expect(ti.capabilities.trueColor).toBe(false);
+    expect(ti.capabilities.syncOutput).toBe(false);
+    expect(ti.capabilities.theme).toEqual({});
+  });
+});
+
+describe("attachment", () => {
+  it("allows at most one Input per handle", async () => {
+    let ti = await queryTermInfo(offline());
+    await createInput({ terminfo: ti });
+    await expect(createInput({ terminfo: ti })).rejects.toThrow(
+      "already attached",
+    );
+  });
+
+  it("allows at most one Term per handle", async () => {
+    let ti = await queryTermInfo(offline());
+    await createTerm({ width: 4, height: 2, terminfo: ti });
+    await expect(createTerm({ width: 4, height: 2, terminfo: ti }))
+      .rejects.toThrow("already attached");
   });
 });

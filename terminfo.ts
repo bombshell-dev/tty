@@ -36,6 +36,8 @@ const FLAG_POINTER_SHAPE = 1 << 11;
 const FLAG_THEME_FG = 1 << 12;
 const FLAG_THEME_BG = 1 << 13;
 const FLAG_THEME_CURSOR = 1 << 14;
+/* Probe-fence marker, set in `confirmed` when a DA1 report arrives. */
+const FLAG_DA1 = 0x80000000;
 
 const TermInfoStruct = struct({
   generation: uint32(),
@@ -257,6 +259,15 @@ export async function queryTermInfo(
     terminfo_init(mem: number): number;
     terminfo_parse(bytes: number, len: number, ti: number): number;
     terminfo_grant(ti: number, flags: number): void;
+    input_size(): number;
+    input_init(
+      mem: number,
+      escLatency: number,
+      terminfo: number,
+      terminfoLen: number,
+      ti: number,
+    ): number;
+    input_scan(st: number, buf: number, len: number, now: number): number;
   };
 
   let top = ((exports.__heap_base.value as number) + 7) & ~7;
@@ -311,16 +322,52 @@ export async function queryTermInfo(
   let input = options.input ?? process.stdin;
   let output = options.output ?? process.stdout;
   if (input.isTTY && output.isTTY && !options.signal?.aborted) {
-    await runProbe(input, output, timeout, options.signal);
+    // Probe-window parser: a private input parser over the shared
+    // memory whose only job is folding responses into the struct and
+    // spotting the DA1 fence. Abandoned once the probe resolves; the
+    // consumer's own createInput({ terminfo }) parser takes over.
+    let scanState = exports.input_init(
+      alloc(exports.input_size()),
+      25,
+      0,
+      0,
+      structPtr,
+    );
+    let scanBuf = alloc(SCAN_CHUNK);
+
+    let feed = (chunk: Uint8Array): boolean => {
+      let offset = 0;
+      while (offset < chunk.length) {
+        let part = chunk.subarray(offset, offset + SCAN_CHUNK);
+        new Uint8Array(memory.buffer).set(part, scanBuf);
+        let accepted = exports.input_scan(
+          scanState,
+          scanBuf,
+          part.length,
+          Date.now(),
+        );
+        if (accepted <= 0) break;
+        offset += accepted;
+      }
+      let view = new DataView(memory.buffer);
+      let confirmed = view.getUint32(structPtr + TI.confirmed, true);
+      return (confirmed & FLAG_DA1) !== 0;
+    };
+
+    await runProbe(input, output, timeout, feed, options.signal);
   }
 
   return handle;
 }
 
+/* Must match SCAN_BUFFER_SIZE in input.c. */
+const SCAN_CHUNK = 4096;
+
 function runProbe(
   input: ProbeInput,
   output: ProbeOutput,
   timeout: number,
+  feed: (chunk: Uint8Array) => boolean,
   signal?: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve) => {
@@ -339,10 +386,9 @@ function runProbe(
       resolve();
     }
 
-    // Response bytes are recognized by the input parser's scan path;
-    // until the DA1 fence recognition lands there, the probe window
-    // closes on timeout alone.
-    function onData(_chunk: Uint8Array): void {}
+    function onData(chunk: Uint8Array): void {
+      if (feed(chunk)) finish();
+    }
 
     let onAbort = () => finish();
     let timer = setTimeout(finish, timeout);
