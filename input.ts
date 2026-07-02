@@ -77,7 +77,6 @@ import {
   KEY_SUPER_LEFT,
   KEY_SUPER_RIGHT,
   KEY_TAB,
-  MAX_TERMINFO,
   MOD_ALT,
   MOD_CTRL,
   MOD_MOTION,
@@ -87,6 +86,8 @@ import {
   readEvent,
   SCAN_BUFFER_SIZE,
 } from "./input-native.ts";
+import type { InputAttach } from "./input-native.ts";
+import { internals, type TermInfo } from "./terminfo.ts";
 
 /**
  * Modifier keys held during a key or mouse event.
@@ -438,26 +439,32 @@ export interface InputOptions {
   escLatency?: number;
 
   /**
-   * Compiled terminfo binary to load terminal-specific escape sequences.
+   * TermInfo handle from queryTermInfo(). Attaches the parser to the
+   * handle's shared memory and capability struct: terminal-specific key
+   * sequences from the handle's terminfo entry are loaded into the
+   * sequence trie, and recognized capability query responses are
+   * written into the shared struct (see specs/terminfo-spec.md).
    *
-   * This is the format used by files like /usr/lib/terminfo/78/xterm-256color
-   * and they can be directly loaded from disk into this option.
-   *
-   * If no terminfo is provided it will use xterm capabilities as the default
+   * If no handle is provided the parser uses xterm defaults and a
+   * private capability struct.
    */
-  terminfo?: Uint8Array;
+  terminfo?: TermInfo;
 }
 
 export async function createInput(options: InputOptions = {}): Promise<Input> {
   let { escLatency = 25, terminfo } = options;
 
-  if (terminfo && terminfo.byteLength > MAX_TERMINFO) {
-    throw new RangeError(
-      `terminfo exceeds ${MAX_TERMINFO} byte limit (got ${terminfo.byteLength})`,
-    );
+  let attach: InputAttach | undefined;
+  if (terminfo) {
+    let native = internals(terminfo);
+    if (native.inputAttached) {
+      throw new Error("TermInfo handle is already attached to an Input");
+    }
+    native.inputAttached = true;
+    attach = native;
   }
 
-  let native = await createInputNative(escLatency);
+  let native = await createInputNative(escLatency, attach);
 
   return {
     scan(bytes: Uint8Array = new Uint8Array(0)): ScanResult {

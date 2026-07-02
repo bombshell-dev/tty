@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createInput, type Input } from "../input.ts";
+import { queryTermInfo } from "../terminfo.ts";
+import { CLAYTERM_16, CLAYTERM_TC } from "./fixtures.ts";
 
 function bytes(...values: number[]): Uint8Array {
   return new Uint8Array(values);
@@ -741,6 +743,209 @@ describe("input", () => {
         type: "keydown",
         key: "\u{1f389}",
       });
+    });
+  });
+});
+
+describe("terminfo integration", () => {
+  async function attached() {
+    let terminfo = await queryTermInfo({
+      terminfo: CLAYTERM_TC,
+      env: {},
+      input: { isTTY: false, on() {}, off() {} },
+      output: { isTTY: false, write() {} },
+    });
+    let input = await createInput({ terminfo });
+    return { terminfo, input };
+  }
+
+  describe("key sequences from terminfo", () => {
+    it("decodes a terminfo-specific arrow sequence", async () => {
+      // clayterm-tc defines kcuu1=\EOZ
+      let { input } = await attached();
+      let result = input.scan(str("\x1bOZ"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "keydown",
+        key: "ArrowUp",
+      });
+    });
+
+    it("decodes a terminfo-specific function key", async () => {
+      // clayterm-tc defines kf5=\E[99~
+      let { input } = await attached();
+      let result = input.scan(str("\x1b[99~"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({ type: "keydown", key: "F5" });
+    });
+
+    it("keeps the xterm defaults registered", async () => {
+      let { input } = await attached();
+      let result = input.scan(str("\x1bOA"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "keydown",
+        key: "ArrowUp",
+      });
+    });
+  });
+
+  describe("query response recognition", () => {
+    it("consumes an OSC 10 foreground report (BEL-terminated)", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(str("\x1b]10;rgb:ffff/ffff/ffff\x07"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.theme.foreground).toEqual({
+        r: 255,
+        g: 255,
+        b: 255,
+      });
+    });
+
+    it("consumes an OSC 11 background report (ST-terminated)", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(str("\x1b]11;rgb:1e1e/2a2a/3b3b\x1b\\"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.theme.background).toEqual({
+        r: 0x1e,
+        g: 0x2a,
+        b: 0x3b,
+      });
+    });
+
+    it("consumes an OSC 12 cursor color report", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(str("\x1b]12;#ff8800\x1b\\"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.theme.cursor).toEqual({
+        r: 0xff,
+        g: 0x88,
+        b: 0,
+      });
+    });
+
+    it("consumes an OSC 21 kitty color report", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(
+        str("\x1b]21;foreground=rgb:ff/00/00;background=\x1b\\"),
+      );
+      expect(result.events).toEqual([]);
+      let caps = terminfo.capabilities;
+      expect(caps.kittyColor).toBe(true);
+      expect(caps.theme.foreground).toEqual({ r: 255, g: 0, b: 0 });
+      expect(caps.theme.background).toBeUndefined();
+    });
+
+    it("consumes an OSC 22 pointer shape report", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(str("\x1b]22;default\x1b\\"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.pointerShape).toBe(true);
+    });
+
+    it("confirms truecolor from a valid XTGETTCAP reply", async () => {
+      let terminfo = await queryTermInfo({
+        terminfo: CLAYTERM_16,
+        env: {},
+        input: { isTTY: false, on() {}, off() {} },
+        output: { isTTY: false, write() {} },
+      });
+      let input = await createInput({ terminfo });
+      expect(terminfo.capabilities.trueColor).toBe(false);
+      let result = input.scan(str("\x1bP1+r524742\x1b\\"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.trueColor).toBe(true);
+    });
+
+    it("denies truecolor from an invalid XTGETTCAP reply", async () => {
+      // probe denial outranks the terminfo entry's Tc grant
+      let { terminfo, input } = await attached();
+      expect(terminfo.capabilities.trueColor).toBe(true);
+      let result = input.scan(str("\x1bP0+r\x1b\\"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.trueColor).toBe(false);
+    });
+
+    it("confirms synchronized output from a DECRPM report", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(str("\x1b[?2026;2$y"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.syncOutput).toBe(true);
+    });
+
+    it("denies synchronized output from a not-recognized DECRPM report", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(str("\x1b[?2026;0$y"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.syncOutput).toBe(false);
+    });
+
+    it("confirms the kitty keyboard protocol from a flags report", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(str("\x1b[?1u"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.kittyKeyboard).toBe(true);
+    });
+
+    it("confirms kitty graphics from an OK APC reply", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(str("\x1b_Gi=31;OK\x1b\\"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.kittyGraphics).toBe(true);
+    });
+
+    it("denies kitty graphics from an error APC reply", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(str("\x1b_Gi=31;ENOTSUPPORTED:x\x1b\\"));
+      expect(result.events).toEqual([]);
+      expect(terminfo.capabilities.kittyGraphics).toBe(false);
+    });
+
+    it("consumes a DA1 report silently", async () => {
+      let { input } = await attached();
+      let result = input.scan(str("\x1b[?65;1;9c"));
+      expect(result.events).toEqual([]);
+    });
+
+    it("bumps the generation when a response changes capabilities", async () => {
+      let { terminfo, input } = await attached();
+      let before = terminfo.capabilities.generation;
+      input.scan(str("\x1b[?2026;1$y"));
+      expect(terminfo.capabilities.generation).toBeGreaterThan(before);
+    });
+
+    it("does not leak response bytes into adjacent events", async () => {
+      let { terminfo, input } = await attached();
+      let result = input.scan(
+        str("a\x1b]11;rgb:0000/0000/0000\x1b\\b"),
+      );
+      expect(result.events.length).toBe(2);
+      expect(result.events[0]).toMatchObject({ type: "keydown", key: "a" });
+      expect(result.events[1]).toMatchObject({ type: "keydown", key: "b" });
+      expect(terminfo.capabilities.theme.background).toEqual({
+        r: 0,
+        g: 0,
+        b: 0,
+      });
+    });
+
+    it("buffers a response split across scans", async () => {
+      let { terminfo, input } = await attached();
+      let first = input.scan(str("\x1b]11;rgb:12"));
+      expect(first.events).toEqual([]);
+      let second = input.scan(str("34/5678/9abc\x1b\\"));
+      expect(second.events).toEqual([]);
+      expect(terminfo.capabilities.theme.background).toEqual({
+        r: 0x12,
+        g: 0x56,
+        b: 0x9a,
+      });
+    });
+
+    it("consumes responses on a standalone parser without a handle", async () => {
+      let input = await createInput();
+      let result = input.scan(str("\x1b]11;rgb:0000/0000/0000\x1b\\"));
+      expect(result.events).toEqual([]);
     });
   });
 });

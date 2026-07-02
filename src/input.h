@@ -8,7 +8,8 @@
  * Usage:
  *   1. input does not allocate any memory itself, so start by allocating
  *      input_size() bytes of memory.
- *   2. Call input_init(mem, esc_latency_ms) to get an InputState.
+ *   2. Call input_init(mem, esc_latency_ms, terminfo, len, ti) to get
+ *      an InputState (terminfo and ti may be NULL for xterm defaults).
  *   3. When bytes arrive from stdin, call input_scan(st, buf, len, now).
  *   4. Read events with input_count(st) and input_event(st, i).
  *   5. Check input_delay(st): if non-zero, re-call input_scan() with
@@ -18,7 +19,7 @@
  * Example:
  *
  *   void *mem = malloc(input_size());
- *   struct InputState *st = input_init(mem, 50);
+ *   struct InputState *st = input_init(mem, 50, NULL, 0, NULL);
  *
  *   // in your event loop:
  *   int accepted = input_scan(st, buf, nread, now_ms);
@@ -52,6 +53,8 @@
 #define INPUT_H
 
 #include <stdint.h>
+
+#include "terminfo.h"
 
 /* ── Event types ──────────────────────────────────────────────────── */
 
@@ -212,9 +215,18 @@ int input_size(void);
  *
  * @param mem             Pointer to at least input_size() bytes.
  * @param esc_latency_ms  ESC disambiguation latency in milliseconds.
+ * @param terminfo        Raw compiled terminfo entry whose key_* string
+ *                        capabilities seed the sequence trie (they take
+ *                        precedence over the xterm defaults), or NULL.
+ * @param terminfo_len    Byte length of terminfo, or 0.
+ * @param ti              Shared capability struct that recognized query
+ *                        responses are written into, or NULL to use a
+ *                        parser-private struct.
  * @return                Initialized parser state.
  */
-struct InputState *input_init(void *mem, int esc_latency_ms);
+struct InputState *input_init(void *mem, int esc_latency_ms,
+                              const uint8_t *terminfo, int terminfo_len,
+                              struct TermInfo *ti);
 
 /**
  * Feed raw bytes into the parser and produce events.
