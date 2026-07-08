@@ -434,12 +434,9 @@ describe("term", () => {
   });
 
   it("shows the cursor at the text origin when content is empty and caret is 0", () => {
-    // v1 known limitation: Clay does not emit a text render command for an
-    // empty string, so locate_caret never finds a matching slice and suppresses
-    // cursor visibility. The proper fix requires looking up the element's
-    // bounding box separately (e.g. via get_element_bounds) rather than
-    // scanning text render commands. Until that is implemented, no cursor
-    // appears when the caret-bearing text node is empty.
+    // Declaring a `caret` on empty content is a rendering commitment: the
+    // renderer places the cursor at the cell the caret would occupy if the
+    // content were a single space. Origin of the text element is (row 1, col 1).
     let ansi = decode(
       term.render([
         open("root", {
@@ -449,8 +446,7 @@ describe("term", () => {
         close(),
       ]).output,
     );
-    expect(ansi).not.toContain("\x1b[?25h");
-    expect(ansi).not.toContain("\x1b[?25l");
+    expect(ansi).toMatch(/\x1b\[1;1H\x1b\[\?25h$/);
   });
 
   it("hides the cursor when transitioning from caret-present to caret-absent", () => {

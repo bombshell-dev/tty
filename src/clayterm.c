@@ -776,6 +776,16 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       char *str_chars = (char *)&buf[i];
       i += str_words;
 
+      /* A caret on empty content is a rendering commitment the layout
+       * engine cannot satisfy on its own — zero cells give locate_caret
+       * nothing to attach the cursor to. Substitute a single space so
+       * the caret lands at the text element's origin, per the spec's
+       * "as if the content were a single space" outcome. */
+      if (caret != 0xFFFFFFFF && str_len == 0) {
+        str_chars = (char *)" ";
+        str_len = 1;
+      }
+
       /* Record the FIRST caret declaration per frame for the
        * single-hardware-cursor contract; later declarations are
        * intentionally ignored (multi-cursor is unspecified). */
