@@ -117,16 +117,13 @@ To render this:
 ```
 
 ```typescript
-import { close, createTerm, grow, open, rgba, text } from "@bomb.sh/tty";
+import { close, createTerm, open, rgba, text } from "@bomb.sh/tty";
 
 let term = await createTerm({ width: 80, height: 24 });
 
 let { output } = term.render([
-  open("root", {
-    layout: { width: grow(), height: grow(), direction: "ttb" },
-  }),
   open("greeting", {
-    layout: { padding: { left: 1, right: 1 } },
+    layout: { padding: { left: 1, right: 1, top: 1, bottom: 1 } },
     border: {
       color: rgba(0, 255, 0),
       left: 1,
@@ -137,7 +134,6 @@ let { output } = term.render([
     cornerRadius: { tl: 1, tr: 1, bl: 1, br: 1 },
   }),
   text("Hello, World!"),
-  close(),
   close(),
 ]);
 
@@ -150,6 +146,10 @@ Pass pointer state to `render()` to have `@bomb.sh/tty` do hit detection and
 return pointer events in addition to the byte sequence.
 
 ```typescript
+import { close, createTerm, fixed, grow, open, rgba, text } from "@bomb.sh/tty";
+
+let term = await createTerm({ width: 80, height: 24 });
+
 let { output, events } = term.render(
   [
     open("root", {
@@ -186,7 +186,7 @@ process.stdout.write(output);
 ### Input parsing
 
 ```typescript
-import { createInput } from "@bomb.sh/tty/input";
+import { createInput } from "@bomb.sh/tty";
 
 let input = await createInput({ escLatency: 25 });
 
