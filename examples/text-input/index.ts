@@ -114,12 +114,7 @@ function frame(value: string, caret: number): Op[] {
       },
       bg: inputBg,
     }),
-    // A single space stands in for an empty value: Clay does not emit a
-    // text render command for an empty string, which means the renderer
-    // cannot resolve the caret's cell when the field is empty. The space
-    // is invisible against the input background. When the renderer
-    // gains a fallback for empty-text carets, drop the `|| " "`.
-    text(value || " ", { color: label, caret }),
+    text(value, { color: label, caret }),
     close(),
     open("hint", { layout: { height: fixed(1) } }),
     text("← → move  Backspace delete  Esc or Ctrl+C exit", { color: hint }),
