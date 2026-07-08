@@ -354,6 +354,13 @@ offset `N`:
 - If `N > [...content].length` or `N < 0`, behavior is unspecified; callers must
   keep offsets within bounds.
 
+When `content` is empty, the only in-range offset is `0`. In that case the
+caret's cell is the text element's origin — the cell at which the first code
+point of `content` would be drawn if `content` were a single space. This is a
+rendering commitment implied by the presence of a `caret` declaration, and the
+renderer must synthesize whatever minimal geometry is required to honor it. How
+this outcome is achieved is implementation-defined.
+
 Display position accounts for code points wider than one cell (CJK, fullwidth
 forms, some emoji): such code points occupy two cells, and the caret sits at the
 first cell of the pair. Cell widths are determined by the same measurement the
