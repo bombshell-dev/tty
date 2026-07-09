@@ -354,13 +354,13 @@ offset `N`:
 - If `N > [...content].length` or `N < 0`, behavior is unspecified; callers must
   keep offsets within bounds.
 
-When the layout engine consumes whitespace at a wrap boundary — dropping it
-from the rendered text so that neither wrapped line contains a display cell for
-those code points — the caret has no display position of its own for any offset
-that falls in that dropped run. In that case the caret's cell is the origin of
-the following wrapped line (the display position of the first code point on
-that line). This rule keeps the caret on-screen at the point where subsequent
-input will land, rather than orphaning it past the end of the previous line.
+When the layout engine consumes whitespace at a wrap boundary — dropping it from
+the rendered text so that neither wrapped line contains a display cell for those
+code points — the caret has no display position of its own for any offset that
+falls in that dropped run. In that case the caret's cell is the origin of the
+following wrapped line (the display position of the first code point on that
+line). This rule keeps the caret on-screen at the point where subsequent input
+will land, rather than orphaning it past the end of the previous line.
 
 When `content` is empty, the only in-range offset is `0`. In that case the
 caret's cell is the text element's origin — the cell at which the first code

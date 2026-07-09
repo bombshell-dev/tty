@@ -394,15 +394,45 @@ describe("term", () => {
         close(),
       ]).output,
     );
-    // Caret at code-point 7 of "hello world" → after "hello w" → between
-    // "w" and "o" on the second wrapped line. Exact column depends on Clay's
-    // wrap point: assert row 2 and column at least 2.
-    let cupMatch = ansi.match(/\x1b\[(\d+);(\d+)H\x1b\[\?25h$/);
-    expect(cupMatch).not.toBeNull();
-    let row = parseInt(cupMatch![1], 10);
-    let col = parseInt(cupMatch![2], 10);
-    expect(row).toBe(2);
-    expect(col).toBeGreaterThanOrEqual(2);
+    // "hello world" wraps to "hello" / "world" at width 5. Code-point 7 is
+    // the second 'o' of "world" (h=0,e=1,l=2,l=3,o=4,' '=5,w=6,o=7). The
+    // caret sits before that 'o' on the second wrapped line — row 2, col 2.
+    expect(ansi).toMatch(/\x1b\[2;2H\x1b\[\?25h$/);
+  });
+
+  it("snaps to the next wrapped line for a caret at the wrap seam", async () => {
+    let narrow = await createTerm({ width: 5, height: 4 });
+    let ansi = decode(
+      narrow.render([
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        // "hello world" wraps to "hello" / "world" at width 5. The space
+        // between them sits on the wrap seam. Code-point 6 is 'w' at the
+        // start of the second wrapped line; the caret must appear at row 2,
+        // col 1 rather than off-screen past "hello".
+        text("hello world", { caret: 6 }),
+        close(),
+      ]).output,
+    );
+    expect(ansi).toMatch(/\x1b\[2;1H\x1b\[\?25h$/);
+  });
+
+  it("places the caret at the start of a wrapped line when whitespace is consumed", async () => {
+    let term2 = await createTerm({ width: 6, height: 3 });
+    let ansi = decode(
+      term2.render([
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        // "abc def" wraps to "abc" / "def" at width 6 — the space between
+        // words is dropped by the wrap pass. Code-point 4 is 'd' at the
+        // start of the second wrapped line; caret lands at row 2, col 1.
+        text("abc def", { caret: 4 }),
+        close(),
+      ]).output,
+    );
+    expect(ansi).toMatch(/\x1b\[2;1H\x1b\[\?25h$/);
   });
 
   it("places the caret one cell past the last character when offset == length", () => {
