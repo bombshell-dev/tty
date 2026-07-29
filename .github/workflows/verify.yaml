@@ -34,8 +34,8 @@ jobs:
           # Restore to v2.x once v2.9.1 ships.
           deno-version: v2.8.3
 
-      - name: format
-        run: deno task fmt:check
+      - name: verify
+        run: deno task verify
 
       - name: lint
         run: deno lint

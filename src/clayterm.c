@@ -856,8 +856,13 @@ void measure(int ret, int txt) {
     int n = utf8_decode(&cp, p);
     if (n <= 0) {
       n = 1;
+      cp = 0xfffd;
     }
+    /* Mirror draw_text: non-printables render as one U+FFFD cell, so
+     * they must measure as one cell. */
     int cw = wcwidth(cp);
+    if (cw < 0)
+      cw = 1;
     if (cw > 0)
       w += cw;
     p += n;
