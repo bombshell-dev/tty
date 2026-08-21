@@ -2,6 +2,7 @@ export const EVENT_KEY = 1;
 export const EVENT_MOUSE = 2;
 export const EVENT_RESIZE = 3;
 export const EVENT_CURSOR = 4;
+export const EVENT_POINTERSHAPE = 5;
 
 export const MOD_ALT = 1;
 export const MOD_CTRL = 2;
@@ -89,6 +90,7 @@ import {
 } from "./typedef.ts";
 
 const MAX_TEXT_CODEPOINTS = 8;
+const MAX_REPORT_BYTES = 64;
 
 const InputEventLayout = struct({
   type: uint8(),
@@ -104,6 +106,8 @@ const InputEventLayout = struct({
   base: uint32(),
   text: array(uint32(), MAX_TEXT_CODEPOINTS),
   text_len: uint8(),
+  report_len: uint16(),
+  report: array(uint8(), MAX_REPORT_BYTES),
 });
 
 const {
@@ -120,6 +124,8 @@ const {
   shifted: OFFSET_SHIFTED,
   base: OFFSET_BASE,
   text: OFFSET_TEXT,
+  report_len: OFFSET_REPORT_LEN,
+  report: OFFSET_REPORT,
 } = offsets(InputEventLayout);
 
 export interface NativeInputEvent {
@@ -135,6 +141,7 @@ export interface NativeInputEvent {
   shifted: number;
   base: number;
   text: number[];
+  report: number[];
 }
 
 export function readEvent(view: DataView, ptr: number): NativeInputEvent {
@@ -142,6 +149,11 @@ export function readEvent(view: DataView, ptr: number): NativeInputEvent {
   let text: number[] = [];
   for (let i = 0; i < len && i < MAX_TEXT_CODEPOINTS; i++) {
     text.push(view.getUint32(ptr + OFFSET_TEXT + i * 4, true));
+  }
+  let reportLen = view.getUint16(ptr + OFFSET_REPORT_LEN, true);
+  let report: number[] = [];
+  for (let i = 0; i < reportLen && i < MAX_REPORT_BYTES; i++) {
+    report.push(view.getUint8(ptr + OFFSET_REPORT + i));
   }
   return {
     type: view.getUint8(ptr + OFFSET_TYPE),
@@ -156,6 +168,7 @@ export function readEvent(view: DataView, ptr: number): NativeInputEvent {
     shifted: view.getUint32(ptr + OFFSET_SHIFTED, true),
     base: view.getUint32(ptr + OFFSET_BASE, true),
     text,
+    report,
   };
 }
 

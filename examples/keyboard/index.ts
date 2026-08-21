@@ -137,8 +137,9 @@ await main(function* () {
       pointer.state = undefined;
     }
 
-    let { output, events } = term.render(keyboard(context), {
+    let { output, events, cursor } = term.render(keyboard(context), {
       pointer: pointer.state,
+      trackCursor: true,
     });
 
     for (let event of events) {
@@ -146,6 +147,9 @@ await main(function* () {
     }
 
     writeStdout(output);
+    if (cursor) {
+      writeStdout(cursor);
+    }
 
     yield* each.next();
   }
@@ -229,6 +233,7 @@ function key(ops: Op[], k: KeyDef, ctx: AppContext): void {
         alignY: "center",
       },
       bg,
+      cursor: "pointer",
       border: hover
         ? { color: highlight, left: 1, right: 1, top: 1, bottom: 1 }
         : undefined,

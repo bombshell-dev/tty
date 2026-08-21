@@ -605,15 +605,28 @@ terminal-management operations:
 
 - Entering or leaving the alternate screen buffer
 - Hiding or showing the cursor
-- Setting the cursor shape or blink state
+- Setting the text cursor (caret) shape or blink state
 - Enabling or disabling mouse reporting
 - Enabling or disabling keyboard protocol modes (e.g., Kitty progressive
   enhancement)
 - Enabling or disabling raw mode or similar terminal disciplines
 
-These are the caller's responsibility. The renderer's output contains only the
-escape sequences needed to render the frame content (cursor positioning for cell
-writes, SGR attributes for styling, and UTF-8 text).
+These are the caller's responsibility. The render `output` (Section 7.3)
+contains only the escape sequences needed to render the frame content (cursor
+positioning for cell writes, SGR attributes for styling, and UTF-8 text).
+
+**Exception — mouse pointer shape (OSC 22).** The CSS-style mouse _pointer_
+shape (the shape of the mouse cursor as it moves over the UI, set via OSC 22) is
+distinct from the text caret named above and is the one piece of
+terminal-pointer presentation the renderer MAY participate in, because it is
+derived directly from the renderer's own hit-testing. When — and only when — the
+caller explicitly opts in (Section 12.6), the renderer MAY compute pointer-shape
+transitions and return the corresponding OSC 22 bytes in a dedicated, separate
+field of the render result. These bytes MUST NOT appear in `output`, and the
+renderer still performs no IO: it produces the bytes and the caller decides
+whether to write them, so INV-1 holds. With the opt-in disabled (the default),
+this section's prohibition applies in full and the renderer emits nothing
+related to pointer shape.
 
 ### 11.3 The renderer does not own application lifecycle
 
@@ -699,6 +712,17 @@ The `open()` constructor currently accepts the following property groups in its
   reference, attach target, structured attach points, pointer capture mode, clip
   target, z-index)
 - **`scroll`** — scroll container configuration
+- **`cursor`** — the mouse pointer shape to request while the pointer is over
+  this element (see Section 12.6)
+
+The `cursor` property names a mouse pointer shape using the CSS `cursor` keyword
+vocabulary (for example `"pointer"`, `"text"`, `"default"`, `"not-allowed"`,
+`"grab"`, `"progress"`, `"ew-resize"`). It is a pure layout-tree annotation: it
+does NOT affect layout, cell output, or the transfer encoding, and it is not
+sent to the WASM module. The TS layer reads it directly off the plain directive
+objects (Section 9.1) and uses it only when pointer-shape tracking is enabled
+(Section 12.6). An element with no `cursor` property contributes no shape
+preference.
 
 The `floating` object shape is:
 
@@ -807,10 +831,18 @@ prevent overlap.
 ### 12.3 Render return type
 
 The `render()` method currently returns a `RenderResult` object shaped as
-`{ output: Uint8Array, events: PointerEvent[], info: RenderInfo, errors: ClayError[] }`.
+`{ output: Uint8Array, events: PointerEvent[], info: RenderInfo, errors: ClayError[], cursor?: Uint8Array }`.
 
 The `output` field is the ANSI byte output specified normatively in Section 7.3
 and Section 8.2.
+
+The `cursor` field is present only when pointer-shape tracking is enabled via
+the `trackCursor` render option (Section 12.6). When present and non-empty, it
+carries OSC 22 bytes that, when written to the terminal, update the mouse
+pointer shape to match the element currently under the pointer. It is kept
+strictly separate from `output` so that the render content stream stays pure
+(Section 11.2). When tracking is disabled, or when no shape change occurred this
+frame, the field is absent.
 
 The `events` field contains pointer events (enter, leave, click) derived from
 the underlying layout engine's element hit-testing. This field was added during
@@ -901,6 +933,78 @@ and used in tests.
 array into the transfer encoding described in Section 12.1. Currently exported
 but not public API; its exposure is incidental to the module structure.
 
+### 12.6 Pointer shape tracking (OSC 22)
+
+> **Status:** Prospective, non-normative. This subsection specifies intended
+> behavior to be implemented. Like the pointer event model (Section 12.4) on
+> which it builds, it is new and expected to settle; it MAY change without
+> constituting a breaking change to the normative core.
+
+Pointer shape tracking lets the mouse pointer change shape as it moves over the
+UI — a hand over a clickable element, an I-beam over a text field, and so on —
+driven entirely by the renderer's existing hit-testing (Section 12.4). It is
+**opt-in** and, when disabled, the renderer emits nothing related to pointer
+shape (Section 11.2).
+
+**Declaring a shape.** An element declares its desired pointer shape with the
+`cursor` property on `open()` (Section 12.2), named with the CSS `cursor`
+keyword vocabulary. The renderer ignores this property for layout and output; it
+is consumed only by the tracking described here.
+
+**Enabling tracking.** The caller enables tracking by passing
+`trackCursor: true` in the render options, alongside the existing `pointer`
+state used for hit-testing:
+
+```ts
+const r = term.render(ops, { pointer: { x, y, down }, trackCursor: true });
+if (r.cursor) stdout.write(r.cursor);
+```
+
+**Per-frame behavior.** On each render with tracking enabled, the TS term layer:
+
+1. Reads the `cursor` property off the plain directive objects to build an
+   `id → shape` map for the frame.
+2. Determines the element currently under the pointer from the same hit-test
+   data that produces `PointerEvent[]`. When the pointer is over nested
+   elements, the topmost (innermost) element that declares a `cursor` wins.
+3. Compares the resulting shape against the shape emitted on the previous frame.
+   Cross-frame shape state is held in the TS term layer — the same layer that
+   already tracks pointer enter/leave across frames (Section 12.4) — not in the
+   WASM core, which remains frame-stateless (Section 4.3).
+4. When the shape changed, populates `result.cursor` with the OSC 22 bytes that
+   effect the transition. When nothing changed, `result.cursor` is absent.
+
+**Setting and restoring.** Transitions use the bare _set_ form of OSC 22 for
+portability — kitty and Ghostty both honor it, whereas the kitty push/pop
+_stack_ extension is silently ignored by set-only terminals (Ghostty parses the
+whole payload after `22;` as a literal shape name, so a `>`/`<` prefix is not a
+valid shape and is dropped):
+
+- Entering an element with a declared shape sets it (`OSC 22 ; shape ST`).
+- Returning to no declared shape restores the base by setting `default`
+  (`OSC 22 ; default ST`).
+
+The base shape is assumed to be `default` (the ordinary pointer); the renderer
+does not attempt to restore a non-default prior shape. Callers targeting kitty
+exclusively who want exact save/restore can drive the push/pop helpers manually.
+
+**Capability detection and graceful degradation.** Before relying on tracking,
+the caller MAY query support. The OSC 22 query is sent through the normal output
+path (it is a separate, caller-initiated byte sequence, not part of `output`),
+and the terminal's reply arrives on the **input** stream, where it is decoded as
+a `PointerShapeEvent` (see [Input Specification](input-spec.md), Section 5.1).
+Correlating the reply with the query is the caller's responsibility, preserving
+the renderer/input independence (INV-7). Because tracking uses the bare set
+form, it works on set-only terminals (such as Ghostty) as well as kitty; only
+terminals that do not implement OSC 22 at all ignore it entirely, and the
+absence of a reply within a timeout is the unsupported signal.
+
+**OSC 22 byte helpers.** The byte sequences above are produced by small,
+caller-usable helpers (set, push, pop, and query builders). These are the first
+concrete instance of the caller-side terminal-control helpers anticipated in
+Section 14, and exist independently of the render transaction so that callers
+who want manual control can drive pointer shape without `trackCursor`.
+
 ---
 
 ## 13. Implementation Notes
@@ -974,6 +1078,9 @@ renderer.
 
 **CSI helper for terminal setup.** A helper for generating paired apply/rollback
 byte arrays for terminal mode configuration was discussed but not implemented.
+The OSC 22 pointer-shape byte helpers (Section 12.6) are a first, narrow
+instance of this category; a general apply/rollback helper for the other
+terminal modes in Section 11.2 remains unimplemented.
 
 **Browser-specific adapter.** The renderer's zero-IO architecture makes browser
 portability possible. No adapter exists.
@@ -1055,3 +1162,11 @@ resolution.
 7. **What are the validation and error semantics?** How the renderer responds to
    invalid input is unspecified. Callers SHOULD validate, but the validation
    model is not yet settled enough to define normatively.
+
+8. **Is pointer shape tracking part of the rendering contract?** Section 12.6
+   adds an opt-in mouse-pointer-shape feature that returns OSC 22 bytes in a
+   separate `cursor` field, with a narrow normative carve-out in Section 11.2.
+   Like the pointer event model it builds on, it is currently elastic surface.
+   Whether pointer-shape tracking, the `cursor` property, and the OSC 22 helpers
+   belong in the normative core — or should live in a higher-level layer above
+   the renderer — is unresolved.

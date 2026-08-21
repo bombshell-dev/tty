@@ -59,6 +59,7 @@
 #define EVENT_MOUSE 2
 #define EVENT_RESIZE 3
 #define EVENT_CURSOR 4
+#define EVENT_POINTERSHAPE 5
 
 /* ── Modifier flags (bitwise) ─────────────────────────────────────── */
 
@@ -174,9 +175,15 @@
  * @field base      Base layout key codepoint (Kitty alternate keys).
  * @field text_len  Number of valid codepoints in text[] (0-8).
  * @field text      Associated text codepoints (Kitty enhancement level 16+).
+ * @field report_len  Number of valid bytes in report[]. Only valid for
+ *                    EVENT_POINTERSHAPE.
+ * @field report      Raw payload of an OSC 22 pointer-shape reply, the bytes
+ *                    between `OSC 22 ;` and the terminator. Truncated to
+ *                    MAX_REPORT_BYTES. Only valid for EVENT_POINTERSHAPE.
  */
 
 #define MAX_TEXT_CODEPOINTS 8
+#define MAX_REPORT_BYTES 64
 
 struct InputEvent {
   uint8_t type;
@@ -192,6 +199,8 @@ struct InputEvent {
   uint32_t base;
   uint32_t text[MAX_TEXT_CODEPOINTS];
   uint8_t text_len;
+  uint16_t report_len;
+  uint8_t report[MAX_REPORT_BYTES];
 };
 
 /**

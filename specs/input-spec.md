@@ -31,6 +31,7 @@ surface and guide future stabilization.
 - The scan API and its return type
 - The `InputEvent` discriminated union and its variants
 - The ESC timeout resolution model
+- Decoding inbound OSC 22 mouse-pointer-shape replies into events
 
 ### Out of scope
 
@@ -128,10 +129,68 @@ current variants are:
 - **`ResizeEvent`** (`type: "resize"`) — A terminal resize notification. Fields
   include `columns` and `rows`.
 
+- **`PointerShapeEvent`** (`type: "pointershape"`) — A terminal reply to an OSC
+  22 mouse-pointer-shape query. Carries a single `report` field: the raw payload
+  string the terminal returned between `OSC 22 ;` and the string terminator. The
+  parser does not interpret the payload and does not correlate it with any
+  outstanding query; correlation is the caller's responsibility. See Section
+  5.1.
+
 The discriminant values and the type splits are deliberate design decisions.
 However, the field sets within each variant are expected to grow when Kitty
 progressive enhancement types are surfaced in the TypeScript layer (the C struct
 has already been extended with fields that are not yet mapped to the TS types).
+
+### 5.1 Pointer shape reports (OSC 22)
+
+> **Status:** Implemented. Code conforms to the spec, not the reverse (see
+> AGENTS.md).
+
+Some terminals implement the OSC 22 mouse-pointer-shape protocol, under which an
+application can _query_ the terminal's current pointer shape or its support for
+named shapes. The terminal answers a query with a reply on the input stream. The
+input parser recognizes these replies and surfaces them as `PointerShapeEvent`s.
+
+The parser's role is strictly inbound decoding. It never sends OSC 22 queries
+and never sets the pointer shape — emitting OSC 22 is an output concern
+specified separately (see [Renderer Specification](renderer-spec.md)). This
+preserves the parser's independence from the renderer (INV-8): the parser only
+decodes bytes it is given.
+
+**Recognized reply grammar.** A reply has the form:
+
+```
+ESC ] 22 ; <payload> <terminator>
+```
+
+where `<terminator>` is either ST (`ESC \`, bytes `0x1B 0x5C`) or BEL (`0x07`),
+and `<payload>` is the run of bytes up to the terminator. The parser emits one
+`PointerShapeEvent` per complete reply, with `report` set to the decoded
+`<payload>` string. Payloads are truncated to 64 bytes; this comfortably fits
+any shape name and a support-query reply for a reasonable number of shapes. The
+parser does not validate or interpret the payload. Per the kitty pointer-shape
+protocol the payload may be:
+
+- a shape name (reply to `?__current__`, `?__default__`, or `?__grabbed__`),
+- `0` (current-shape query when the shape stack is empty), or
+- a comma-separated list of `1`/`0` flags (reply to a support query of the form
+  `?name1,name2,...`).
+
+Which interpretation applies depends on the query the caller sent; the parser
+does not track outstanding queries, so the caller is responsible for that
+correlation.
+
+**Graceful degradation.** Terminals that do not implement the query side of OSC
+22 (for example, set-only implementations) never send a reply, and therefore
+never produce a `PointerShapeEvent`. A caller that issues a query and receives
+no event within a timeout MUST treat the feature as unsupported. Absence of the
+event is the contract for unsupported terminals; it is not an error.
+
+**Incremental bytes.** An OSC 22 reply split across multiple `scan()` calls is
+buffered like any other escape sequence and surfaced as a single event once the
+terminator arrives. A lone `ESC` does not apply here: the `]` that follows
+disambiguates immediately, so OSC 22 replies do not participate in ESC timeout
+resolution.
 
 ---
 
