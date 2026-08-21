@@ -763,6 +763,15 @@ describe("input", () => {
       });
     });
 
+    it("rejects an unbounded digit run without overflowing", () => {
+      // A long run of digits must not overflow the code accumulator; anything
+      // that grows past 22 can never match, so it is dropped as an error.
+      let result = input.scan(str("\x1b]" + "9".repeat(64) + ";x\x1b\\"));
+      expect(
+        result.events.some((e) => e.type === "pointershape"),
+      ).toBe(false);
+    });
+
     it("parses a reply interleaved with other input", () => {
       let result = input.scan(str("a\x1b]22;default\x1b\\b"));
       expect(result.events.length).toBe(3);

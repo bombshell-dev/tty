@@ -632,6 +632,11 @@ static int parse_osc(struct InputState *st, struct InputEvent *ev) {
     if (code == -1)
       code = 0;
     code = code * 10 + (st->buf[i] - '0');
+    /* 22 is the only accepted code; the accumulator only grows as digits
+     * arrive, so once it passes 22 no valid completion exists. Bail here so a
+     * long digit run can never overflow `code`. */
+    if (code > 22)
+      return PARSE_ERR;
     i++;
   }
   if (i >= st->len)
