@@ -84,6 +84,23 @@ struct Clayterm {
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
   int animating_count;
+  /* Caret state for hardware-cursor management. The renderer records the
+   * first text node carrying a caret declaration per frame, precomputes the
+   * caret's byte offset into that node's content, then places the cell as
+   * a side effect of render_text's walk. had_caret_last_frame is the only
+   * cross-frame bit retained. */
+  const char
+      *caret_text_chars; /* start of caret-bearing text node's bytes, or NULL */
+  int caret_text_length; /* byte length of that text node */
+  uint32_t caret_offset_bytes; /* target byte offset within that text node */
+  int caret_placed;            /* 1 once the render walk has recorded a cell */
+  int caret_tail_valid;        /* 1 when caret_tail_x/y hold a fallback cell */
+  int caret_tail_x,
+      caret_tail_y; /* trailing cell of the most recently walked caret slice */
+  int caret_x,
+      caret_y;   /* resolved cell (column, row); -1 sentinel until placed */
+  int has_caret; /* 1 when the current frame will emit a cursor */
+  int had_caret_last_frame; /* 1 when the previous frame emitted a cursor */
 };
 
 /* Memory layout inside the arena provided by the host:
@@ -234,6 +251,19 @@ static void present_cups(struct Clayterm *ct, int row) {
       x += w;
     }
   }
+
+  /* Hardware cursor management: per the spec's outcome contract,
+   * leave the cursor visible at the caret cell if a caret was declared
+   * this frame; otherwise hide it if and only if a caret was declared
+   * last frame. When neither this frame nor any prior frame declared
+   * a caret, emit nothing. */
+  if (ct->has_caret) {
+    emit_cursor(ct, ct->caret_x, ct->caret_y, row);
+    buf_str(&ct->out, "\x1b[?25h");
+  } else if (ct->had_caret_last_frame) {
+    buf_str(&ct->out, "\x1b[?25l");
+  }
+  ct->had_caret_last_frame = ct->has_caret;
 }
 
 /**
@@ -299,6 +329,30 @@ static void render_rect(struct Clayterm *ct, int x0, int y0, int x1, int y1,
       setcell(ct, x, y, ' ', ATTR_DEFAULT, bg);
 }
 
+/* Return the byte length of the first `cps` code points of `start`,
+ * clamped to at most `max_bytes`. Used at decode time to convert the
+ * caller's code-point caret offset into a stable byte offset. */
+static uint32_t utf8_bytes_for_cps(const char *start, uint32_t cps,
+                                   uint32_t max_bytes) {
+  uint32_t consumed = 0;
+  const char *p = start;
+  int rem = (int)max_bytes;
+  for (uint32_t k = 0; k < cps && rem > 0; k++) {
+    uint32_t cp;
+    int n = utf8_decode(&cp, p);
+    if (n <= 0) {
+      n = 1;
+    }
+    if (n > rem) {
+      n = rem;
+    }
+    consumed += (uint32_t)n;
+    p += n;
+    rem -= n;
+  }
+  return consumed;
+}
+
 static void render_text(struct Clayterm *ct, int x0, int y0,
                         Clay_RenderCommand *cmd) {
 
@@ -310,11 +364,46 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
   uint32_t attrs = ((uint32_t)(uint8_t)t->textColor.a) << 24;
   fg |= attrs;
 
-  const char *p = t->stringContents.chars;
-  int rem = t->stringContents.length;
+  const char *slice = t->stringContents.chars;
+  int slice_len = t->stringContents.length;
+
+  /* Determine whether this slice belongs to the caret's text node and
+   * whether the caret still needs to be placed. If so, resolve the cell
+   * as a side effect of the walk instead of doing a separate pass. */
+  const char *node_start = ct->caret_text_chars;
+  const char *node_end = node_start ? node_start + ct->caret_text_length : NULL;
+  int caret_relevant = (node_start != NULL && !ct->caret_placed &&
+                        slice >= node_start && slice < node_end);
+
+  /* Pre-check: if the slice's first byte is already past the target,
+   * whitespace at the wrap seam was dropped by the layout engine. Snap
+   * the caret to this slice's origin. */
+  if (caret_relevant) {
+    uint32_t slice_start_bytes = (uint32_t)(slice - node_start);
+    if (slice_start_bytes > ct->caret_offset_bytes) {
+      ct->caret_x = x0;
+      ct->caret_y = y0;
+      ct->caret_placed = 1;
+      caret_relevant = 0;
+    }
+  }
+
+  const char *p = slice;
+  int rem = slice_len;
   int x = x0;
 
   while (rem > 0) {
+    /* Check at the top of each iteration: if the pointer we are about to
+     * consume matches the target byte offset, the caret sits at the
+     * current cell — right before this code point. */
+    if (caret_relevant &&
+        (uint32_t)(p - node_start) == ct->caret_offset_bytes) {
+      ct->caret_x = x;
+      ct->caret_y = y0;
+      ct->caret_placed = 1;
+      caret_relevant = 0;
+    }
+
     uint32_t cp;
     int n = utf8_decode(&cp, p);
     if (n <= 0) {
@@ -330,6 +419,16 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
     }
     p += n;
     rem -= n;
+  }
+
+  /* Remember the trailing cell of this slice as the end-of-content
+   * fallback. If no later slice claims the target and the caret still
+   * hasn't been placed by the end of the render command loop, this cell
+   * is where a caret at offset == content-length lands. */
+  if (caret_relevant) {
+    ct->caret_tail_x = x;
+    ct->caret_tail_y = y0;
+    ct->caret_tail_valid = 1;
   }
 }
 
@@ -553,6 +652,16 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   ct_active_context = ct;
   ct->error_count = 0;
   ct->animating_count = 0;
+  ct->caret_text_chars = NULL;
+  ct->caret_text_length = 0;
+  ct->caret_offset_bytes = 0;
+  ct->caret_placed = 0;
+  ct->caret_tail_valid = 0;
+  ct->caret_tail_x = -1;
+  ct->caret_tail_y = -1;
+  ct->caret_x = -1;
+  ct->caret_y = -1;
+  ct->has_caret = 0;
 
   Clay_BeginLayout();
 
@@ -673,10 +782,35 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       uint32_t col = rd(buf, len, &i);
       uint32_t bg = rd(buf, len, &i);
       uint32_t cfg = rd(buf, len, &i);
+      uint32_t caret = rd(buf, len, &i);
       uint32_t str_len = rd(buf, len, &i);
       int str_words = (str_len + 3) / 4;
       char *str_chars = (char *)&buf[i];
       i += str_words;
+
+      /* A caret on empty content is a rendering commitment the layout
+       * engine cannot satisfy on its own — zero cells give render_text
+       * nothing to attach the cursor to. Substitute a single space so
+       * the caret lands at the text element's origin, per the spec's
+       * "as if the content were a single space" outcome. */
+      if (caret != 0xFFFFFFFF && str_len == 0) {
+        str_chars = (char *)" ";
+        str_len = 1;
+      }
+
+      /* Record the FIRST caret declaration per frame for the
+       * single-hardware-cursor contract; later declarations are
+       * intentionally ignored (multi-cursor is unspecified).
+       *
+       * Convert the caller's code-point offset into a byte offset once
+       * here so the render walk can identify the caret cell by simple
+       * pointer arithmetic against the slice's chars pointer. */
+      if (caret != 0xFFFFFFFF && ct->caret_text_chars == NULL) {
+        ct->caret_text_chars = str_chars;
+        ct->caret_text_length = (int)str_len;
+        ct->caret_offset_bytes = utf8_bytes_for_cps(str_chars, caret, str_len);
+        ct->has_caret = 1;
+      }
 
       Clay_String text = {.length = (int32_t)str_len, .chars = str_chars};
 
@@ -793,6 +927,22 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       break;
     default:
       break;
+    }
+  }
+
+  /* End-of-content fallback: if a caret was declared and its target byte
+   * offset is one past the last byte of the caret text node, the trailing
+   * cell of the last walked caret slice is where it lands. */
+  if (ct->has_caret && !ct->caret_placed) {
+    if (ct->caret_tail_valid &&
+        ct->caret_offset_bytes == (uint32_t)ct->caret_text_length) {
+      ct->caret_x = ct->caret_tail_x;
+      ct->caret_y = ct->caret_tail_y;
+      ct->caret_placed = 1;
+    } else {
+      /* Offset out of range or otherwise unresolvable. Suppress the
+       * cursor for this frame. */
+      ct->has_caret = 0;
     }
   }
 

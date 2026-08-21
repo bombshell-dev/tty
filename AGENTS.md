@@ -30,8 +30,10 @@ Do not include any agent marketing material (e.g. "Generated with...",
 
 - The renderer MUST NOT perform IO. It produces bytes; the caller writes them.
 
-- The renderer MUST NOT manage terminal state (alternate buffer, cursor
-  visibility, mouse reporting, keyboard protocol modes).
+- The renderer MUST NOT manage terminal state (alternate buffer, mouse
+  reporting, keyboard protocol modes). Cursor visibility and positioning are
+  renderer-managed only when a `caret` declaration is present on a `text()`
+  directive (see renderer-spec.md §7.6).
 
 - Each frame is a complete snapshot. The renderer carries no UI tree state
   between frames — only cell buffers for diffing.

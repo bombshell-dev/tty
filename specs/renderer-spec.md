@@ -334,6 +334,75 @@ nests clip regions more deeply than the renderer can track:
   (see §12.3) before returning, so the caller can detect that some clipping was
   not applied.
 
+### 7.6 Hardware cursor visibility and positioning
+
+A `text()` directive MAY declare a `caret` property whose value is a
+non-negative integer code-point offset into the directive's `content`. `0` means
+"before the first code point"; `[...content].length` means "after the last."
+Offsets in between sit immediately before the cell where the corresponding code
+point would render.
+
+The cell where a declared caret sits is the cell at which the code point at the
+caret's offset would be drawn given the layout engine's text wrapping. For an
+offset `N`:
+
+- If `N < [...content].length`, the caret's cell is the display position of the
+  `N`-th code point (zero-indexed) within the rendered text.
+- If `N == [...content].length`, the caret's cell is one display position past
+  the last rendered code point: on the same wrapped line if there is room, or at
+  the start of the next line if the layout wraps at the end.
+- If `N > [...content].length` or `N < 0`, behavior is unspecified; callers must
+  keep offsets within bounds.
+
+When the layout engine consumes whitespace at a wrap boundary — dropping it from
+the rendered text so that neither wrapped line contains a display cell for those
+code points — the caret has no display position of its own for any offset that
+falls in that dropped run. In that case the caret's cell is the origin of the
+following wrapped line (the display position of the first code point on that
+line). This rule keeps the caret on-screen at the point where subsequent input
+will land, rather than orphaning it past the end of the previous line.
+
+When `content` is empty, the only in-range offset is `0`. In that case the
+caret's cell is the text element's origin — the cell at which the first code
+point of `content` would be drawn if `content` were a single space. This is a
+rendering commitment implied by the presence of a `caret` declaration, and the
+renderer must synthesize whatever minimal geometry is required to honor it. How
+this outcome is achieved is implementation-defined.
+
+Display position accounts for code points wider than one cell (CJK, fullwidth
+forms, some emoji): such code points occupy two cells, and the caret sits at the
+first cell of the pair. Cell widths are determined by the same measurement the
+renderer uses to lay out the text itself.
+
+The renderer manages the terminal's hardware cursor based on the presence of
+`caret:` declarations:
+
+- When the current frame contains one or more `caret:` declarations, the
+  rendered `output` MUST, when written to the terminal, leave the hardware
+  cursor visible at the cell where the first declared caret (in directive order)
+  sits.
+
+- When the current frame contains no `caret:` declarations:
+  - If the previous frame contained one, the rendered `output` MUST leave the
+    hardware cursor hidden.
+  - Otherwise, the rendered `output` MUST NOT include cursor-positioning or
+    cursor-visibility bytes; the caller's cursor state is preserved.
+
+The byte-level path the renderer takes to satisfy these outcomes is
+implementation-defined. The renderer MAY hide the cursor before cell writes to
+prevent flicker, MAY omit such a hide for in-place edits where flicker is
+acceptable, MAY emit only a CUP when the caret has moved within an
+already-visible state, MAY use whatever escape-sequence path it judges
+appropriate. Only the post-frame cursor state above is normative.
+
+If more than one `caret:` declaration is present in a frame, the renderer SHOULD
+use the first in directive order for the hardware cursor. Behavior for
+additional declarations is intentionally unspecified, leaving room for a future
+multi-cursor extension without breaking this contract.
+
+This responsibility is limited to the hardware cursor's position and visibility.
+Cursor shape and blink rate remain caller-managed.
+
 ---
 
 ## 8. Public Rendering API
@@ -604,7 +673,6 @@ The renderer MUST NOT emit escape sequences for any of the following
 terminal-management operations:
 
 - Entering or leaving the alternate screen buffer
-- Hiding or showing the cursor
 - Setting the cursor shape or blink state
 - Enabling or disabling mouse reporting
 - Enabling or disabling keyboard protocol modes (e.g., Kitty progressive
@@ -613,7 +681,9 @@ terminal-management operations:
 
 These are the caller's responsibility. The renderer's output contains only the
 escape sequences needed to render the frame content (cursor positioning for cell
-writes, SGR attributes for styling, and UTF-8 text).
+writes, SGR attributes for styling, and UTF-8 text) and, when a `caret`
+declaration is present, the cursor-positioning and cursor-visibility sequences
+specified in §7.6.
 
 ### 11.3 The renderer does not own application lifecycle
 

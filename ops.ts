@@ -315,6 +315,10 @@ export function pack(
         );
         o += 4;
 
+        // Caret offset (code points), or 0xFFFFFFFF when absent.
+        view.setUint32(o, op.caret ?? 0xFFFFFFFF, true);
+        o += 4;
+
         let str = encoder.encode(op.content);
         o = packString(view, str, o, end, "text content");
         break;
@@ -481,6 +485,7 @@ export interface Text {
   fontId?: number;
   wrap?: number;
   attrs?: number;
+  caret?: number;
 }
 
 interface Snapshot {
@@ -533,7 +538,7 @@ function packSize(ops: Op[]): number {
         break;
       }
       case OP_TEXT: {
-        n += 4 + 4 + 4 + 4; // opcode + color + bg + cfg
+        n += 4 + 4 + 4 + 4 + 4; // opcode + color + bg + cfg + caret
         n += 4 + Math.ceil(encoder.encode(op.content).length / 4) * 4; // string
         break;
       }
