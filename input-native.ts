@@ -169,39 +169,83 @@ export interface InputNative {
   delay(st: number): number;
 }
 
+/**
+ * Attachment surface provided by a TermInfo handle: the shared memory,
+ * its bump allocator, and the capability struct / raw terminfo region
+ * pointers. See terminfo.ts internals().
+ */
+export interface InputAttach {
+  memory: WebAssembly.Memory;
+  exports: Record<string, CallableFunction>;
+  structPtr: number;
+  bytesPtr: number;
+  bytesLen: number;
+  alloc(size: number, align?: number): number;
+}
+
 import { compiled } from "./wasm.ts";
 
 export async function createInputNative(
   escLatency: number,
+  attach?: InputAttach,
 ): Promise<InputNative> {
-  let memory = new WebAssembly.Memory({ initial: 4 });
+  let memory = attach?.memory ?? new WebAssembly.Memory({ initial: 4 });
 
-  let instance = await WebAssembly.instantiate(compiled, {
-    env: { memory },
-    clay: {
-      measureTextFunction() {},
-      queryScrollOffsetFunction(ret: number) {
-        let v = new DataView(memory.buffer);
-        v.setFloat32(ret, 0, true);
-        v.setFloat32(ret + 4, 0, true);
+  let raw: unknown;
+  if (attach) {
+    // Reuse the handle's instance: instantiating the module again over
+    // the shared memory would rewrite its data segments and clobber
+    // static state already initialized there.
+    raw = attach.exports;
+  } else {
+    let instance = await WebAssembly.instantiate(compiled, {
+      env: { memory },
+      clay: {
+        measureTextFunction() {},
+        queryScrollOffsetFunction(ret: number) {
+          let v = new DataView(memory.buffer);
+          v.setFloat32(ret, 0, true);
+          v.setFloat32(ret + 4, 0, true);
+        },
       },
-    },
-  });
+    });
+    raw = instance.exports;
+  }
 
-  let exports = instance.exports as unknown as {
+  let exports = raw as {
     __heap_base: WebAssembly.Global;
     input_size(): number;
-    input_init(mem: number, escLatency: number): number;
+    input_init(
+      mem: number,
+      escLatency: number,
+      terminfo: number,
+      terminfoLen: number,
+      ti: number,
+    ): number;
     input_scan(st: number, buf: number, len: number, now: number): number;
     input_count(st: number): number;
     input_event(st: number, index: number): number;
     input_delay(st: number): number;
   };
 
-  let heap = exports.__heap_base.value as number;
   let size = exports.input_size();
-  let state = exports.input_init(heap, escLatency);
-  let buffer = (heap + size + 7) & ~7;
+  let state: number;
+  let buffer: number;
+  if (attach) {
+    let arena = attach.alloc(size);
+    buffer = attach.alloc(SCAN_BUFFER_SIZE);
+    state = exports.input_init(
+      arena,
+      escLatency,
+      attach.bytesLen > 0 ? attach.bytesPtr : 0,
+      attach.bytesLen,
+      attach.structPtr,
+    );
+  } else {
+    let heap = exports.__heap_base.value as number;
+    state = exports.input_init(heap, escLatency, 0, 0, 0);
+    buffer = (heap + size + 7) & ~7;
+  }
 
   return {
     memory,
@@ -213,11 +257,6 @@ export async function createInputNative(
     delay: exports.input_delay,
   };
 }
-
-// Compiled terminfo entries are limited to 4096 bytes (legacy) or 32768
-// bytes (extended ncurses format). We use the extended limit as our upper
-// bound. See https://man7.org/linux/man-pages/man5/term.5.html
-export const MAX_TERMINFO = 32768;
 
 // Must match SCAN_BUFFER_SIZE in input.c — the maximum bytes input_scan()
 // can accept in a single call.

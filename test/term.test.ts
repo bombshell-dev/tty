@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
+import { createInput } from "../input.ts";
+import { offlineTermInfo } from "./caps.ts";
 import {
   close,
   fixed,
@@ -53,9 +55,10 @@ describe("term", () => {
     );
 
     // the SGR active when "h" is emitted should include the
-    // parent's red background (48;2;255;0;0), not terminal default
+    // parent's red background (48;5;196 under baseline 256-color
+    // capabilities), not terminal default
     let before = ansi.slice(0, ansi.indexOf("h"));
-    expect(before).toContain("\x1b[48;2;255;0;0");
+    expect(before).toContain("\x1b[48;5;196");
   });
 
   it("renders borders and padding", () => {
@@ -393,5 +396,81 @@ describe("term", () => {
 │                  │
 └──────────────────┘`);
     });
+  });
+});
+
+describe("capability generation", () => {
+  let OPS = [
+    open("root", { layout: { width: grow(), height: grow() } }),
+    text("hi", { color: rgba(255, 0, 0) }),
+    close(),
+  ];
+
+  it("emits nothing for an unchanged frame", async () => {
+    let terminfo = await offlineTermInfo();
+    let term = await createTerm({ width: 12, height: 2, terminfo });
+    term.render(OPS);
+    expect(term.render(OPS).output.length).toBe(0);
+  });
+
+  it("forces a full redraw when capabilities change between frames", async () => {
+    let terminfo = await offlineTermInfo();
+    let term = await createTerm({ width: 12, height: 2, terminfo });
+    let input = await createInput({ terminfo });
+
+    term.render(OPS);
+    expect(term.render(OPS).output.length).toBe(0);
+
+    // an XTGETTCAP reply confirms truecolor mid-session
+    input.scan(new TextEncoder().encode("\x1bP1+r524742\x1b\\"));
+
+    let ansi = new TextDecoder().decode(term.render(OPS).output);
+    expect(ansi).toContain("hi");
+    expect(ansi).toContain("\x1b[38;2;255;0;0m");
+  });
+});
+
+describe("synchronized output", () => {
+  let OPS = [
+    open("root", { layout: { width: grow(), height: grow() } }),
+    text("hi", { color: rgba(255, 0, 0) }),
+    close(),
+  ];
+
+  async function syncTerm() {
+    let terminfo = await offlineTermInfo();
+    let term = await createTerm({ width: 12, height: 2, terminfo });
+    let input = await createInput({ terminfo });
+    input.scan(new TextEncoder().encode("\x1b[?2026;2$y"));
+    expect(terminfo.capabilities.syncOutput).toBe(true);
+    return term;
+  }
+
+  it("wraps non-empty frames when syncOutput is confirmed", async () => {
+    let term = await syncTerm();
+    let ansi = new TextDecoder().decode(term.render(OPS).output);
+    expect(ansi.startsWith("\x1b[?2026h")).toBe(true);
+    expect(ansi.endsWith("\x1b[?2026l")).toBe(true);
+  });
+
+  it("does not wrap when syncOutput is unconfirmed", async () => {
+    let terminfo = await offlineTermInfo();
+    let term = await createTerm({ width: 12, height: 2, terminfo });
+    let ansi = new TextDecoder().decode(term.render(OPS).output);
+    expect(ansi).not.toContain("2026");
+  });
+
+  it("does not wrap empty frames", async () => {
+    let term = await syncTerm();
+    term.render(OPS);
+    expect(term.render(OPS).output.length).toBe(0);
+  });
+
+  it("does not wrap line-mode output", async () => {
+    let term = await syncTerm();
+    let ansi = new TextDecoder().decode(
+      term.render(OPS, { mode: "line" }).output,
+    );
+    expect(ansi).not.toContain("2026");
   });
 });

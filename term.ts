@@ -1,9 +1,25 @@
 import { type Op, pack } from "./ops.ts";
-import { type BoundingBox, createTermNative } from "./term-native.ts";
+import {
+  type BoundingBox,
+  createTermNative,
+  type TermAttach,
+} from "./term-native.ts";
+import { internals, type TermInfo } from "./terminfo.ts";
 
 export interface TermOptions {
   height: number;
   width: number;
+
+  /**
+   * TermInfo handle from queryTermInfo(). Attaches the Term to the
+   * handle's shared capability struct, which gates emission (color
+   * encoding ladder, synchronized output, full redraw on capability
+   * change — see specs/renderer-spec.md section 7.6).
+   *
+   * If no handle is provided the Term uses the baseline capabilities
+   * (256-color emission).
+   */
+  terminfo?: TermInfo;
 }
 
 export interface RenderOptions {
@@ -74,8 +90,19 @@ export interface Term {
 }
 
 export async function createTerm(options: TermOptions): Promise<Term> {
-  let { width, height } = options;
-  let native = await createTermNative(width, height);
+  let { width, height, terminfo } = options;
+
+  let attach: TermAttach | undefined;
+  if (terminfo) {
+    let ti = internals(terminfo);
+    if (ti.termAttached) {
+      throw new Error("TermInfo handle is already attached to a Term");
+    }
+    ti.termAttached = true;
+    attach = ti;
+  }
+
+  let native = await createTermNative(width, height, attach);
   let { memory, statePtr, opsBuf } = native;
 
   let prev = new Set<string>();
