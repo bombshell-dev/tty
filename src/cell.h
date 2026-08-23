@@ -11,9 +11,10 @@
 
 typedef struct {
   uint32_t ch;
-  uint32_t fg;                          /* 0xAARRGGBB — upper byte: attribute flags */
-  uint32_t bg;                          /* 0xAARRGGBB — upper byte: attribute flags */
-  uint32_t combining[CELL_MAX_COMBINING]; /* zero-terminated combining-mark codepoints */
+  uint32_t fg; /* 0xAARRGGBB — upper byte: attribute flags */
+  uint32_t bg; /* 0xAARRGGBB — upper byte: attribute flags */
+  uint32_t combining[CELL_MAX_COMBINING]; /* zero-terminated combining-mark
+                                             codepoints */
 } Cell;
 
 /* Attribute flags (packed into high byte of fg) */
