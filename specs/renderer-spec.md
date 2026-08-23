@@ -546,10 +546,16 @@ These functions produce sizing-axis values for use in element layout
 configuration:
 
 ```
-grow(): SizingAxis
+grow(min?: number, max?: number): SizingAxis
 ```
 
 The element expands to fill available space in the parent along this axis.
+Available space is computed from the **parent's content box** — the parent's
+dimension minus its padding — at every nesting level, regardless of whether the
+parent's own size was computed from `fixed()`, `grow()`, or any other mode. A
+`grow()` element's minimum size is its configured `min` (default 0), not the
+natural size of its content; this ensures it can always be compressed to fit the
+parent content box when necessary.
 
 ```
 fixed(value: number): SizingAxis
