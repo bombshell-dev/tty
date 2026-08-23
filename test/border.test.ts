@@ -1,6 +1,15 @@
-import { close, fixed, open, type OpenElement, rgba } from "../ops.ts";
+import {
+  close,
+  fixed,
+  grow,
+  open,
+  type OpenElement,
+  rgba,
+  text,
+} from "../ops.ts";
 import { createTerm } from "../term.ts";
 import { describe, expect, it } from "./suite.ts";
+import { print } from "./print.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -475,5 +484,165 @@ describe("instances", () => {
     let again = decode(b.render(frame(BLUE, YELLOW), { mode: "line" }).output);
     expect(again).not.toContain(FG.magenta);
     expect(again).not.toContain(FG.cyan);
+  });
+});
+
+const trim = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n");
+
+describe("box model", () => {
+  it("full border with no padding reserves space: children visible, box is 3 rows", async () => {
+    let term = await createTerm({ width: 20, height: 10 });
+    let result = term.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      open("box", {
+        layout: { width: fixed(14), direction: "ttb" },
+        border: { color: WHITE, top: 1, right: 1, bottom: 1, left: 1 },
+      }),
+      text("CASE A"),
+      close(),
+      close(),
+    ]);
+
+    expect(result.info.get("box")?.bounds.height).toBe(3);
+    expect(decode(result.output)).toContain("CASE A");
+  });
+
+  it("partial borders (top+left) reserve only their sides", async () => {
+    let term = await createTerm({ width: 20, height: 10 });
+    let result = term.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      open("box", {
+        layout: { width: fixed(14), direction: "ttb" },
+        border: { color: WHITE, top: 1, left: 1 },
+      }),
+      text("CASE B"),
+      close(),
+      close(),
+    ]);
+
+    // top border reserves 1 row, no bottom border so no bottom reservation
+    expect(result.info.get("box")?.bounds.height).toBe(2);
+    expect(decode(result.output)).toContain("CASE B");
+  });
+
+  it("padding == border renders identically to no padding (max semantics, no double-reservation)", async () => {
+    let nopad = await createTerm({ width: 20, height: 10 });
+    let r1 = nopad.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      open("box", {
+        layout: { width: fixed(14), direction: "ttb" },
+        border: { color: WHITE, top: 1, right: 1, bottom: 1, left: 1 },
+      }),
+      text("CONTENT"),
+      close(),
+      close(),
+    ]);
+
+    let withpad = await createTerm({ width: 20, height: 10 });
+    let r2 = withpad.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      open("box", {
+        layout: {
+          width: fixed(14),
+          direction: "ttb",
+          padding: { top: 1, right: 1, bottom: 1, left: 1 },
+        },
+        border: { color: WHITE, top: 1, right: 1, bottom: 1, left: 1 },
+      }),
+      text("CONTENT"),
+      close(),
+      close(),
+    ]);
+
+    // Both produce the same box height: border reserves 1 per side, no double-reservation
+    expect(r1.info.get("box")?.bounds.height).toBe(3);
+    expect(r2.info.get("box")?.bounds.height).toBe(3);
+  });
+
+  it("explicit padding > border width adds breathing room inside the border", async () => {
+    let term = await createTerm({ width: 20, height: 10 });
+    let result = term.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      open("box", {
+        layout: {
+          width: fixed(14),
+          direction: "ttb",
+          padding: { top: 2, bottom: 2 },
+        },
+        border: { color: WHITE, top: 1, bottom: 1 },
+      }),
+      text("CONTENT"),
+      close(),
+      close(),
+    ]);
+
+    // effective_top = max(2, 1) = 2, effective_bottom = max(2, 1) = 2
+    // height = 2 + 1 text + 2 = 5
+    expect(result.info.get("box")?.bounds.height).toBe(5);
+  });
+
+  it("nested two-tone bevel lays out without manual padding compensation", async () => {
+    let term = await createTerm({ width: 20, height: 10 });
+    let result = term.render([
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      open("outer", {
+        layout: { width: fixed(16), direction: "ttb" },
+        border: { color: WHITE, top: 1, left: 1 },
+      }),
+      open("inner", {
+        layout: { width: grow(), direction: "ttb" },
+        border: { color: WHITE, bottom: 1, right: 1 },
+      }),
+      text("NESTED"),
+      close(),
+      close(),
+      close(),
+    ]);
+
+    // inner: effective_bottom=1, effective_right=1 → height = 0 + text(1) + 1 = 2
+    // outer: effective_top=1, effective_left=1 → height = 1 + inner(2) + 0 = 3
+    expect(result.info.get("outer")?.bounds.height).toBe(3);
+    expect(decode(result.output)).toContain("NESTED");
+  });
+
+  it("visual: full border renders border glyphs around content", async () => {
+    let term = await createTerm({ width: 20, height: 10 });
+    let out = trim(
+      print(
+        decode(
+          term.render([
+            open("root", {
+              layout: { width: grow(), height: grow(), direction: "ttb" },
+            }),
+            open("box", {
+              layout: { width: fixed(14), direction: "ttb" },
+              border: { color: WHITE, top: 1, right: 1, bottom: 1, left: 1 },
+            }),
+            text("CASE A"),
+            close(),
+            close(),
+          ]).output,
+        ),
+        20,
+        10,
+      ),
+    );
+
+    let lines = out.split("\n");
+    expect(lines[0]).toBe("┌────────────┐");
+    expect(lines[1]).toBe("│CASE A      │");
+    expect(lines[2]).toBe("└────────────┘");
   });
 });
