@@ -140,7 +140,8 @@ static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
 }
 
 /* Append a combining-mark codepoint to the cell at (x, y) in the back buffer.
- * Marks beyond CELL_MAX_COMBINING are silently dropped (truncation from end). */
+ * Marks beyond CELL_MAX_COMBINING are silently dropped (truncation from end).
+ */
 static void append_combining(struct Clayterm *ct, int x, int y, uint32_t cp) {
   if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
     return;
