@@ -529,7 +529,7 @@ describe("box model", () => {
     expect(decode(result.output)).toContain("CASE B");
   });
 
-  it("padding == border renders identically to no padding (max semantics, no double-reservation)", async () => {
+  it("padding is additive: border=1 alone gives height 3; border=1 plus padding=1 gives height 5", async () => {
     let nopad = await createTerm({ width: 20, height: 10 });
     let r1 = nopad.render([
       open("root", {
@@ -562,9 +562,10 @@ describe("box model", () => {
       close(),
     ]);
 
-    // Both produce the same box height: border reserves 1 per side, no double-reservation
+    // border=1, no padding: effective = 0+1 = 1 per side → height = 1+text+1 = 3
     expect(r1.info.get("box")?.bounds.height).toBe(3);
-    expect(r2.info.get("box")?.bounds.height).toBe(3);
+    // border=1, padding=1: effective = 1+1 = 2 per side → height = 2+text+2 = 5
+    expect(r2.info.get("box")?.bounds.height).toBe(5);
   });
 
   it("explicit padding > border width adds breathing room inside the border", async () => {
@@ -586,9 +587,9 @@ describe("box model", () => {
       close(),
     ]);
 
-    // effective_top = max(2, 1) = 2, effective_bottom = max(2, 1) = 2
-    // height = 2 + 1 text + 2 = 5
-    expect(result.info.get("box")?.bounds.height).toBe(5);
+    // effective_top = 2+1 = 3, effective_bottom = 2+1 = 3
+    // height = 3 + 1 text + 3 = 7
+    expect(result.info.get("box")?.bounds.height).toBe(7);
   });
 
   it("nested two-tone bevel lays out without manual padding compensation", async () => {

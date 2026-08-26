@@ -92,8 +92,8 @@ describe("term", () => {
 │                                      │
 │                                      │
 │                                      │
-│    padded                            │
 │                                      │
+│     padded                           │
 │                                      │
 │                                      │
 ╰──────────────────────────────────────╯`.trim());
@@ -109,7 +109,6 @@ describe("term", () => {
           width: grow(),
           height: grow(),
           direction: "ttb",
-          padding: { left: 1, top: 1 },
         },
         border: {
           color: rgba(255, 255, 255),
@@ -212,7 +211,6 @@ describe("term", () => {
               width: fixed(12),
               height: fixed(5),
               direction: "ttb",
-              padding: { left: 1, top: 1 },
             },
             border: {
               color: rgba(255, 255, 255),
@@ -297,7 +295,6 @@ describe("term", () => {
             width: grow(),
             height: grow(),
             direction: "ttb",
-            padding: { left: 1, top: 1 },
           },
           border: {
             color: rgba(255, 255, 255),
@@ -349,7 +346,6 @@ describe("term", () => {
             width: grow(),
             height: grow(),
             direction: "ttb",
-            padding: { left: 1, top: 1 },
           },
           border: {
             color: rgba(255, 255, 255),

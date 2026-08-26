@@ -799,24 +799,25 @@ corner cells; corner glyph shape selection (including rounded corners via
 
 **Border width and layout interaction.** The renderer automatically reserves
 space for each enabled border side at pack time. For each side, the effective
-padding passed to the layout engine is `max(userPadding, borderWidth)`. Border
+padding passed to the layout engine is `userPadding + borderWidth`. Border
 glyphs are drawn at the same positions as before; the change is purely in how
 much layout space Clay allocates for the element.
 
-Semantics of the `max` rule:
+Semantics of the additive rule:
 
 - **No explicit padding.** The border width itself becomes the effective
-  padding, so content is placed inside the border rather than behind it.
-- **User padding equal to border width (prior workaround pattern).** The `max`
-  evaluates to the same value, so these elements render identically — no
-  double-reservation, no migration required.
-- **User padding greater than border width.** The extra padding beyond the
-  border width provides additional breathing room inside the border. Padding is
-  effectively measured from the border edge inward.
+  padding, so content is placed immediately inside the border.
+- **Explicit user padding.** Adds breathing room _beyond_ the border edge.
+  `padding: 1` with `border: 1` places content 2 cells from the element edge — 1
+  for the border glyph, 1 for the padding inset.
+- **Prior workaround pattern (`padding == borderWidth`).** These callers now
+  receive double-reservation (effective = 2 × borderWidth). This is a breaking
+  change: remove the workaround padding to restore the original visual.
 
-This is a breaking change for callers who set padding _less than_ the border
-width intending the overlap: those elements now have the overlap removed.
-Callers who compensated by setting `padding == borderWidth` are unaffected.
+This is a breaking change for callers who compensated for the old border-layout
+bug by setting `padding >= borderWidth`. Those callers should remove the
+compensating padding; border presence now implies the necessary layout
+reservation.
 
 ### 12.3 Render return type
 
@@ -1052,9 +1053,9 @@ resolution.
    implementation detail, not public API. `validate()` is public API.
 
 4. **How should border widths interact with layout?** RESOLVED. Border widths
-   are now accounted for in layout via `max(padding, borderWidth)` per side at
-   pack time (TypeScript layer). See Section 12.2 for the full semantics
-   including the no-double-reservation guarantee for prior compensators.
+   are now accounted for in layout additively (`padding + borderWidth`) per side
+   at pack time (TypeScript layer). See Section 12.2 for the full semantics.
+   This is a breaking change: prior workaround padding must be removed.
 
 5. **What are the specific transfer encoding details?** The encoding structure
    is described in Section 12.1 as current implementation surface. Locking down
