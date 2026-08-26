@@ -617,6 +617,13 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
         decl.border.width.top = (bw >> 16) & 0xff;
         decl.border.width.bottom = (bw >> 24) & 0xff;
 
+        /* Border sides reserve layout space additively: effective padding
+         * is userPadding + borderWidth per side (renderer-spec 12.2). */
+        decl.layout.padding.left += decl.border.width.left;
+        decl.layout.padding.right += decl.border.width.right;
+        decl.layout.padding.top += decl.border.width.top;
+        decl.layout.padding.bottom += decl.border.width.bottom;
+
         /* Resolved per-side fg/bg attribute words (top, right, bottom,
          * left). Routed to render_border via userData; the command buffer
          * remains valid for the whole render pass. */

@@ -798,10 +798,11 @@ corner cells; corner glyph shape selection (including rounded corners via
 `cornerRadius`) is unchanged.
 
 **Border width and layout interaction.** The renderer automatically reserves
-space for each enabled border side at pack time. For each side, the effective
-padding passed to the layout engine is `userPadding + borderWidth`. Border
-glyphs are drawn at the same positions as before; the change is purely in how
-much layout space Clay allocates for the element.
+space for each enabled border side. For each side, the effective padding passed
+to the layout engine is `userPadding + borderWidth`; the WASM renderer applies
+this adjustment when decoding the element declaration. Border glyphs are drawn
+at the same positions as before; the change is purely in how much layout space
+Clay allocates for the element.
 
 Semantics of the additive rule:
 
@@ -1054,7 +1055,7 @@ resolution.
 
 4. **How should border widths interact with layout?** RESOLVED. Border widths
    are now accounted for in layout additively (`padding + borderWidth`) per side
-   at pack time (TypeScript layer). See Section 12.2 for the full semantics.
+   in the WASM renderer's decode step. See Section 12.2 for the full semantics.
    This is a breaking change: prior workaround padding must be removed.
 
 5. **What are the specific transfer encoding details?** The encoding structure

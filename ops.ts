@@ -161,14 +161,10 @@ export function pack(
           o = packAxis(view, o, l.height ?? { type: "fit" });
 
           let p = l.padding ?? {};
-          let bw = op.border;
-          let padLeft = (p.left ?? 0) + sideWidth(bw?.left);
-          let padRight = (p.right ?? 0) + sideWidth(bw?.right);
-          let padTop = (p.top ?? 0) + sideWidth(bw?.top);
-          let padBottom = (p.bottom ?? 0) + sideWidth(bw?.bottom);
           view.setUint32(
             o,
-            padLeft | (padRight << 8) | (padTop << 16) | (padBottom << 24),
+            (p.left ?? 0) | ((p.right ?? 0) << 8) | ((p.top ?? 0) << 16) |
+              ((p.bottom ?? 0) << 24),
             true,
           );
           o += 4;
