@@ -867,12 +867,28 @@ excluding joined corner cells. Per-side attributes affect only the styling of
 corner cells; corner glyph shape selection (including rounded corners via
 `cornerRadius`) is unchanged.
 
-**Border width and layout interaction.** In the underlying layout engine (Clay),
-border configuration does not affect layout computation. This is Clay's intended
-behavior. Borders are drawn as visual overlays within the element's bounding
-box. A bordered element with zero padding will have its borders drawn over its
-content. Callers must add padding equal to or greater than the border width to
-prevent overlap.
+**Border width and layout interaction.** The renderer automatically reserves
+space for each enabled border side. For each side, the effective padding passed
+to the layout engine is `userPadding + borderWidth`; the WASM renderer applies
+this adjustment when decoding the element declaration. Border glyphs are drawn
+at the same positions as before; the change is purely in how much layout space
+Clay allocates for the element.
+
+Semantics of the additive rule:
+
+- **No explicit padding.** The border width itself becomes the effective
+  padding, so content is placed immediately inside the border.
+- **Explicit user padding.** Adds breathing room _beyond_ the border edge.
+  `padding: 1` with `border: 1` places content 2 cells from the element edge — 1
+  for the border glyph, 1 for the padding inset.
+- **Prior workaround pattern (`padding == borderWidth`).** These callers now
+  receive double-reservation (effective = 2 × borderWidth). This is a breaking
+  change: remove the workaround padding to restore the original visual.
+
+This is a breaking change for callers who compensated for the old border-layout
+bug by setting `padding >= borderWidth`. Those callers should remove the
+compensating padding; border presence now implies the necessary layout
+reservation.
 
 ### 12.3 Render return type
 
@@ -1107,11 +1123,10 @@ resolution.
 3. **Is `pack()` public API?** `pack()` is currently exported but is an internal
    implementation detail, not public API. `validate()` is public API.
 
-4. **How should border widths interact with layout?** The current behavior
-   (borders do not affect layout) is inherited from the underlying layout
-   engine. The project has questioned whether this is the right design. This
-   specification describes the current behavior in Section 12.2 without
-   committing to it.
+4. **How should border widths interact with layout?** RESOLVED. Border widths
+   are now accounted for in layout additively (`padding + borderWidth`) per side
+   in the WASM renderer's decode step. See Section 12.2 for the full semantics.
+   This is a breaking change: prior workaround padding must be removed.
 
 5. **What are the specific transfer encoding details?** The encoding structure
    is described in Section 12.1 as current implementation surface. Locking down
