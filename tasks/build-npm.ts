@@ -10,7 +10,12 @@ if (!version) {
 }
 
 await build({
-  entryPoints: ["./mod.ts"],
+  entryPoints: [
+    "./mod.ts",
+    { name: "./layout", path: "./layout.ts" },
+    { name: "./input", path: "./input.ts" },
+    { name: "./validate", path: "./validate.ts" },
+  ],
   outDir,
   shims: {
     deno: false,

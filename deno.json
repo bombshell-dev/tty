@@ -23,6 +23,8 @@
   },
   "exports": {
     ".": "./mod.ts",
+    "./layout": "./layout.ts",
+    "./input": "./input.ts",
     "./validate": "./validate.ts"
   },
   "nodeModulesDir": "auto",

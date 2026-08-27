@@ -48,8 +48,10 @@ jobs:
         with:
           name: clayterm-wasm
           path: |
-            clayterm.wasm
-            wasm.ts
+            layout.wasm
+            input.wasm
+            layout.wasm.ts
+            input.wasm.ts
 
   test-alt-os:
     needs: test
