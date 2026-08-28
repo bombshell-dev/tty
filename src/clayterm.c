@@ -109,7 +109,9 @@ struct Clayterm {
  * Output buffer is sized at 64 bytes per cell — enough for worst-case
  * full-screen redraws with truecolor SGR sequences on every cell.
  */
-#define OUT_BYTES_PER_CELL 64
+/* 128 bytes per cell: ~84 bytes worst-case for CUP + SGR sequences, plus up
+ * to 4 (base SMP char) + 8×4 (combining marks) = 36 bytes of cluster text. */
+#define OUT_BYTES_PER_CELL 128
 
 /* ── Cell buffer ops ──────────────────────────────────────────────── */
 
@@ -132,6 +134,22 @@ static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
   c->fg = fg;
   if (!(bg & ATTR_DEFAULT)) {
     c->bg = bg;
+  }
+  for (int i = 0; i < CELL_MAX_COMBINING; i++)
+    c->combining[i] = 0;
+}
+
+/* Append a combining-mark codepoint to the cell at (x, y) in the back buffer.
+ * Marks beyond CELL_MAX_COMBINING are silently dropped (truncation from end). */
+static void append_combining(struct Clayterm *ct, int x, int y, uint32_t cp) {
+  if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
+    return;
+  Cell *c = cell_at(ct, ct->back, x, y);
+  for (int i = 0; i < CELL_MAX_COMBINING; i++) {
+    if (c->combining[i] == 0) {
+      c->combining[i] = cp;
+      return;
+    }
   }
 }
 
@@ -238,6 +256,8 @@ static void present_cups(struct Clayterm *ct, int row) {
             emit_ch(ct, i, y, row, ' ');
         } else {
           emit_ch(ct, x, y, row, back->ch);
+          for (int ci = 0; ci < CELL_MAX_COMBINING && back->combining[ci]; ci++)
+            buf_char(&ct->out, back->combining[ci]);
           /* mark trailing cells of wide char as invalid in front
            * so they'll diff when overwritten by narrow chars */
           for (int i = 1; i < w; i++) {
@@ -298,6 +318,8 @@ static void present_lines(struct Clayterm *ct) {
         if (!iswprint(ch))
           ch = 0xfffd;
         buf_char(&ct->out, ch);
+        for (int ci = 0; ci < CELL_MAX_COMBINING && back->combining[ci]; ci++)
+          buf_char(&ct->out, back->combining[ci]);
         for (int i = 1; i < w; i++) {
           Cell *fw = cell_at(ct, ct->front, x + i, y);
           fw->ch = 0xffffffff;
@@ -391,6 +413,7 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
   const char *p = slice;
   int rem = slice_len;
   int x = x0;
+  int last_x = -1; /* column of the most-recently written base cell */
 
   while (rem > 0) {
     /* Check at the top of each iteration: if the pointer we are about to
@@ -415,7 +438,11 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
       cw = 1;
     if (cw > 0) {
       setcell(ct, x, y0, cp, fg, bg);
+      last_x = x;
       x += cw;
+    } else if (last_x >= 0) {
+      /* combining mark: attach to the preceding base cell */
+      append_combining(ct, last_x, y0, cp);
     }
     p += n;
     rem -= n;
