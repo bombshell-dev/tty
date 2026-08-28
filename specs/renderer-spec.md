@@ -517,6 +517,15 @@ NOT override the background already present in each glyph cell; element
 backgrounds established by `open({ bg })` remain in effect, and the terminal
 default remains in effect where no element background applies.
 
+**Grapheme cluster preservation.** When `content` contains grapheme clusters — a
+base codepoint followed by one or more combining marks (Unicode codepoints with
+`wcwidth` ≤ 0) — the renderer MUST preserve and emit the full cluster. Combining
+marks MUST NOT be silently dropped. Combining marks do not advance the cursor
+position; they are attached to the preceding base codepoint's cell and emitted
+immediately after the base codepoint's bytes in the output stream. A cell
+occupied by a grapheme cluster with combining marks MUST be treated as changed
+(and thus emitted) when any mark in the cluster changes between frames.
+
 The set of styling properties accepted by `props` is part of the current
 implementation surface and may be extended.
 
@@ -1013,11 +1022,23 @@ elements; clip regions; and scroll containers.
 
 **Text measurement.** Text width measurement uses `wcwidth`-based character
 width computation, supporting ASCII, CJK wide characters, and other Unicode
-codepoints.
+codepoints. Combining marks (codepoints with `wcwidth` ≤ 0) contribute zero to
+measured width; they attach to the preceding base codepoint's cell and are not
+counted as separate cells in layout. Measurement and rendering MUST agree: if
+the measurer ignores a combining mark for width purposes, the renderer MUST
+still attach and emit it.
 
-**Cell representation.** Each cell in the buffer stores a Unicode codepoint, a
-foreground color (packed ARGB with attribute flags in the high byte), and a
-background color.
+**Cell representation.** Each cell in the buffer stores a grapheme cluster — a
+base Unicode codepoint plus up to 8 combining-mark codepoints — together with a
+foreground color (packed ARGB with attribute flags in the high byte) and a
+background color. The combining-mark slots are zero-terminated; a cell with no
+combining marks stores zero in every slot. When a text string produces more than
+8 combining marks for a single base codepoint, the excess marks are silently
+truncated from the end (marks 1–8 are kept, marks 9+ are discarded), ensuring
+that the first and most semantically significant marks always survive. Cell
+comparison for diffing considers combining marks: a cell is considered changed
+when any combining mark differs from the front buffer, not only when the base
+codepoint or color attributes differ.
 
 **Border junction resolution.** When bordered elements share edges, the renderer
 accumulates per-cell direction bitmasks and resolves them to correct box-drawing
