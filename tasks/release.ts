@@ -27,11 +27,22 @@ async function remoteTagExists(ref: string): Promise<boolean> {
 }
 
 const view = await new Deno.Command("npm", {
-  args: ["view", `${pkg.name}@${version}`, "version"],
+  args: ["view", `${pkg.name}@${version}`, "version", "--json"],
   stdout: "piped",
   stderr: "null",
 }).output();
-if (view.code === 0 && new TextDecoder().decode(view.stdout).trim()) {
+
+let published = false;
+if (view.code === 0) {
+  let text = new TextDecoder().decode(view.stdout).trim();
+  try {
+    published = text !== "" && JSON.parse(text) === version;
+  } catch {
+    published = false;
+  }
+}
+
+if (published) {
   if (!(await remoteTagExists(tag))) {
     await run("git", ["tag", tag]);
     await run("git", ["push", "origin", tag]);
