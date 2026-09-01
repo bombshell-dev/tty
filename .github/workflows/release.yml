@@ -52,5 +52,6 @@ jobs:
           publish-script: npm run release
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
+          create-github-releases: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

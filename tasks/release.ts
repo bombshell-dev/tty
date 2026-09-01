@@ -45,4 +45,4 @@ await run("git", ["tag", tag]);
 await run("npm", ["publish", "--access", "public"], "build/npm");
 await run("git", ["push", "origin", tag]);
 
-console.log(`Published @bomb.sh/tty@${version}`);
+console.log(`Published ${pkg.name}@${version}`);
