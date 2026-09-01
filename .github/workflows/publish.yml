@@ -2,77 +2,56 @@ name: Publish
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
-permissions:
-  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
 
 jobs:
-  verify-npm:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the version bump, push the release tag
+      pull-requests: write # open the "Version Packages" PR
+      id-token: write # npm publish via OIDC trusted publishing
     steps:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
-          persist-credentials: false
+          fetch-depth: 0
 
       - name: setup deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: v2.x
+          # Pinned to v2.8.3 to avoid https://github.com/denoland/deno/issues/35529
+          # (v2.9.0 rejects JSR files without a manifest checksum on warm cache).
+          # Restore to v2.x once v2.9.1 ships.
+          deno-version: v2.8.3
+
+      - name: setup node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
 
       - name: build wasm
         run: make
 
-      - name: Get Version
-        id: vars
-        run: echo "version=$(echo "${GITHUB_REF_NAME}" | sed 's/^v//')" >> $GITHUB_OUTPUT
+      - name: install changesets
+        run: npm ci
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: changesets
+        uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
         with:
-          node-version: 24
-          package-manager-cache: false
-          cache: ""
-
-      - name: Build NPM
-        run: deno task build:npm "${STEPS_VARS_OUTPUTS_VERSION}"
+          version-script: npm run version
+          publish-script: npm run release
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
+          create-github-releases: false
         env:
-          STEPS_VARS_OUTPUTS_VERSION: ${{steps.vars.outputs.version}}
-
-      - name: dry run publish
-        run: npm publish --dry-run --tag=verify
-        working-directory: ./build/npm
-
-      - name: upload build
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: npm-build
-          path: ./build/npm
-
-  publish-npm:
-    needs: [verify-npm]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          package-manager-cache: false
-          cache: ""
-
-      - name: download build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: npm-build
-          path: ./build/npm
-
-      - name: Publish NPM
-        run: npm publish --access=public --tag=latest
-        working-directory: ./build/npm
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,137 @@
+# @bomb.sh/tty
+
+## 0.8.0
+
+### Minor Changes
+
+- [#27](https://github.com/bombshell-dev/tty/pull/27) Thanks [@cowboyd](https://github.com/cowboyd)! - Adds frame-to-frame transitions. Visual properties now interpolate between renders, covering the subset of animations Clay supports today.
+
+- [#96](https://github.com/bombshell-dev/tty/pull/96) Thanks [@rauhryan](https://github.com/rauhryan)! - Adds per-side border support, so each edge of an element can be styled independently.
+
+### Patch Changes
+
+- [#85](https://github.com/bombshell-dev/tty/pull/85) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Fixes nested clipping so a nested clip restores its parent's region instead of disabling clipping entirely.
+
+## 0.7.0
+
+### Minor Changes
+
+- [#99](https://github.com/bombshell-dev/tty/pull/99) Thanks [@cowboyd](https://github.com/cowboyd)! - Renames the published package to `@bomb.sh/tty`. The internal `clayterm.wasm` binary name is unchanged.
+
+- [#93](https://github.com/bombshell-dev/tty/pull/93) Thanks [@rauhryan](https://github.com/rauhryan)! - Adds glyph-cell text backgrounds, so text can carry a per-glyph background color.
+
+- [#94](https://github.com/bombshell-dev/tty/pull/94) Thanks [@rauhryan](https://github.com/rauhryan)! - Adds border-cell backgrounds, so border cells can carry their own background color.
+
+- [#29](https://github.com/bombshell-dev/tty/pull/29) Thanks [@rauhryan](https://github.com/rauhryan)! - Expands the floating parameters on `open()` to cover more Clay options: `expand`, `attachPoints`, `pointerCaptureMode`, `clipTo`, and `zIndex`, exposed as string-literal enums.
+
+- [#42](https://github.com/bombshell-dev/tty/pull/42) Thanks [@dreyfus92](https://github.com/dreyfus92)! - Switches alignment properties to string literals instead of numeric magic values.
+
+- [#17](https://github.com/bombshell-dev/tty/pull/17) Thanks [@cowboyd](https://github.com/cowboyd)! - Adds `snapshot()` to pre-pack a directive subtree into its binary transfer encoding, so unchanged subtrees are not re-encoded every frame.
+
+- [#22](https://github.com/bombshell-dev/tty/pull/22) Thanks [@cowboyd](https://github.com/cowboyd)! - Adds `RenderResult.info.get(id)` for lazy, computed element bounding-box lookup.
+
+- [#23](https://github.com/bombshell-dev/tty/pull/23) Thanks [@cowboyd](https://github.com/cowboyd)! - Surfaces Clay layout errors per render as `errors: ClayError[]` on `RenderResult`.
+
+- [#14](https://github.com/bombshell-dev/tty/pull/14) Thanks [@cowboyd](https://github.com/cowboyd)! - Decouples alternate-buffer switching from clearing. `alternateBuffer()` accepts `{ clear }`; `clear: false` uses xterm mode 47 to preserve alt-buffer contents.
+
+- [#35](https://github.com/bombshell-dev/tty/pull/35) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Cuts npm install size ~63% (723 kB → 268 kB). Minimum Node is now v22.
+
+- [#50](https://github.com/bombshell-dev/tty/pull/50) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Encodes the bundled WASM with brotli + Z85 instead of base64, cutting install size a further ~57% (270 kB → ~115 kB).
+
+### Patch Changes
+
+- [#20](https://github.com/bombshell-dev/tty/pull/20) Thanks [@cowboyd](https://github.com/cowboyd)! - **Breaking:** Renames the numeric `Op` discriminant to `directive` and `open()`'s `name` argument to `id`. Element IDs are hashed with a constant seed, so ensuring uniqueness is now the caller's responsibility.
+
+- [#33](https://github.com/bombshell-dev/tty/pull/33) Thanks [@rauhryan](https://github.com/rauhryan)! - Improves packed-string overflow errors. Oversized text and element-id payloads now throw a descriptive `RangeError` instead of corrupting the buffer.
+
+- [#87](https://github.com/bombshell-dev/tty/pull/87) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Leaves the terminal default foreground for uncolored text, so uncolored glyphs no longer emit concrete white — fixing appearance on light-background terminals.
+
+- [#24](https://github.com/bombshell-dev/tty/pull/24) Thanks [@cowboyd](https://github.com/cowboyd)! - Adds the MIT `LICENSE` file to match the declared license.
+
+## 0.6.0
+
+### Minor Changes
+
+- [#4](https://github.com/bombshell-dev/tty/pull/4) Thanks [@cowboyd](https://github.com/cowboyd)! - Adds a line rendering mode (`render(ops, { mode: "line" })`) for newline-separated, pipe-friendly output. The `row` option becomes a 1-based render-time option matching DSR/CPR.
+
+- [#9](https://github.com/bombshell-dev/tty/pull/9) Thanks [@cowboyd](https://github.com/cowboyd)! - Inlines the WASM binary into the generated TypeScript module. This drops the `node:fs/promises` read and `--allow-read`, so the module imports from non-`file://` URLs.
+
+- Adds a `termcodes` module and makes `CursorEvent` values 1-based to match the terminal's native DSR/CPR format.
+
+### Patch Changes
+
+- [#7](https://github.com/bombshell-dev/tty/pull/7) Thanks [@cowboyd](https://github.com/cowboyd)! - Accepts signed int32 colors in the validator, so full-alpha `rgba()` colors (which serialize to a negative int32) no longer fail validation.
+
+- Allows cell fill across different initialization types.
+
+## 0.5.0
+
+### Minor Changes
+
+- Parses DSR cursor-position reports and renames the row-offset render option to `top`.
+
+## 0.4.0
+
+### Minor Changes
+
+- Adds a `top` (row offset) option to `createTerm()` for region-mode rendering.
+
+- Adds composable terminal settings that automatically revert when disposed.
+
+## 0.3.0
+
+### Minor Changes
+
+- Adds pointer events and interactive hover to the Clay render pipeline, including the ability to capture mouse events.
+
+- Adds progressive Kitty keyboard protocol support, with `"0"` to reset all progressive enhancements and numpad Enter/Add handling.
+
+## 0.2.0
+
+### Minor Changes
+
+- Adds a Kitty keyboard protocol (CSI u) input parser.
+
+## 0.1.3
+
+### Patch Changes
+
+- Preserves the parent background when a text background is set to default.
+
+## 0.1.2
+
+### Patch Changes
+
+- Fixes WASM memory allocation and adds an ops-buffer overflow check.
+
+## 0.1.1
+
+### Patch Changes
+
+- Exports the `input` module from `mod.ts`.
+
+## 0.1.0
+
+### Minor Changes
+
+- Adds a terminal input parser.
+
+- Adds ops validation backed by TypeBox schemas.
+
+## 0.0.2
+
+### Patch Changes
+
+- Loads the WASM file with `node:fs/promises`.
+
+## 0.0.1
+
+### Patch Changes
+
+- Fixes JSR publish by using token auth for scope authorization.
+
+## 0.0.0
+
+### Initial Release
+
+- Initial release of the terminal rendering backend for Clay, compiled to WebAssembly. `render()` returns a `Uint8Array` of terminal output. Thanks [@cowboyd](https://github.com/cowboyd)!

@@ -1,3 +1,15 @@
 {
-  "type": "module"
+  "name": "@bomb.sh/tty",
+  "version": "0.8.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "deno run -A tasks/release.ts"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^1.0.0",
+    "@changesets/cli": "^3.0.1"
+  }
 }

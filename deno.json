@@ -27,7 +27,7 @@
   },
   "nodeModulesDir": "auto",
   "fmt": {
-    "exclude": ["clay", "build"]
+    "exclude": ["clay", "build", "CHANGELOG.md", ".changeset"]
   },
   "lint": {
     "rules": { "exclude": ["prefer-const"] },
