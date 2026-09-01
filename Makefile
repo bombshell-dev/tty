@@ -6,7 +6,7 @@ CLAY_PATCHES = $(sort $(wildcard patches/*.patch))
 CFLAGS = --target=wasm32 -nostdlib -O2 \
          -ffunction-sections -fdata-sections \
          -mbulk-memory \
-         -DCLAY_IMPLEMENTATION -DCLAY_WASM \
+         -DCLAY_IMPLEMENTATION \
          -DCLAY_DEBUG_MODE_ENABLED=0 \
          -Isrc -I.
 
@@ -17,7 +17,6 @@ EXPORTS = \
   -Wl,--export=reduce \
   -Wl,--export=output \
   -Wl,--export=length \
-  -Wl,--export=measure \
   -Wl,--export=Clay_SetPointerState \
   -Wl,--export=pointer_over_count \
   -Wl,--export=pointer_over_id_string_length \
@@ -40,8 +39,6 @@ LDFLAGS = -Wl,--no-entry \
           -Wl,--stack-first \
           -Wl,--strip-all \
           -Wl,--gc-sections \
-          -Wl,--undefined=Clay__MeasureText \
-          -Wl,--undefined=Clay__QueryScrollOffset \
           $(EXPORTS)
 
 all: $(TARGET) wasm.ts

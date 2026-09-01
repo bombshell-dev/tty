@@ -55,34 +55,12 @@ export async function createTermNative(
   h: number,
 ): Promise<Native> {
   let memory = new WebAssembly.Memory({ initial: 2 });
-  let exports: Record<string, CallableFunction> = {};
 
   let instance = await WebAssembly.instantiate(compiled, {
     env: { memory },
-    clay: {
-      measureTextFunction(
-        ret: number,
-        text: number,
-        _config: number,
-        _userData: number,
-      ) {
-        exports.measure(ret, text);
-      },
-      queryScrollOffsetFunction(
-        ret: number,
-        _elementId: number,
-        _userData: number,
-      ) {
-        let view = new DataView(memory.buffer);
-        view.setFloat32(ret, 0, true);
-        view.setFloat32(ret + 4, 0, true);
-      },
-    },
   });
 
-  Object.assign(exports, instance.exports);
-
-  let ct = exports as unknown as {
+  let ct = instance.exports as unknown as {
     __heap_base: WebAssembly.Global;
     clayterm_size(w: number, h: number): number;
     init(mem: number, w: number, h: number): number;

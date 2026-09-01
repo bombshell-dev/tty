@@ -6,7 +6,6 @@
  *   reduce         — decode command buffer, run Clay layout, render to ANSI
  *   output         — pointer to output byte buffer
  *   length         — length of output byte buffer
- *   measure        — Clay text measurement callback
  *   error_count, error_type, error_message_length, error_message_ptr
  *                  — per-render Clay error accessors
  */
@@ -629,6 +628,34 @@ int error_message_ptr(struct Clayterm *ct, int index) {
   return (int)ct->errors[index].errorText.chars;
 }
 
+static Clay_Dimensions measure_text(Clay_StringSlice text,
+                                    Clay_TextElementConfig *config,
+                                    void *userData) {
+  (void)config;
+  (void)userData;
+  int w = 0;
+  const char *p = text.chars;
+  int rem = text.length;
+  while (rem > 0) {
+    uint32_t cp;
+    int n = utf8_decode(&cp, p);
+    if (n <= 0) {
+      n = 1;
+      cp = 0xfffd;
+    }
+    /* Mirror draw_text: non-printables render as one U+FFFD cell, so
+     * they must measure as one cell. */
+    int cw = wcwidth(cp);
+    if (cw < 0)
+      cw = 1;
+    if (cw > 0)
+      w += cw;
+    p += n;
+    rem -= n;
+  }
+  return (Clay_Dimensions){(float)w, 1.0f};
+}
+
 struct Clayterm *init(void *mem, int w, int h) {
   set_clay_capacity(w, h);
   struct Clayterm *ct = (struct Clayterm *)mem;
@@ -643,6 +670,8 @@ struct Clayterm *init(void *mem, int w, int h) {
       Clay_CreateArenaWithCapacityAndMemory(clay_bytes, clay_mem);
   Clay_Initialize(arena, (Clay_Dimensions){(float)w, (float)h},
                   (Clay_ErrorHandler){clay_error, ct});
+  /* Must follow Clay_Initialize: the setter writes to the current context. */
+  Clay_SetMeasureTextFunction(measure_text, NULL);
 
   *ct = (struct Clayterm){
       .w = w,
@@ -1014,38 +1043,4 @@ int pointer_over_id_string_ptr(int index) {
   if (index >= ids.length)
     return 0;
   return (int)ids.internalArray[index].stringId.chars;
-}
-
-void measure(int ret, int txt) {
-  /* Read Clay_StringSlice from txt address.
-   * Clay_StringSlice layout: { int32_t length, const char *chars, ... }
-   * We only need length and chars. */
-  int32_t slen = *(int32_t *)txt;
-  const char *chars = *(const char **)(txt + 4);
-
-  int w = 0;
-  const char *p = chars;
-  int rem = slen;
-  while (rem > 0) {
-    uint32_t cp;
-    int n = utf8_decode(&cp, p);
-    if (n <= 0) {
-      n = 1;
-      cp = 0xfffd;
-    }
-    /* Mirror draw_text: non-printables render as one U+FFFD cell, so
-     * they must measure as one cell. */
-    int cw = wcwidth(cp);
-    if (cw < 0)
-      cw = 1;
-    if (cw > 0)
-      w += cw;
-    p += n;
-    rem -= n;
-  }
-
-  /* Write Clay_Dimensions { float width, float height } to ret */
-  float *dims = (float *)ret;
-  dims[0] = (float)w;
-  dims[1] = 1.0f;
 }
