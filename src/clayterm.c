@@ -552,7 +552,24 @@ static Clay_SizingAxis decode_axis(uint32_t *buf, int len, int *i) {
 
 static int align64(int n) { return (n + 63) & ~63; }
 
+/* Clay's element capacity drives nearly all of Clay_MinMemorySize, so scale it
+ * with the grid instead of shipping Clay's fixed 8192-element default. 2x cells
+ * bounds sane trees (leaves >= 1 cell, branching >= 2); the ceiling preserves
+ * today's capacity for large grids, the floor keeps headroom on tiny ones.
+ * Must run before Clay_MinMemorySize in both clayterm_size and init so the
+ * size the host queries always matches the arena init consumes. */
+static void set_clay_capacity(int w, int h) {
+  int elems = w * h * 2;
+  if (elems < 2048)
+    elems = 2048;
+  if (elems > 8192)
+    elems = 8192;
+  Clay_SetMaxElementCount(elems);
+  Clay_SetMaxMeasureTextCacheWordCount(elems * 2);
+}
+
 int clayterm_size(int w, int h) {
+  set_clay_capacity(w, h);
   int cell_count = w * h;
   int cell_bytes = cell_count * (int)sizeof(Cell);
   int out_bytes = cell_count * OUT_BYTES_PER_CELL;
@@ -613,6 +630,7 @@ int error_message_ptr(struct Clayterm *ct, int index) {
 }
 
 struct Clayterm *init(void *mem, int w, int h) {
+  set_clay_capacity(w, h);
   struct Clayterm *ct = (struct Clayterm *)mem;
   int cell_count = w * h;
   int cell_bytes = align8(cell_count * (int)sizeof(Cell));
