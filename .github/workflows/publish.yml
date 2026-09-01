@@ -19,11 +19,25 @@ jobs:
       pull-requests: write # open the "Version Packages" PR
       id-token: write # npm publish via OIDC trusted publishing
     steps:
+      - name: generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
           fetch-depth: 0
+          persist-credentials: true
+          token: ${{ steps.bot-token.outputs.token }}
+
+      - name: setup git user
+        run: |
+          git config --global user.name "bombshell-bot[bot]"
+          git config --global user.email "187071675+bombshell-bot[bot]@users.noreply.github.com"
 
       - name: setup deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
@@ -55,4 +69,4 @@ jobs:
           create-github-releases: false
           push-with-git-cli: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.bot-token.outputs.token }}
