@@ -69,4 +69,4 @@ jobs:
           create-github-releases: false
           push-with-git-cli: true
         env:
-          GITHUB_TOKEN: ${{ steps.bot-token.outputs.token }}
+          github-token: ${{ steps.bot-token.outputs.token }}
