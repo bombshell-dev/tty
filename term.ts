@@ -6,25 +6,6 @@ export interface TermOptions {
   width: number;
 }
 
-/**
- * Structural resize event accepted by update() (renderer-spec 7.7).
- * The input parser's ResizeEvent is assignable to this shape.
- */
-export interface TermResizeEvent {
-  type: "resize";
-  width: number;
-  height: number;
-}
-
-/**
- * Options bag for update() (renderer-spec 8.6): explicit dimensions,
- * or an event array from which resize events are read (last one wins;
- * non-resize events are ignored).
- */
-export type UpdateOptions =
-  | { width: number; height: number }
-  | { events: ReadonlyArray<TermResizeEvent | { type: string }> };
-
 export interface RenderOptions {
   mode?: "line";
 
@@ -90,19 +71,12 @@ export interface RenderResult {
 
 export interface Term {
   render(ops: Op[], options?: RenderOptions): RenderResult;
-
-  /**
-   * Change dimensions in place (renderer-spec 7.7). Synchronous. The
-   * next render() after a non-no-op update emits a complete redraw,
-   * and output views from prior renders become invalid.
-   */
-  update(options: UpdateOptions): void;
 }
 
 export async function createTerm(options: TermOptions): Promise<Term> {
   let { width, height } = options;
   let native = await createTermNative(width, height);
-  let { memory } = native;
+  let { memory, statePtr, opsBuf } = native;
 
   let prev = new Set<string>();
   let pressed = new Set<string>();
@@ -112,12 +86,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
 
   return {
     render(ops: Op[], options?: RenderOptions): RenderResult {
-      let len = pack(
-        ops,
-        memory.buffer,
-        native.opsBuf,
-        memory.buffer.byteLength,
-      );
+      let len = pack(ops, memory.buffer, opsBuf, memory.buffer.byteLength);
       let mode = options?.mode === "line" ? 1 : 0;
       let row = options?.row ?? 1;
       let now = performance.now() / 1000;
@@ -130,7 +99,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         dt = now - lastRenderAt;
       }
       lastRenderAt = now;
-      native.reduce(native.statePtr, native.opsBuf, len, mode, row, dt);
+      native.reduce(statePtr, opsBuf, len, mode, row, dt);
 
       if (options?.pointer) {
         let { x, y, down } = options.pointer;
@@ -139,8 +108,8 @@ export async function createTerm(options: TermOptions): Promise<Term> {
 
       let output = new Uint8Array(
         memory.buffer,
-        native.output(native.statePtr),
-        native.length(native.statePtr),
+        native.output(statePtr),
+        native.length(statePtr),
       );
 
       let current = new Set(
@@ -189,53 +158,18 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       };
 
       let errors: ClayError[] = [];
-      let count = native.errorCount(native.statePtr);
+      let count = native.errorCount(statePtr);
       for (let i = 0; i < count; i++) {
-        let code = native.errorType(native.statePtr, i);
+        let code = native.errorType(statePtr, i);
         errors.push({
           type: ERROR_TYPES[code] ?? `UNKNOWN_${code}`,
-          message: native.errorMessage(native.statePtr, i),
+          message: native.errorMessage(statePtr, i),
         });
       }
 
-      let animating = native.animating(native.statePtr) > 0;
+      let animating = native.animating(statePtr) > 0;
       wasAnimating = animating;
       return { output, events, info, errors, animating };
-    },
-    update(options: UpdateOptions): void {
-      let w: number | undefined;
-      let h: number | undefined;
-      if ("events" in options) {
-        for (let e of options.events) {
-          if (e.type === "resize") {
-            let r = e as TermResizeEvent;
-            w = r.width;
-            h = r.height;
-          }
-        }
-        if (w === undefined || h === undefined) {
-          return;
-        }
-      } else {
-        w = options.width;
-        h = options.height;
-      }
-      if (
-        !Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0
-      ) {
-        throw new RangeError(`invalid terminal dimensions ${w}x${h}`);
-      }
-      if (w === width && h === height) {
-        return;
-      }
-      width = w;
-      height = h;
-      native.update(w, h);
-      prev = new Set();
-      pressed = new Set();
-      wasDown = false;
-      lastRenderAt = undefined;
-      wasAnimating = false;
     },
   };
 }

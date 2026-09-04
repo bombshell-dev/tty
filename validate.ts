@@ -234,8 +234,5 @@ export function validated(term: Term): Term {
       assert(ops);
       return term.render(ops, options);
     },
-    update(options) {
-      return term.update(options);
-    },
   };
 }

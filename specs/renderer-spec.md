@@ -280,23 +280,22 @@ The output reflects the complete visual state of the frame. The caller SHOULD
 write the output to the terminal without modification.
 
 The output `Uint8Array` is a view over renderer-owned memory. It is valid until
-the next `render()` or `update()` call on the same Term instance, at which point
-the buffer may be reused or detached (§7.7). Callers who need to retain the
-output beyond that point MUST copy it.
+the next `render()` call on the same Term instance, at which point the buffer
+may be reused. Callers who need to retain the output beyond the next render MUST
+copy it.
 
 ### 7.4 Lifecycle
 
 A Term instance is created for specific terminal dimensions. The caller provides
 width and height at creation time.
 
+To handle terminal resize, the caller creates a new Term with the new
+dimensions. The previous Term instance becomes stale and SHOULD NOT be used for
+further rendering.
+
 Creation of a Term is asynchronous because it may involve WASM module
 preparation. A Term instance MAY be used for any number of render transactions.
 The Term retains its cell buffers across frames for diffing purposes.
-
-A Term instance's dimensions MAY be changed after creation through the update
-transaction (§7.7). A resized Term remains valid: it continues to accept render
-transactions at the new dimensions. Creating a new Term is NOT required to
-handle terminal resize.
 
 ### 7.5 Clip semantics
 
@@ -403,52 +402,6 @@ multi-cursor extension without breaking this contract.
 
 This responsibility is limited to the hardware cursor's position and visibility.
 Cursor shape and blink rate remain caller-managed.
-
-### 7.7 Update transaction (resize)
-
-The update transaction changes a Term instance's dimensions in place. Like the
-render transaction (§7.2), it is synchronous: it MUST NOT yield, suspend, or
-require callbacks during execution.
-
-**Inputs.** The update transaction accepts exactly one of:
-
-- Explicit dimensions: a target width and height in character cells. Both MUST
-  be positive integers; the transaction MUST throw otherwise.
-- A resize event array: an ordered array of event objects. The transaction reads
-  objects whose `type` field is `"resize"`, taking `width` and `height` from
-  them; objects with any other `type` MUST be ignored. When the array contains
-  multiple resize events, the last one wins (coalescing). An array with no
-  resize events is a no-op.
-
-The accepted event shape is defined structurally by this specification: an
-object with `type: "resize"` and numeric `width` and `height` fields. It is
-intentionally assignable from the input specification's `ResizeEvent`, but the
-renderer MUST NOT depend on the input parser (§11.4) — the shape, not the type,
-is normative.
-
-An update transaction whose target dimensions equal the Term's current
-dimensions MUST be a no-op.
-
-**Semantics.** A non-no-op update transaction:
-
-1. Reallocates renderer state for the new dimensions within the Term's existing
-   WASM instance and linear memory, growing the memory if required. The renderer
-   MUST NOT create a new WASM module or instance.
-2. Discards all diff state. The next render transaction MUST emit the frame as a
-   complete redraw, so that no cell laid out at the previous dimensions can
-   linger on screen.
-3. Discards pointer interaction state (hover and press tracking), since cell
-   coordinates under the pointer have changed. No synthetic pointer events are
-   emitted.
-
-**Memory.** WASM linear memory can only grow. An update to smaller dimensions
-retains the high-water-mark allocation; memory is not reclaimed until the Term
-itself is discarded. This is accepted behavior, not a defect.
-
-**Output invalidation.** Growing linear memory detaches existing buffer views.
-Output `Uint8Array`s returned by render transactions prior to an update
-transaction MUST NOT be used after it (this strengthens the validity window in
-§7.3: output is valid until the next `render()` **or** `update()` call).
 
 ---
 
@@ -620,34 +573,6 @@ rgba(r: number, g: number, b: number, a?: number): number
 Packs color channel values (each 0–255) into a single 32-bit integer in ARGB
 format. Alpha defaults to 255 (fully opaque). The returned value is used
 wherever the directive model expects a color.
-
-### 8.6 Term update
-
-```
-term.update(options:
-  | { width: number; height: number }
-  | { events: ResizeEvent[] }
-): void
-```
-
-Performs an update transaction as defined in §7.7, changing the Term's
-dimensions in place. The options bag is a discriminated union: either explicit
-dimensions, or an array of events from which resize events are read (last one
-wins; non-resize events are ignored).
-
-`ResizeEvent` here denotes the structural shape defined in §7.7 — an object with
-`type: "resize"` and numeric `width`/`height` — not a type imported from the
-input parser. The input specification's `ResizeEvent` is assignable to it, so
-events produced by `input.scan()` can be passed through directly:
-
-```
-const { events } = input.scan(bytes);
-const resizes = events.filter((e) => e.type === "resize");
-if (resizes.length > 0) term.update({ events: resizes });
-```
-
-The method returns nothing. The next `render()` after a non-no-op update emits a
-complete redraw (§7.7).
 
 ---
 

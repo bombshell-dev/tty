@@ -29,12 +29,6 @@ export interface Native {
   memory: WebAssembly.Memory;
   statePtr: number;
   opsBuf: number;
-  /**
-   * Re-initialize renderer state for new dimensions in place
-   * (renderer-spec 7.7). Reuses this instance and memory; statePtr and
-   * opsBuf may change. Growing memory detaches prior buffer views.
-   */
-  update(w: number, h: number): void;
   reduce(
     ct: number,
     buf: number,
@@ -114,44 +108,29 @@ export async function createTermNative(
     error_message_ptr(ct: number, index: number): number;
   };
 
+  let heap = ct.__heap_base.value as number;
+  let size = ct.clayterm_size(w, h);
+
+  // Grow memory once to fit heap + renderer state + fixed transfer buffer.
   // The transfer budget is intentionally fixed: text/id/snapshot payload bytes
   // get 1MB, and fixed op overhead gets one max-sized element per Clay element.
   // Do not grow this dynamically per render; improve the wire format instead.
   let transferBytes = TEXT_TRANSFER_BUFFER_BYTES +
     CLAY_DEFAULT_MAX_ELEMENT_COUNT * MAX_FIXED_ELEMENT_WIRE_BYTES;
-
-  let statePtr!: number;
-  let opsBuf = 0;
-
-  // Renderer state and the fixed transfer buffer share linear memory as
-  // [heap: state][opsBuf]; opsBuf moves when the state size changes. Memory is
-  // grown to fit but never reclaimed, so a downsize keeps the high-water mark
-  // (renderer-spec 7.7).
-  function layout(lw: number, lh: number): void {
-    let heap = ct.__heap_base.value as number;
-    let size = ct.clayterm_size(lw, lh);
-    let needed = heap + size + transferBytes;
-    let pages = Math.ceil(needed / WASM_PAGE_BYTES);
-    let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
-    if (pages > current) {
-      memory.grow(pages - current);
-    }
-    statePtr = ct.init(heap, lw, lh);
-    opsBuf = (heap + size + 3) & ~3;
+  let needed = heap + size + transferBytes;
+  let pages = Math.ceil(needed / WASM_PAGE_BYTES);
+  let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
+  if (pages > current) {
+    memory.grow(pages - current);
   }
-  layout(w, h);
+
+  let statePtr = ct.init(heap, w, h);
+  let opsBuf = (heap + size + 3) & ~3;
 
   return {
     memory,
-    get statePtr() {
-      return statePtr;
-    },
-    get opsBuf() {
-      return opsBuf;
-    },
-    update(uw: number, uh: number): void {
-      layout(uw, uh);
-    },
+    statePtr,
+    opsBuf,
     reduce: ct.reduce,
     output: ct.output,
     length: ct.length,
