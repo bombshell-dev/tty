@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- [#118](https://github.com/bombshell-dev/tty/pull/118) [`619d2d4`](https://github.com/bombshell-dev/tty/commit/619d2d4b121048fae840ee533d9264e14f849d6a) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Changes `border` sides to reserve layout space instead of drawing as an overlay. Each border width is now added to the padding on its side, so content and children are laid out inside the border rather than collapsing behind the border glyphs.
+- [#116](https://github.com/bombshell-dev/tty/pull/116) [`31fc1ae`](https://github.com/bombshell-dev/tty/commit/31fc1aeface2fb9bd986f7afbcfd66b8ff063a56) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Changes `border` sides to reserve layout space instead of drawing as an overlay. Each border width is now added to the padding on its side, so content and children are laid out inside the border rather than collapsing behind the border glyphs.
   
   This is a breaking change for callers who compensated for the old behavior by setting `layout.padding` equal to the border width — that padding is now additive and double-counts. Remove the workaround:
   
@@ -17,19 +17,19 @@
   
   A `border` of 1 with no padding now reserves one cell per bordered side; `border` of 1 plus `padding` of 1 reserves two, measured inward from the border edge.
 
-- [#126](https://github.com/bombshell-dev/tty/pull/126) [`9343757`](https://github.com/bombshell-dev/tty/commit/9343757b5398ae9c3a52dbc6c56757362f459c1a) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Adds a new `term.update()` method to resize the terminal without reinitializing the WebAssembly module.
+- [#113](https://github.com/bombshell-dev/tty/pull/113) [`6efecfb`](https://github.com/bombshell-dev/tty/commit/6efecfb699e717ab24fd5ffb4736042612cd3e75) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Adds a new `term.update()` method to resize the terminal without reinitializing the WebAssembly module.
   
   If you previously ran `createTerm({ width, height })` on resize events, you should replace that with an explicit `term.update({ width, height })` call.
 
-- [#118](https://github.com/bombshell-dev/tty/pull/118) [`619d2d4`](https://github.com/bombshell-dev/tty/commit/619d2d4b121048fae840ee533d9264e14f849d6a) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Adds a `caret` property to text elements that positions the terminal's hardware cursor at a code-point offset within the text, resolved through wrapping and wide-character widths. The cursor shows only while a caret is declared; an offset at or past the content length places it one cell past the last character, giving text inputs a real, movable cursor.
+- [#103](https://github.com/bombshell-dev/tty/pull/103) [`b9c10b3`](https://github.com/bombshell-dev/tty/commit/b9c10b3863593bd3efdd89fd4160b0d6bd2e7e39) Thanks [@cowboyd](https://github.com/cowboyd)! - Adds a `caret` property to text elements that positions the terminal's hardware cursor at a code-point offset within the text, resolved through wrapping and wide-character widths. The cursor shows only while a caret is declared; an offset at or past the content length places it one cell past the last character, giving text inputs a real, movable cursor.
 
 ### Patch Changes
 
-- [#118](https://github.com/bombshell-dev/tty/pull/118) [`619d2d4`](https://github.com/bombshell-dev/tty/commit/619d2d4b121048fae840ee533d9264e14f849d6a) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Shrinks the bundled WASM ~35% (156 kB → 101 kB raw) by compiling out Clay's unused debug-inspector UI.
+- [#89](https://github.com/bombshell-dev/tty/pull/89) [`2ebc906`](https://github.com/bombshell-dev/tty/commit/2ebc906f5f05b07efa07aed1967b11e0338b29ea) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Shrinks the bundled WASM ~35% (156 kB → 101 kB raw) by compiling out Clay's unused debug-inspector UI.
 
 - [#120](https://github.com/bombshell-dev/tty/pull/120) [`b371922`](https://github.com/bombshell-dev/tty/commit/b371922d5b872eaa945aa66ecc0c50289d61580e) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Scales the renderer's memory arena to the terminal grid instead of a fixed default, cutting the reservation for an 80×24 grid ~51% (4.85 MB → 2.39 MB) with no change to render performance.
 
-- [#118](https://github.com/bombshell-dev/tty/pull/118) [`619d2d4`](https://github.com/bombshell-dev/tty/commit/619d2d4b121048fae840ee533d9264e14f849d6a) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Fixes width measurement for non-printable, control, and surrogate code points, which now measure as one `U+FFFD` cell to match what the renderer draws (width data regenerated against Unicode 17).
+- [#49](https://github.com/bombshell-dev/tty/pull/49) [`d4bc79b`](https://github.com/bombshell-dev/tty/commit/d4bc79b55e33e07d9c227626367404e11d4804f0) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Fixes width measurement for non-printable, control, and surrogate code points, which now measure as one `U+FFFD` cell to match what the renderer draws (width data regenerated against Unicode 17).
 
 ## 0.8.0
 
