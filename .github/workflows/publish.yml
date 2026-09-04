@@ -68,5 +68,4 @@ jobs:
           pr-title: "chore: version packages"
           create-github-releases: false
           push-with-git-cli: true
-        env:
           github-token: ${{ steps.bot-token.outputs.token }}
