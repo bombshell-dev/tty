@@ -640,4 +640,116 @@ hi
 └──────────────────┘`);
     });
   });
+
+  describe("update", () => {
+    let frame: Op[] = [
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      text("Hi"),
+      close(),
+    ];
+
+    it("emits a complete redraw on the first render after update", () => {
+      term.render(frame);
+      expect(term.render(frame).output.length).toBe(0);
+      term.update({ width: 20, height: 5 });
+      let out = decode(term.render(frame).output);
+      expect(trim(print(out, 20, 5))).toContain("Hi");
+      expect(out.length).toBeGreaterThan(0);
+    });
+
+    it("is a no-op when dimensions are unchanged", () => {
+      term.render(frame);
+      term.update({ width: 40, height: 10 });
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it("throws on non-positive or non-integer dimensions", () => {
+      expect(() => term.update({ width: 0, height: 10 })).toThrow(RangeError);
+      expect(() => term.update({ width: 40, height: -1 })).toThrow(RangeError);
+      expect(() => term.update({ width: 40.5, height: 10 })).toThrow(
+        RangeError,
+      );
+    });
+
+    it("accepts an event array, last resize wins, non-resize ignored", () => {
+      term.update({
+        events: [
+          { type: "key" },
+          { type: "resize", width: 30, height: 8 },
+          { type: "paste" },
+          { type: "resize", width: 12, height: 4 },
+        ],
+      });
+      let result = term.render(frame);
+      expect(result.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 12,
+        height: 4,
+      });
+    });
+
+    it("treats an event array with no resize events as a no-op", () => {
+      term.render(frame);
+      term.update({ events: [{ type: "key" }, { type: "paste" }] });
+      expect(term.render(frame).output.length).toBe(0);
+      term.update({ events: [] });
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it("discards pointer interaction state on resize", () => {
+      let pointer = { x: 1, y: 0, down: false };
+      let first = term.render(frame, { pointer });
+      expect(first.events).toContainEqual({ type: "pointerenter", id: "root" });
+      expect(term.render(frame, { pointer }).events).toEqual([]);
+      term.update({ width: 20, height: 5 });
+      let after = term.render(frame, { pointer });
+      expect(after.events).toContainEqual({ type: "pointerenter", id: "root" });
+    });
+
+    it("resizes in place and lays out at the new dimensions", () => {
+      term.render(frame);
+      term.update({ width: 12, height: 4 });
+      let result = term.render(frame);
+      expect(result.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 12,
+        height: 4,
+      });
+      expect(trim(print(decode(result.output), 12, 4))).toBe(
+        trim(
+          [
+            "Hi",
+            "",
+            "",
+            "",
+          ].join("\n"),
+        ),
+      );
+    });
+
+    it("survives downsize then upsize past the original size", () => {
+      term.render(frame);
+      term.update({ width: 10, height: 3 });
+      let small = term.render(frame);
+      expect(small.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 3,
+      });
+      term.update({ width: 120, height: 40 });
+      let large = term.render(frame);
+      expect(large.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 120,
+        height: 40,
+      });
+      expect(trim(print(decode(large.output), 120, 40))).toContain("Hi");
+    });
+  });
 });
