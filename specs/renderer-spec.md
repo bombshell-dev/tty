@@ -693,15 +693,31 @@ wherever the directive model expects a color.
 
 ```
 term.update(options:
-  | { width: number; height: number }
-  | { events: ResizeEvent[] }
+  | { width: number; height: number; terminfo?: TermInfo }
+  | { events: ResizeEvent[]; terminfo?: TermInfo }
+  | { terminfo: TermInfo | undefined }
 ): void
 ```
 
-Performs an update transaction as defined in §7.7, changing the Term's
-dimensions in place. The options bag is a discriminated union: either explicit
-dimensions, or an array of events from which resize events are read (last one
-wins; non-resize events are ignored).
+Performs an update transaction as defined in §7.7. The options bag controls two
+orthogonal concerns: dimensions and capability acknowledgment.
+
+**Dimensions.** Either explicit `width`/`height`, or an array of events from
+which resize events are read (last one wins; non-resize events are ignored). If
+dimensions are omitted (the third variant), the Term's current dimensions are
+retained.
+
+**TermInfo (`terminfo`).** Optional. When provided, it MUST be the same
+`TermInfo` handle the Term was created with (or `undefined` if the Term was
+created without one). Passing a different handle is an error. If the value
+matches, the Term performs a full re-initialization at the current (or new)
+dimensions, guaranteeing that the next `render()` emits a complete redraw and
+picks up any capability changes that have accumulated in the shared struct since
+the last render. If `terminfo` is omitted from the options entirely, capability
+acknowledgment does not occur.
+
+The TermInfo handle cannot be changed after Term creation; create a new Term to
+use a different handle.
 
 `ResizeEvent` here denotes the structural shape defined in §7.7 — an object with
 `type: "resize"` and numeric `width`/`height` — not a type imported from the
@@ -715,7 +731,8 @@ if (resizes.length > 0) term.update({ events: resizes });
 ```
 
 The method returns nothing. The next `render()` after a non-no-op update emits a
-complete redraw (§7.7).
+complete redraw (§7.7). An update where neither dimensions change nor `terminfo`
+is provided is a no-op.
 
 ---
 

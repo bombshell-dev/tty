@@ -122,17 +122,17 @@ export interface Term {
 export async function createTerm(options: TermOptions): Promise<Term> {
   let { width, height, terminfo: currentTerminfo } = options;
 
-  let currentAttach: TermAttach | undefined;
+  let attach: TermAttach | undefined;
   if (currentTerminfo) {
     let ti = internals(currentTerminfo);
     if (ti.termAttached) {
       throw new Error("TermInfo handle is already attached to a Term");
     }
     ti.termAttached = true;
-    currentAttach = ti;
+    attach = ti;
   }
 
-  let native = await createTermNative(width, height, currentAttach);
+  let native = await createTermNative(width, height, attach);
   let { memory } = native;
 
   let prev = new Set<string>();
@@ -249,6 +249,20 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         h = options.height;
       }
 
+      let forceRelayout = false;
+      if ("terminfo" in options) {
+        let newTerminfo = options.terminfo;
+        if (newTerminfo !== currentTerminfo) {
+          throw new Error(
+            "Cannot change TermInfo handle after Term creation; create a new Term to use a different handle",
+          );
+        }
+        // Same handle: force re-layout so the next render picks up any
+        // accumulated capability changes and emits a complete redraw.
+        forceRelayout = true;
+      }
+
+      let dimensionsChanged = false;
       if (w !== undefined && h !== undefined) {
         if (
           !Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0
@@ -258,36 +272,18 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         if (w !== width || h !== height) {
           width = w;
           height = h;
-          native.update(w, h);
-          prev = new Set();
-          pressed = new Set();
-          wasDown = false;
-          lastRenderAt = undefined;
-          wasAnimating = false;
+          dimensionsChanged = true;
         }
       }
 
-      if ("terminfo" in options) {
-        let newTerminfo = (options as { terminfo: TermInfo | undefined })
-          .terminfo;
-        if (newTerminfo !== currentTerminfo) {
-          if (currentTerminfo) internals(currentTerminfo).termAttached = false;
-          let newStructPtr = 0;
-          if (newTerminfo) {
-            let ti = internals(newTerminfo);
-            if (ti.termAttached) {
-              throw new Error("TermInfo handle is already attached to a Term");
-            }
-            ti.termAttached = true;
-            currentAttach = ti;
-            newStructPtr = ti.structPtr;
-          } else {
-            currentAttach = undefined;
-          }
-          currentTerminfo = newTerminfo;
-          native.setTermInfo(native.statePtr, newStructPtr);
-        }
-      }
+      if (!dimensionsChanged && !forceRelayout) return;
+
+      native.update(width, height);
+      prev = new Set();
+      pressed = new Set();
+      wasDown = false;
+      lastRenderAt = undefined;
+      wasAnimating = false;
     },
   };
 }
