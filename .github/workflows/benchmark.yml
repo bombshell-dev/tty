@@ -3,8 +3,34 @@ name: Benchmark
 on:
   push:
     branches: [main]
+    # Benchmark inputs: C source, TS source, benchmarks, and build config.
+    # Docs-only and CI-only changes skip the workflow entirely.
+    paths:
+      - "src/**"
+      - "clay" # submodule pointer
+      - "patches/**"
+      - "Makefile"
+      - "*.ts"
+      - "bench/**"
+      - "tasks/**"
+      - "deno.json"
+      - "deno.lock"
+      - "package.json"
+      - "package-lock.json"
   pull_request:
     branches: [main]
+    paths:
+      - "src/**"
+      - "clay" # submodule pointer
+      - "patches/**"
+      - "Makefile"
+      - "*.ts"
+      - "bench/**"
+      - "tasks/**"
+      - "deno.json"
+      - "deno.lock"
+      - "package.json"
+      - "package-lock.json"
   # `workflow_dispatch` allows CodSpeed to trigger
   workflow_dispatch:
 
