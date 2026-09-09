@@ -335,6 +335,114 @@ describe("term", () => {
     });
   });
 
+  describe("grapheme clusters", () => {
+    /* Helper: count occurrences of a substring in a string */
+    function countOf(haystack: string, needle: string): number {
+      let n = 0;
+      let pos = 0;
+      while ((pos = haystack.indexOf(needle, pos)) !== -1) {
+        n++;
+        pos += needle.length;
+      }
+      return n;
+    }
+
+    it("preserves kitty-graphics placeholder cluster (base + 2 combining marks)", async () => {
+      /* U+10EEEE = kitty placeholder; U+0305 = row-index diacritic;
+       * U+030D = col-index diacritic.  Both marks must appear in the emitted
+       * bytes immediately after the base codepoint. */
+      let term2 = await createTerm({ width: 40, height: 4 });
+      let out = decode(
+        term2
+          .render(
+            [
+              open("root", {
+                layout: { width: grow(), height: grow(), direction: "ttb" },
+              }),
+              text("\u{10EEEE}\u{0305}\u{030D}"),
+              close(),
+            ],
+            { mode: "line" },
+          )
+          .output,
+      );
+
+      expect(out).toContain("\u{10EEEE}\u{0305}\u{030D}");
+    });
+
+    it("preserves combining accent (e + U+0301)", async () => {
+      let term2 = await createTerm({ width: 40, height: 4 });
+      let out = decode(
+        term2
+          .render(
+            [
+              open("root", {
+                layout: { width: grow(), height: grow(), direction: "ttb" },
+              }),
+              text("e\u{0301}"),
+              close(),
+            ],
+            { mode: "line" },
+          )
+          .output,
+      );
+
+      /* The combining mark must follow the base immediately in the output. */
+      expect(out).toContain("e\u{0301}");
+    });
+
+    it("preserves ZWJ in output (ZWJ is per-cell combining; following emoji start new cells)", async () => {
+      /* 👨‍👩‍👧‍👦 = 👨 ZWJ 👩 ZWJ 👧 ZWJ 👦.
+       * ZWJ (U+200D, wcwidth 0) attaches to the preceding base emoji cell.
+       * The following emoji have positive wcwidth and start new cells, so the
+       * family sequence is split across cells in the cell-based model.  The
+       * invariant tested here: ZWJ bytes MUST NOT be dropped from the output. */
+      let term2 = await createTerm({ width: 40, height: 4 });
+      let out = decode(
+        term2
+          .render(
+            [
+              open("root", {
+                layout: { width: grow(), height: grow(), direction: "ttb" },
+              }),
+              text("👨\u{200D}👩\u{200D}👧\u{200D}👦"),
+              close(),
+            ],
+            { mode: "line" },
+          )
+          .output,
+      );
+
+      expect(countOf(out, "\u{200D}")).toBe(3);
+      expect(out).toContain("👨");
+      expect(out).toContain("👩");
+    });
+
+    it("truncates excess combining marks from the end (first 8 survive)", async () => {
+      /* A base char followed by 9 combining graves (U+0300).
+       * The 9th mark exceeds CELL_MAX_COMBINING=8 and is silently dropped;
+       * the first 8 must appear in the output. */
+      let term2 = await createTerm({ width: 40, height: 4 });
+      let grave = "\u{0300}";
+      let out = decode(
+        term2
+          .render(
+            [
+              open("root", {
+                layout: { width: grow(), height: grow(), direction: "ttb" },
+              }),
+              text("a" + grave.repeat(9)),
+              close(),
+            ],
+            { mode: "line" },
+          )
+          .output,
+      );
+
+      expect(countOf(out, grave)).toBe(8);
+    });
+  });
+
   describe("caret placement", () => {
     // These tests use `print()`, which marks the terminal's final
     // cursor position by appending U+0332 COMBINING LOW LINE to that
