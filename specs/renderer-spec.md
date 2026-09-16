@@ -412,32 +412,28 @@ multi-cursor extension without breaking this contract.
 This responsibility is limited to the hardware cursor's position and visibility.
 Cursor shape and blink rate remain caller-managed.
 
-### 7.7 Update transaction (resize)
+### 7.7 Update transaction
 
-The update transaction changes a Term instance's dimensions in place. Like the
-render transaction (§7.2), it is synchronous: it MUST NOT yield, suspend, or
-require callbacks during execution.
+The update transaction changes a Term instance's dimensions or capability state
+in place. Like the render transaction (§7.2), it is synchronous: it MUST NOT
+yield, suspend, or require callbacks during execution.
 
-**Inputs.** The update transaction accepts exactly one of:
+**Inputs.** The update transaction accepts one `Update` or an ordered array of
+`Update` values. `Update` is a discriminated union:
 
-- Explicit dimensions: a target width and height in character cells. Both MUST
-  be positive integers; the transaction MUST throw otherwise.
-- A resize event array: an ordered array of event objects. The transaction reads
-  objects whose `type` field is `"resize"`, taking `width` and `height` from
-  them; objects with any other `type` MUST be ignored. When the array contains
-  multiple resize events, the last one wins (coalescing). An array with no
-  resize events is a no-op.
+- `{ width: number; height: number }` — a resize to the given character-cell
+  dimensions. Both MUST be positive integers; the transaction MUST throw
+  otherwise.
+- A `CapabilityEvent` (see [Terminfo Specification](terminfo-spec.md) §6.3) —
+  a capability value delivered by the input parser from a probe response.
 
-The accepted event shape is defined structurally by this specification: an
-object with `type: "resize"` and numeric `width` and `height` fields. It is
-intentionally assignable from the input specification's `ResizeEvent`, but the
-renderer MUST NOT depend on the input parser (§11.4) — the shape, not the type,
-is normative.
+When a batch is provided, the Term folds each `Update` in order. The returned
+bytes are the concatenation of each fold's output.
 
-An update transaction whose target dimensions equal the Term's current
-dimensions MUST be a no-op.
+A resize `Update` whose target dimensions equal the Term's current dimensions
+MUST be a no-op for that step.
 
-**Semantics.** A non-no-op update transaction:
+**Resize semantics.** A non-no-op resize step:
 
 1. Reallocates renderer state for the new dimensions within the Term's existing
    WASM instance and linear memory, growing the memory if required. The renderer
@@ -449,28 +445,42 @@ dimensions MUST be a no-op.
    coordinates under the pointer have changed. No synthetic pointer events are
    emitted.
 
+**Capability semantics.** A `CapabilityEvent` step folds the event's `key` and
+`value` into the Term's private `RuntimeCapabilities`. When the folded value
+changes a capability that affects rendered output (color encoding, synchronized
+output wrapping), the step MUST discard all diff state so the next render
+transaction emits a complete redraw. The step returns any bytes the change
+requires now — for example, enabling synchronized output on `sync-output: true`
+— per TINV-5 (Terminfo Specification §5).
+
+**Return value.** `update()` returns a `Uint8Array` of bytes to write to the
+terminal immediately. An empty array is valid when the update changes no
+rendered state (TINV-5). The caller writes the bytes to its output stream before
+the next render.
+
 **Memory.** WASM linear memory can only grow. An update to smaller dimensions
 retains the high-water-mark allocation; memory is not reclaimed until the Term
 itself is discarded. This is accepted behavior, not a defect.
 
 **Output invalidation.** Growing linear memory detaches existing buffer views.
-Output `Uint8Array`s returned by render transactions prior to an update
-transaction MUST NOT be used after it (this strengthens the validity window in
-§7.3: output is valid until the next `render()` **or** `update()` call).
+Output `Uint8Array`s returned by render transactions prior to a resize update
+MUST NOT be used after it (this strengthens the validity window in §7.3: output
+is valid until the next `render()` **or** `update()` call).
 
 ### 7.8 Capability-gated emission
 
-A Term instance attached to a `TermInfo` handle (see
-[Terminfo Specification](terminfo-spec.md)) reads the capability struct at the
-start of each render transaction and gates its output accordingly. This consumes
-capabilities; it never writes them (Terminfo Specification TINV-4).
+The renderer reads its private `RuntimeCapabilities` at the start of each render
+transaction and gates its output accordingly. `RuntimeCapabilities` is set at
+Term creation from the `Detection.capabilities` passed to `createTerm`, and
+updated by `update()` when `CapabilityEvent` values arrive (§7.7). The renderer
+never writes capabilities and holds no reference to the input parser (INV-7).
 
 **Color encoding ladder.** The renderer MUST select its SGR color encoding from
-the capability struct:
+`RuntimeCapabilities`:
 
 - `trueColor` set → 24-bit SGR (`38;2;r;g;b` / `48;2;r;g;b`)
-- otherwise `colors` ≥ 256 → 256-color SGR (`38;5;n` / `48;5;n`), mapping RGB to
-  the nearest entry of the 6×6×6 color cube and 24-step grayscale ramp
+- otherwise `colors` ≥ 256 → 256-color SGR (`38;5;n` / `48;5;n`), mapping RGB
+  to the nearest entry of the 6×6×6 color cube and 24-step grayscale ramp
 - otherwise → 16-color SGR (`30–37`, `90–97` and background equivalents),
   mapping RGB to the nearest of the 16 ANSI colors
 
@@ -478,18 +488,17 @@ The nearest-color quantization method is implementation-defined but MUST be
 deterministic: the same RGB input always maps to the same palette entry within a
 process.
 
-**Back-color-erase.** When the `bce` capability is set, the renderer MAY use
-erase sequences that rely on the terminal filling cleared cells with the current
-background. When it is clear, the renderer MUST NOT depend on that behavior.
+**Back-color-erase.** When `bce` is set, the renderer MAY use erase sequences
+that rely on the terminal filling cleared cells with the current background.
+When it is clear, the renderer MUST NOT depend on that behavior.
 
-**Synchronized output.** When the `syncOutput` capability is set, the renderer
-MUST wrap each non-empty cursor-update-mode frame in the synchronized output
-protocol: `CSI ? 2026 h` (begin synchronized update) before the first output
-byte and `CSI ? 2026 l` (end synchronized update) after the last, within the
-same output buffer. The wrap is frame-scoped: begin and end always appear in the
-same render transaction's output, so no terminal state persists between frames
-(see §11.2). When the capability is unset, the wrap MUST NOT be emitted.
-Line-mode output is never wrapped.
+**Synchronized output.** When `syncOutput` is set, the renderer MUST wrap each
+non-empty cursor-update-mode frame in the synchronized output protocol:
+`CSI ? 2026 h` before the first output byte and `CSI ? 2026 l` after the last,
+within the same output buffer. The wrap is frame-scoped: begin and end always
+appear in the same render transaction's output, so no terminal state persists
+between frames (see §11.2). When the capability is unset, the wrap MUST NOT be
+emitted. Line-mode output is never wrapped.
 
 The wrap complements — never replaces — cell diffing. Emitting only changed
 cells (§4.4) remains the primary defense against tearing on terminals without
@@ -497,17 +506,18 @@ mode 2026 and the dominant reduction in bytes sent, per the
 [guidance modern emulators publish for TUI developers](https://ghostty.org/docs/help/synchronized-output);
 the wrap adds atomic frame presentation on terminals that support it.
 
-**Generation invalidation.** The renderer MUST compare the capability struct's
-generation counter on each render transaction. When it differs from the
-generation of the previously emitted frame, the renderer MUST invalidate its
-diff state and emit the frame as a complete redraw, so that no cell on screen
-retains bytes encoded under superseded capabilities.
+**Capability change invalidation.** When `update()` folds a `CapabilityEvent`
+that changes a rendered capability (color encoding, synchronized output), the
+renderer MUST discard its diff state. The next render transaction MUST emit the
+frame as a complete redraw, so that no cell on screen retains bytes encoded
+under superseded capabilities. This invalidation happens inside `update()`, not
+at the next `render()` call.
 
-A Term with no `TermInfo` handle uses the baseline capabilities (Terminfo
-Specification §7.1): 256-color emission. Per the progressive-enhancement
-invariant (Terminfo Specification TINV-5), truecolor emission requires positive
-evidence — a terminfo entry, environment evidence, or a probe reply — which
-supersedes the renderer's historical unconditional truecolor output.
+A Term created without a `detection` option uses the §7.1 baseline: 256-color
+emission. Per the progressive-enhancement invariant (Terminfo Specification
+TINV-3), truecolor emission requires positive evidence — a `Detection` with a
+terminfo entry confirming `RGB`/`Tc`, a `COLORTERM` environment variable, or a
+`colordepth` `CapabilityEvent` from a probe reply.
 
 ---
 
@@ -522,7 +532,7 @@ included. See Section 5 for what this section does and does not freeze._
 createTerm(options: {
   width: number;
   height: number;
-  terminfo?: TermInfo;
+  detection?: Detection;
 }): Promise<Term>
 ```
 
@@ -530,10 +540,10 @@ Creates a new Term instance bound to the specified terminal dimensions. The
 returned promise resolves when the renderer is ready. The `width` and `height`
 parameters specify the terminal dimensions in character cells.
 
-The optional `terminfo` handle (from `queryTermInfo()`; see
-[Terminfo Specification](terminfo-spec.md) §10) attaches the Term to a shared
-capability struct that gates emission per §7.6. When omitted, the Term operates
-standalone with default capabilities.
+The optional `detection` value (from `detectTerminal()`; see
+[Terminfo Specification](terminfo-spec.md) §10.1) initializes the Term's private
+`RuntimeCapabilities` from the static `Capabilities` it carries, gating
+emission per §7.8. When omitted, the Term uses the §7.1 baseline.
 
 ### 8.2 Render invocation
 
@@ -692,47 +702,42 @@ wherever the directive model expects a color.
 ### 8.6 Term update
 
 ```
-term.update(options:
-  | { width: number; height: number; terminfo?: TermInfo }
-  | { events: ResizeEvent[]; terminfo?: TermInfo }
-  | { terminfo: TermInfo | undefined }
-): void
+term.update(change: Update | readonly Update[]): Uint8Array
+
+type Update =
+  | { width: number; height: number }
+  | CapabilityEvent
 ```
 
-Performs an update transaction as defined in §7.7. The options bag controls two
-orthogonal concerns: dimensions and capability acknowledgment.
+Performs an update transaction as defined in §7.7. `update()` is the universal
+sink for both resize and capability change.
 
-**Dimensions.** Either explicit `width`/`height`, or an array of events from
-which resize events are read (last one wins; non-resize events are ignored). If
-dimensions are omitted (the third variant), the Term's current dimensions are
-retained.
+**`Update` shapes.** A resize step is `{ width, height }`. A capability step is
+any `CapabilityEvent` value (see [Terminfo Specification](terminfo-spec.md)
+§6.3). The two shapes are structurally distinct and MUST NOT be combined in a
+single object. Pass an array to apply multiple updates in one call; they are
+folded in order.
 
-**TermInfo (`terminfo`).** Optional. When provided, it MUST be the same
-`TermInfo` handle the Term was created with (or `undefined` if the Term was
-created without one). Passing a different handle is an error. If the value
-matches, the Term performs a full re-initialization at the current (or new)
-dimensions, guaranteeing that the next `render()` emits a complete redraw and
-picks up any capability changes that have accumulated in the shared struct since
-the last render. If `terminfo` is omitted from the options entirely, capability
-acknowledgment does not occur.
+**Return value.** `update()` always returns a `Uint8Array`. Write it to the
+terminal immediately when non-empty. Do not wait for the next `render()`. An
+empty array means the update changed no rendered state.
 
-The TermInfo handle cannot be changed after Term creation; create a new Term to
-use a different handle.
-
-`ResizeEvent` here denotes the structural shape defined in §7.7 — an object with
-`type: "resize"` and numeric `width`/`height` — not a type imported from the
-input parser. The input specification's `ResizeEvent` is assignable to it, so
-events produced by `input.scan()` can be passed through directly:
+**Resize shape.** The `{ width, height }` shape is defined structurally by
+this specification. It is intentionally assignable from the input
+specification's `ResizeEvent`, so events from `input.scan()` pass through
+directly:
 
 ```
 const { events } = input.scan(bytes);
-const resizes = events.filter((e) => e.type === "resize");
-if (resizes.length > 0) term.update({ events: resizes });
+for (const event of events) {
+  if (event.type === "resize" || event.type === "capability") {
+    const out = term.update(event);
+    if (out.length) stdout.write(out);
+  }
+}
 ```
 
-The method returns nothing. The next `render()` after a non-no-op update emits a
-complete redraw (§7.7). An update where neither dimensions change nor `terminfo`
-is provided is a no-op.
+A resize to the Term's current dimensions is a no-op for that step.
 
 ---
 
