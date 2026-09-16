@@ -2,63 +2,111 @@ import { type Op, pack } from "./ops.ts";
 import {
   type BoundingBox,
   createTermNative,
-  type TermAttach,
+  FLAG_SYNC,
+  FLAG_TRUECOLOR,
 } from "./term-native.ts";
-import { internals, type TermInfo } from "./terminfo.ts";
+import type { CapabilityEvent, ColorDepth, InputEvent } from "./input.ts";
+import type { Capabilities, Detection, Rgb } from "./terminfo.ts";
+
+export type { BoundingBox };
 
 export interface TermOptions {
   height: number;
   width: number;
-
   /**
-   * TermInfo handle from queryTermInfo(). Attaches the Term to the
-   * handle's shared capability struct, which gates emission (color
-   * encoding ladder, synchronized output, full redraw on capability
-   * change — see specs/renderer-spec.md section 7.8).
-   *
-   * If no handle is provided the Term uses the baseline capabilities
-   * (256-color emission).
+   * Detection from detectTerminal(). Initializes the renderer with the
+   * static capabilities from the detection and seeds the private TermInfo
+   * struct. When omitted, the renderer uses the 256-color baseline.
    */
-  terminfo?: TermInfo;
+  detection?: Detection;
 }
 
 /**
- * Structural resize event accepted by update() (renderer-spec 7.7).
- * The input parser's ResizeEvent is assignable to this shape.
+ * The renderer's merged view of capabilities: the static Capabilities fields
+ * plus all CapabilityEvent values folded in by update() calls.
  */
-export interface TermResizeEvent {
-  type: "resize";
-  width: number;
-  height: number;
+export interface RuntimeCapabilities extends Capabilities {
+  readonly syncOutput: boolean;
+  readonly kittyKeyboard: boolean;
+  readonly kittyGraphics: boolean;
+  readonly pointerShape: boolean;
+  readonly theme: {
+    readonly foreground?: Rgb;
+    readonly background?: Rgb;
+    readonly cursor?: Rgb;
+  };
 }
 
 /**
- * Options bag for update() (renderer-spec 8.6): explicit dimensions,
- * or an event array from which resize events are read (last one wins;
- * non-resize events are ignored).
+ * One change accepted by term.update(). Either a structural resize or a
+ * CapabilityEvent routed from scan(). Non-capability InputEvents are silently
+ * ignored, so the full events array from scan() can be passed without filtering.
  */
-export type UpdateOptions =
-  | { width: number; height: number; terminfo?: TermInfo }
-  | {
-    events: ReadonlyArray<TermResizeEvent | { type: string }>;
-    terminfo?: TermInfo;
+export type Update = { width: number; height: number } | InputEvent;
+
+/**
+ * Apply one Update to the current RuntimeCapabilities and return the next
+ * snapshot plus any bytes to write now. Pure: performs no IO, no WASM calls.
+ */
+export function applyUpdate(
+  current: RuntimeCapabilities,
+  change: Update,
+): { readonly next: RuntimeCapabilities; readonly bytes: Uint8Array } {
+  if ("width" in change) {
+    return { next: current, bytes: new Uint8Array(0) };
   }
-  | { terminfo: TermInfo | undefined };
+  if ((change as { type?: string }).type !== "capability") {
+    return { next: current, bytes: new Uint8Array(0) };
+  }
+  let cap = change as CapabilityEvent;
+  let next: RuntimeCapabilities;
+  switch (cap.key) {
+    case "foreground-color":
+      next = { ...current, theme: { ...current.theme, foreground: cap.value } };
+      break;
+    case "background-color":
+      next = { ...current, theme: { ...current.theme, background: cap.value } };
+      break;
+    case "cursor-color":
+      next = { ...current, theme: { ...current.theme, cursor: cap.value } };
+      break;
+    case "colordepth": {
+      let trueColor = (cap.value as ColorDepth) === "truecolor";
+      next = { ...current, trueColor };
+      break;
+    }
+    case "sync-output":
+      next = { ...current, syncOutput: cap.value as boolean };
+      break;
+    case "kitty-keyboard":
+      next = { ...current, kittyKeyboard: cap.value as boolean };
+      break;
+    case "kitty-graphics":
+      next = { ...current, kittyGraphics: cap.value as boolean };
+      break;
+    case "pointer-shape":
+      next = { ...current, pointerShape: cap.value as boolean };
+      break;
+    default:
+      next = current;
+  }
+  return { next: Object.freeze(next), bytes: new Uint8Array(0) };
+}
+
+function runtimeFromStatic(caps: Capabilities): RuntimeCapabilities {
+  return Object.freeze<RuntimeCapabilities>({
+    ...caps,
+    syncOutput: false,
+    kittyKeyboard: false,
+    kittyGraphics: false,
+    pointerShape: false,
+    theme: Object.freeze({}),
+  });
+}
 
 export interface RenderOptions {
   mode?: "line";
-
-  /**
-   * Row where to begin rendering. This should only be used when
-   * rendering into a region as part of the CLI main screen. For
-   * interfaces that use the entire screen, leave unset which will
-   * default to 0. This is 1-based which which is the DSR native
-   * format.
-   *
-   * https://www.ecma-international.org/publications-and-standards/standards/ecma-48/
-   */
   row?: number;
-
   pointer?: {
     x: number;
     y: number;
@@ -71,8 +119,6 @@ export type PointerEvent =
   | { type: "pointerenter"; id: string }
   | { type: "pointerleave"; id: string }
   | { type: "pointerclick"; id: string };
-
-export type { BoundingBox };
 
 export interface ElementInfo {
   bounds: BoundingBox;
@@ -112,28 +158,40 @@ export interface Term {
   render(ops: Op[], options?: RenderOptions): RenderResult;
 
   /**
-   * Change dimensions in place (renderer-spec 7.7). Synchronous. The
-   * next render() after a non-no-op update emits a complete redraw,
-   * and output views from prior renders become invalid.
+   * Apply one change or a batch of changes. Returns bytes to write now.
+   * An empty array is valid when no immediate output is needed (TINV-5).
+   *
+   * Route CapabilityEvents from scan() here. For resize, pass
+   * { width, height }.
    */
-  update(options: UpdateOptions): void;
+  update(change: Update | readonly Update[]): Uint8Array;
+
+  /** Frozen snapshot of the current merged capability state. */
+  readonly capabilities: RuntimeCapabilities;
 }
 
 export async function createTerm(options: TermOptions): Promise<Term> {
-  let { width, height, terminfo: currentTerminfo } = options;
+  let { width, height, detection } = options;
 
-  let attach: TermAttach | undefined;
-  if (currentTerminfo) {
-    let ti = internals(currentTerminfo);
-    if (ti.termAttached) {
-      throw new Error("TermInfo handle is already attached to a Term");
-    }
-    ti.termAttached = true;
-    attach = ti;
-  }
-
-  let native = await createTermNative(width, height, attach);
+  let native = await createTermNative(
+    width,
+    height,
+    detection?.keys,
+    detection?.capabilities.trueColor,
+  );
   let { memory } = native;
+
+  let currentCaps: RuntimeCapabilities = runtimeFromStatic(
+    detection?.capabilities ?? {
+      colors: 256,
+      trueColor: false,
+      bce: true,
+      autoMargin: true,
+      xenl: true,
+      altScreen: true,
+      styledUnderline: false,
+    },
+  );
 
   let prev = new Set<string>();
   let pressed = new Set<string>();
@@ -142,6 +200,10 @@ export async function createTerm(options: TermOptions): Promise<Term> {
   let wasAnimating = false;
 
   return {
+    get capabilities(): RuntimeCapabilities {
+      return currentCaps;
+    },
+
     render(ops: Op[], options?: RenderOptions): RenderResult {
       let len = pack(
         ops,
@@ -212,9 +274,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       let info: RenderInfo = {
         get(id: string): ElementInfo | undefined {
           let bounds = native.getElementBounds(id);
-          if (bounds) {
-            return { bounds };
-          }
+          if (bounds) return { bounds };
           return undefined;
         },
       };
@@ -233,57 +293,54 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       wasAnimating = animating;
       return { output, events, info, errors, animating };
     },
-    update(options: UpdateOptions): void {
-      let w: number | undefined;
-      let h: number | undefined;
-      if ("events" in options) {
-        for (let e of options.events) {
-          if (e.type === "resize") {
-            let r = e as TermResizeEvent;
-            w = r.width;
-            h = r.height;
+
+    update(change: Update | readonly Update[]): Uint8Array {
+      let changes = Array.isArray(change) ? change : [change];
+      let out: Uint8Array[] = [];
+
+      for (let c of changes as Update[]) {
+        let { next, bytes } = applyUpdate(currentCaps, c);
+
+        if ("width" in c) {
+          let w = c.width;
+          let h = c.height;
+          if (
+            !Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0
+          ) {
+            throw new RangeError(`invalid terminal dimensions ${w}x${h}`);
+          }
+          if (w !== width || h !== height) {
+            width = w;
+            height = h;
+            native.update(width, height);
+            prev = new Set();
+            pressed = new Set();
+            wasDown = false;
+            lastRenderAt = undefined;
+            wasAnimating = false;
+          }
+        } else {
+          let cap = c as CapabilityEvent;
+          if (cap.key === "colordepth") {
+            native.confirmFlag(FLAG_TRUECOLOR, cap.value === "truecolor");
+          } else if (cap.key === "sync-output") {
+            native.confirmFlag(FLAG_SYNC, cap.value as boolean);
           }
         }
-      } else if ("width" in options) {
-        w = options.width;
-        h = options.height;
+
+        currentCaps = next;
+        if (bytes.length) out.push(bytes);
       }
 
-      let forceRelayout = false;
-      if ("terminfo" in options) {
-        let newTerminfo = options.terminfo;
-        if (newTerminfo !== currentTerminfo) {
-          throw new Error(
-            "Cannot change TermInfo handle after Term creation; create a new Term to use a different handle",
-          );
-        }
-        // Same handle: force re-layout so the next render picks up any
-        // accumulated capability changes and emits a complete redraw.
-        forceRelayout = true;
+      if (out.length === 0) return new Uint8Array(0);
+      let total = out.reduce((n, b) => n + b.length, 0);
+      let result = new Uint8Array(total);
+      let offset = 0;
+      for (let b of out) {
+        result.set(b, offset);
+        offset += b.length;
       }
-
-      let dimensionsChanged = false;
-      if (w !== undefined && h !== undefined) {
-        if (
-          !Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0
-        ) {
-          throw new RangeError(`invalid terminal dimensions ${w}x${h}`);
-        }
-        if (w !== width || h !== height) {
-          width = w;
-          height = h;
-          dimensionsChanged = true;
-        }
-      }
-
-      if (!dimensionsChanged && !forceRelayout) return;
-
-      native.update(width, height);
-      prev = new Set();
-      pressed = new Set();
-      wasDown = false;
-      lastRenderAt = undefined;
-      wasAnimating = false;
+      return result;
     },
   };
 }

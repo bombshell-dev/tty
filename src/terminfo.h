@@ -85,6 +85,16 @@ int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *ti);
 void terminfo_grant(struct TermInfo *ti, uint32_t flags);
 
 /**
+ * Set or clear a single capability flag bit from a probe-response
+ * event. Bumps the generation only when the value actually changes.
+ *
+ * @param ti   Capability struct.
+ * @param bit  A single TERMINFO_* flag bit.
+ * @param on   Non-zero to set, zero to clear.
+ */
+void terminfo_confirm(struct TermInfo *ti, uint32_t bit, int on);
+
+/**
  * Look up a standard string capability in a compiled terminfo entry.
  * Bounds-checked against len; works for both storage formats.
  *

@@ -2,12 +2,28 @@ export const EVENT_KEY = 1;
 export const EVENT_MOUSE = 2;
 export const EVENT_RESIZE = 3;
 export const EVENT_CURSOR = 4;
+export const EVENT_CAPABILITY = 5;
 
 export const MOD_ALT = 1;
 export const MOD_CTRL = 2;
 export const MOD_SHIFT = 4;
 export const MOD_MOTION = 8;
 export const MOD_RELEASE = 16;
+
+/* Capability key constants — must match CAP_* in src/input.h */
+export const CAP_FOREGROUND_COLOR = 1;
+export const CAP_BACKGROUND_COLOR = 2;
+export const CAP_CURSOR_COLOR = 3;
+export const CAP_COLORDEPTH = 4;
+export const CAP_SYNC_OUTPUT = 5;
+export const CAP_KITTY_KEYBOARD = 6;
+export const CAP_KITTY_GRAPHICS = 7;
+export const CAP_POINTER_SHAPE = 8;
+
+/* CAP_COLORDEPTH ch values — must match COLORDEPTH_* in src/input.c */
+export const COLORDEPTH_16 = 0;
+export const COLORDEPTH_256 = 1;
+export const COLORDEPTH_TRUECOLOR = 2;
 
 export const KEY_F1 = 0xFFFF;
 export const KEY_F2 = 0xFFFE;
@@ -169,50 +185,28 @@ export interface InputNative {
   delay(st: number): number;
 }
 
-/**
- * Attachment surface provided by a TermInfo handle: the shared memory,
- * its bump allocator, and the capability struct / raw terminfo region
- * pointers. See terminfo.ts internals().
- */
-export interface InputAttach {
-  memory: WebAssembly.Memory;
-  exports: Record<string, CallableFunction>;
-  structPtr: number;
-  bytesPtr: number;
-  bytesLen: number;
-  alloc(size: number, align?: number): number;
-}
-
 import { compiled } from "./wasm.ts";
 
 export async function createInputNative(
   escLatency: number,
-  attach?: InputAttach,
+  keys?: Uint8Array,
+  initialColors?: number,
 ): Promise<InputNative> {
-  let memory = attach?.memory ?? new WebAssembly.Memory({ initial: 4 });
+  let memory = new WebAssembly.Memory({ initial: 4 });
 
-  let raw: unknown;
-  if (attach) {
-    // Reuse the handle's instance: instantiating the module again over
-    // the shared memory would rewrite its data segments and clobber
-    // static state already initialized there.
-    raw = attach.exports;
-  } else {
-    let instance = await WebAssembly.instantiate(compiled, {
-      env: { memory },
-      clay: {
-        measureTextFunction() {},
-        queryScrollOffsetFunction(ret: number) {
-          let v = new DataView(memory.buffer);
-          v.setFloat32(ret, 0, true);
-          v.setFloat32(ret + 4, 0, true);
-        },
+  let instance = await WebAssembly.instantiate(compiled, {
+    env: { memory },
+    clay: {
+      measureTextFunction() {},
+      queryScrollOffsetFunction(ret: number) {
+        let v = new DataView(memory.buffer);
+        v.setFloat32(ret, 0, true);
+        v.setFloat32(ret + 4, 0, true);
       },
-    });
-    raw = instance.exports;
-  }
+    },
+  });
 
-  let exports = raw as {
+  let exports = instance.exports as unknown as {
     __heap_base: WebAssembly.Global;
     input_size(): number;
     input_init(
@@ -220,7 +214,7 @@ export async function createInputNative(
       escLatency: number,
       terminfo: number,
       terminfoLen: number,
-      ti: number,
+      initialColors: number,
     ): number;
     input_scan(st: number, buf: number, len: number, now: number): number;
     input_count(st: number): number;
@@ -228,24 +222,31 @@ export async function createInputNative(
     input_delay(st: number): number;
   };
 
+  let heap = exports.__heap_base.value as number;
   let size = exports.input_size();
-  let state: number;
-  let buffer: number;
-  if (attach) {
-    let arena = attach.alloc(size);
-    buffer = attach.alloc(SCAN_BUFFER_SIZE);
-    state = exports.input_init(
-      arena,
-      escLatency,
-      attach.bytesLen > 0 ? attach.bytesPtr : 0,
-      attach.bytesLen,
-      attach.structPtr,
-    );
-  } else {
-    let heap = exports.__heap_base.value as number;
-    state = exports.input_init(heap, escLatency, 0, 0, 0);
-    buffer = (heap + size + 7) & ~7;
+
+  let keysPtr = 0;
+  let keysLen = 0;
+  let top = (heap + 7) & ~7;
+  if (keys && keys.byteLength > 0) {
+    top = (top + 7) & ~7;
+    keysPtr = top;
+    keysLen = keys.byteLength;
+    top += (keysLen + 7) & ~7;
+    let pages = Math.ceil(top / 65536);
+    let current = memory.buffer.byteLength / 65536;
+    if (pages > current) memory.grow(pages - current);
+    new Uint8Array(memory.buffer).set(keys, keysPtr);
   }
+
+  let state = exports.input_init(
+    top,
+    escLatency,
+    keysPtr,
+    keysLen,
+    initialColors ?? 256,
+  );
+  let buffer = (top + size + 7) & ~7;
 
   return {
     memory,

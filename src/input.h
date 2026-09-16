@@ -54,14 +54,27 @@
 
 #include <stdint.h>
 
-#include "terminfo.h"
-
 /* ── Event types ──────────────────────────────────────────────────── */
 
 #define EVENT_KEY 1
 #define EVENT_MOUSE 2
 #define EVENT_RESIZE 3
 #define EVENT_CURSOR 4
+#define EVENT_CAPABILITY 5
+
+/* ── Capability keys (EVENT_CAPABILITY) ───────────────────────────── */
+
+/* key field values for EVENT_CAPABILITY events. The value field (ch)
+ * carries the payload: for colors, packed 0x00RRGGBB; for booleans,
+ * 1=true/0=false; for colordepth, 0="16", 1="256", 2="truecolor". */
+#define CAP_FOREGROUND_COLOR 1
+#define CAP_BACKGROUND_COLOR 2
+#define CAP_CURSOR_COLOR     3
+#define CAP_COLORDEPTH       4
+#define CAP_SYNC_OUTPUT      5
+#define CAP_KITTY_KEYBOARD   6
+#define CAP_KITTY_GRAPHICS   7
+#define CAP_POINTER_SHAPE    8
 
 /* ── Modifier flags (bitwise) ─────────────────────────────────────── */
 
@@ -219,14 +232,15 @@ int input_size(void);
  *                        capabilities seed the sequence trie (they take
  *                        precedence over the xterm defaults), or NULL.
  * @param terminfo_len    Byte length of terminfo, or 0.
- * @param ti              Shared capability struct that recognized query
- *                        responses are written into, or NULL to use a
- *                        parser-private struct.
+ * @param initial_colors  The terminal's static max_colors value, used
+ *                        when emitting a colordepth denial event to pick
+ *                        the right tier ("16" vs "256"). Pass 0 for the
+ *                        256-color baseline.
  * @return                Initialized parser state.
  */
 struct InputState *input_init(void *mem, int esc_latency_ms,
                               const uint8_t *terminfo, int terminfo_len,
-                              struct TermInfo *ti);
+                              int initial_colors);
 
 /**
  * Feed raw bytes into the parser and produce events.

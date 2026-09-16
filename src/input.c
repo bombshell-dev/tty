@@ -15,6 +15,11 @@
 #include "input.h"
 #include "terminfo.h"
 #include "trie.h"
+
+/* CAP_COLORDEPTH value encoding (must match input-native.ts): */
+#define COLORDEPTH_16       0
+#define COLORDEPTH_256      1
+#define COLORDEPTH_TRUECOLOR 2
 #include "mem.h"
 #include "utf8.h"
 
@@ -33,8 +38,7 @@ struct InputState {
   struct InputEvent events[MAX_EVENTS];
   int count;
   int trie_len;
-  struct TermInfo *ti;
-  struct TermInfo ti_private;
+  int colors;
   Trie trie;
 };
 
@@ -696,29 +700,22 @@ static int parse_csi_legacy(struct InputState *st, struct InputEvent *ev) {
 
 /* ── Capability query responses (terminfo-spec section 9) ─────────── */
 
-/* Update a capability flag from a probe response: probe evidence sets
- * the confirmed bit and overrides whatever the terminfo entry or
- * environment granted. One generation bump per logical update. */
-static void ti_confirm(struct InputState *st, uint32_t bit, int on) {
-  struct TermInfo *ti = st->ti;
-  uint32_t flags = on ? (ti->flags | bit) : (ti->flags & ~bit);
-  uint32_t confirmed = ti->confirmed | bit;
-  if (flags == ti->flags && confirmed == ti->confirmed)
-    return;
-  ti->flags = flags;
-  ti->confirmed = confirmed;
-  ti->generation++;
+/* Emit a boolean capability event (type=EVENT_CAPABILITY, key=cap_key,
+ * ch=1 for true / 0 for false). */
+static void emit_cap_bool(struct InputState *st, uint8_t cap_key, int on) {
+  struct InputEvent *ev = emit(st);
+  ev->type = EVENT_CAPABILITY;
+  ev->key = cap_key;
+  ev->ch = on ? 1 : 0;
 }
 
-static void ti_theme(struct InputState *st, uint32_t bit, uint32_t *slot,
-                     uint32_t color) {
-  struct TermInfo *ti = st->ti;
-  if ((ti->flags & bit) && (ti->confirmed & bit) && *slot == color)
-    return;
-  *slot = color;
-  ti->flags |= bit;
-  ti->confirmed |= bit;
-  ti->generation++;
+/* Emit an Rgb color capability event (ch = packed 0x00RRGGBB). */
+static void emit_cap_color(struct InputState *st, uint8_t cap_key,
+                           uint32_t color) {
+  struct InputEvent *ev = emit(st);
+  ev->type = EVENT_CAPABILITY;
+  ev->key = cap_key;
+  ev->ch = color;
 }
 
 static int hexval(char c) {
@@ -827,7 +824,6 @@ static int find_st(struct InputState *st, int start) {
 
 /* OSC 21 payload: ";"-separated key=value pairs. */
 static void osc21_apply(struct InputState *st, const char *s, int len) {
-  ti_confirm(st, TERMINFO_KITTY_COLOR, 1);
   int i = 0;
   while (i < len) {
     int start = i;
@@ -844,11 +840,11 @@ static void osc21_apply(struct InputState *st, const char *s, int len) {
       uint32_t color;
       if (vlen > 0 && parse_color_spec(val, vlen, &color)) {
         if (klen == 10 && payload_contains(key, klen, "foreground")) {
-          ti_theme(st, TERMINFO_THEME_FG, &st->ti->theme_fg, color);
+          emit_cap_color(st, CAP_FOREGROUND_COLOR, color);
         } else if (klen == 10 && payload_contains(key, klen, "background")) {
-          ti_theme(st, TERMINFO_THEME_BG, &st->ti->theme_bg, color);
+          emit_cap_color(st, CAP_BACKGROUND_COLOR, color);
         } else if (klen == 6 && payload_contains(key, klen, "cursor")) {
-          ti_theme(st, TERMINFO_THEME_CURSOR, &st->ti->theme_cursor, color);
+          emit_cap_color(st, CAP_CURSOR_COLOR, color);
         }
       }
     }
@@ -894,21 +890,21 @@ static int parse_osc_response(struct InputState *st) {
   switch (num) {
   case 10:
     if (parse_color_spec(payload, plen, &color))
-      ti_theme(st, TERMINFO_THEME_FG, &st->ti->theme_fg, color);
+      emit_cap_color(st, CAP_FOREGROUND_COLOR, color);
     break;
   case 11:
     if (parse_color_spec(payload, plen, &color))
-      ti_theme(st, TERMINFO_THEME_BG, &st->ti->theme_bg, color);
+      emit_cap_color(st, CAP_BACKGROUND_COLOR, color);
     break;
   case 12:
     if (parse_color_spec(payload, plen, &color))
-      ti_theme(st, TERMINFO_THEME_CURSOR, &st->ti->theme_cursor, color);
+      emit_cap_color(st, CAP_CURSOR_COLOR, color);
     break;
   case 21:
     osc21_apply(st, payload, plen);
     break;
   case 22:
-    ti_confirm(st, TERMINFO_POINTER_SHAPE, 1);
+    emit_cap_bool(st, CAP_POINTER_SHAPE, 1);
     break;
   }
 
@@ -937,10 +933,16 @@ static int parse_dcs_response(struct InputState *st) {
   if (ok == '1') {
     if (payload_contains(payload, plen, "524742") ||
         payload_contains(payload, plen, "5463")) {
-      ti_confirm(st, TERMINFO_TRUECOLOR, 1);
+      struct InputEvent *ev = emit(st);
+      ev->type = EVENT_CAPABILITY;
+      ev->key = CAP_COLORDEPTH;
+      ev->ch = COLORDEPTH_TRUECOLOR;
     }
   } else {
-    ti_confirm(st, TERMINFO_TRUECOLOR, 0);
+    struct InputEvent *ev = emit(st);
+    ev->type = EVENT_CAPABILITY;
+    ev->key = CAP_COLORDEPTH;
+    ev->ch = (st->colors <= 16) ? COLORDEPTH_16 : COLORDEPTH_256;
   }
 
   shift(st, end);
@@ -962,8 +964,8 @@ static int parse_apc_response(struct InputState *st) {
 
   const char *payload = st->buf + 3;
   int plen = end - 3 - (st->buf[end - 1] == '\x07' ? 1 : 2);
-  ti_confirm(st, TERMINFO_KITTY_GRAPHICS,
-             payload_contains(payload, plen, ";OK"));
+  emit_cap_bool(st, CAP_KITTY_GRAPHICS,
+               payload_contains(payload, plen, ";OK"));
 
   shift(st, end);
   return PARSE_OK;
@@ -1001,18 +1003,15 @@ static int parse_csi_private(struct InputState *st) {
       i++;
 
       if (c == 'u' && intermediate == 0) {
-        ti_confirm(st, TERMINFO_KITTY_KEYBOARD, 1);
+        emit_cap_bool(st, CAP_KITTY_KEYBOARD, 1);
       } else if (c == 'y' && intermediate == '$') {
         if (nums[0] == 2026 && ni >= 2) {
           int v = nums[1];
-          ti_confirm(st, TERMINFO_SYNC, v == 1 || v == 2 || v == 3);
+          emit_cap_bool(st, CAP_SYNC_OUTPUT, v == 1 || v == 2 || v == 3);
         }
         /* other modes: consumed silently */
       } else if (c == 'c' && intermediate == 0) {
-        if (!(st->ti->confirmed & TERMINFO_DA1)) {
-          st->ti->confirmed |= TERMINFO_DA1;
-          st->ti->generation++;
-        }
+        /* DA1 fence: consumed silently, MUST NOT surface as CapabilityEvent */
       } else {
         return PARSE_ERR;
       }
@@ -1320,11 +1319,11 @@ int input_size(void) { return align8((int)sizeof(struct InputState)); }
 
 struct InputState *input_init(void *mem, int esc_latency_ms,
                               const uint8_t *terminfo, int terminfo_len,
-                              struct TermInfo *ti) {
+                              int initial_colors) {
   struct InputState *st = (struct InputState *)mem;
   memset(st, 0, sizeof(struct InputState));
   st->esc_latency_ms = esc_latency_ms;
-  st->ti = ti ? ti : terminfo_init(&st->ti_private);
+  st->colors = initial_colors > 0 ? initial_colors : 256;
 
   /* build escape sequence trie: terminfo keys first (first writer wins
    * in trie_add, so the entry's sequences take precedence), then the
@@ -1464,8 +1463,7 @@ int input_scan(struct InputState *st, const char *buf, int len, double now) {
         }
       }
 
-      /* try capability query responses (OSC/DCS/APC/CSI ?) — consumed
-       * silently into the capability struct, never surfaced as events */
+      /* try capability query responses (OSC/DCS/APC/CSI ?) */
       {
         int rv = parse_response(st);
         if (rv == PARSE_OK) {

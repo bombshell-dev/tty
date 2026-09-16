@@ -38,7 +38,8 @@ EXPORTS = \
   -Wl,--export=terminfo_size \
   -Wl,--export=terminfo_init \
   -Wl,--export=terminfo_parse \
-  -Wl,--export=terminfo_grant
+  -Wl,--export=terminfo_grant \
+  -Wl,--export=terminfo_confirm
 
 LDFLAGS = -Wl,--no-entry \
           -Wl,--import-memory \

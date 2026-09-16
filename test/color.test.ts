@@ -1,7 +1,7 @@
 import { close, fixed, grow, open, rgba, text } from "../ops.ts";
 import { createTerm } from "../term.ts";
 import { describe, expect, it } from "./suite.ts";
-import { offlineTermInfo, trueColorTermInfo } from "./caps.ts";
+import { offlineDetect, trueColorDetect } from "./caps.ts";
 import { CLAYTERM_16 } from "./fixtures.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -83,7 +83,7 @@ describe("foreground", () => {
 });
 
 async function trueColorTerm(options: { width: number; height: number }) {
-  return await createTerm({ ...options, terminfo: await trueColorTermInfo() });
+  return await createTerm({ ...options, detection: await trueColorDetect() });
 }
 
 describe("background", () => {
@@ -244,8 +244,8 @@ describe("capability-gated color encoding", () => {
   });
 
   it("emits truecolor SGR when truecolor evidence is present", async () => {
-    let terminfo = await trueColorTermInfo();
-    let term = await createTerm({ width: 12, height: 1, terminfo });
+    let detection = await trueColorDetect();
+    let term = await createTerm({ width: 12, height: 1, detection });
     let ansi = decode(term.render(OPS).output);
 
     expect(ansi).toContain("\x1b[38;2;255;0;0m");
@@ -253,8 +253,8 @@ describe("capability-gated color encoding", () => {
   });
 
   it("emits 16-color SGR when the terminfo entry reports 16 colors", async () => {
-    let terminfo = await offlineTermInfo({ terminfo: CLAYTERM_16 });
-    let term = await createTerm({ width: 12, height: 1, terminfo });
+    let detection = await offlineDetect({ terminfo: CLAYTERM_16 });
+    let term = await createTerm({ width: 12, height: 1, detection });
     let ansi = decode(term.render(OPS).output);
 
     expect(ansi).toContain("\x1b[91m");

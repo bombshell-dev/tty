@@ -145,17 +145,17 @@ directions: a probe denial overrides a statically-set capability.
 
 **TINV-4. Sans-IO probe.** `Detection.probe` is a `Uint8Array` produced by
 `detectTerminal()` without touching any stream. The host writes the bytes.
-`detectTerminal()` resolves — never rejects — on timeout, non-TTY streams,
-a missing terminfo file, or abort.
+`detectTerminal()` resolves — never rejects — on timeout, non-TTY streams, a
+missing terminfo file, or abort.
 
-**TINV-5. Immediate update output.** `term.update()` returns a `Uint8Array`
-of bytes to write now. It MUST NOT defer output to the next `render()` call.
-An empty array is a valid return when the update changes no rendered state.
+**TINV-5. Immediate update output.** `term.update()` returns a `Uint8Array` of
+bytes to write now. It MUST NOT defer output to the next `render()` call. An
+empty array is a valid return when the update changes no rendered state.
 
 **TINV-6. Event-only probe surface.** The input parser MUST NOT write to any
 shared state when it recognizes a probe response. It surfaces the result as a
-`CapabilityEvent` in the `scan()` return value. The host loop is responsible
-for routing the event to `term.update()`.
+`CapabilityEvent` in the `scan()` return value. The host loop is responsible for
+routing the event to `term.update()`.
 
 ---
 
@@ -177,15 +177,15 @@ interface Capabilities {
 }
 ```
 
-| Field             | Source                                                                 |
-| ----------------- | ---------------------------------------------------------------------- |
-| `colors`          | `max_colors` from terminfo; 256 at baseline                            |
-| `trueColor`       | `RGB`/`Tc` extended caps; `COLORTERM` env evidence; probe overrides    |
-| `bce`             | `bce` boolean cap                                                      |
-| `autoMargin`      | `am` boolean cap                                                       |
-| `xenl`            | `xenl` boolean cap                                                     |
-| `altScreen`       | `smcup` string present                                                 |
-| `styledUnderline` | `Su` boolean or `Smulx` string                                         |
+| Field             | Source                                                              |
+| ----------------- | ------------------------------------------------------------------- |
+| `colors`          | `max_colors` from terminfo; 256 at baseline                         |
+| `trueColor`       | `RGB`/`Tc` extended caps; `COLORTERM` env evidence; probe overrides |
+| `bce`             | `bce` boolean cap                                                   |
+| `autoMargin`      | `am` boolean cap                                                    |
+| `xenl`            | `xenl` boolean cap                                                  |
+| `altScreen`       | `smcup` string present                                              |
+| `styledUnderline` | `Su` boolean or `Smulx` string                                      |
 
 Key sequences (`key_*` capabilities) are not stored here. The input parser reads
 them directly from the raw terminfo bytes in `Detection.keys` at initialization
@@ -204,40 +204,73 @@ value type for `key: "colordepth"` `CapabilityEvent` values.
 
 ```ts
 type CapabilityEvent =
-  | { readonly type: "capability"; readonly key: "foreground-color";  readonly value: Rgb        }
-  | { readonly type: "capability"; readonly key: "background-color";  readonly value: Rgb        }
-  | { readonly type: "capability"; readonly key: "cursor-color";      readonly value: Rgb        }
-  | { readonly type: "capability"; readonly key: "colordepth";        readonly value: ColorDepth }
-  | { readonly type: "capability"; readonly key: "sync-output";       readonly value: boolean    }
-  | { readonly type: "capability"; readonly key: "kitty-keyboard";    readonly value: boolean    }
-  | { readonly type: "capability"; readonly key: "kitty-graphics";    readonly value: boolean    }
-  | { readonly type: "capability"; readonly key: "pointer-shape";     readonly value: boolean    }
+  | {
+    readonly type: "capability";
+    readonly key: "foreground-color";
+    readonly value: Rgb;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "background-color";
+    readonly value: Rgb;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "cursor-color";
+    readonly value: Rgb;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "colordepth";
+    readonly value: ColorDepth;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "sync-output";
+    readonly value: boolean;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "kitty-keyboard";
+    readonly value: boolean;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "kitty-graphics";
+    readonly value: boolean;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "pointer-shape";
+    readonly value: boolean;
+  };
 ```
 
 Each variant maps to one probe query. The `key` identifies the capability; the
 `value` is the terminal's answer. Capability references per
 [terminfo.dev](https://terminfo.dev):
 
-| `key`               | Query                  | terminfo.dev slug                                                                                   |
-| ------------------- | ---------------------- | --------------------------------------------------------------------------------------------------- |
-| `foreground-color`  | OSC 10                 | [`osc-10-fg-color-query`](https://terminfo.dev)                                                     |
-| `background-color`  | OSC 11                 | [`osc-11-bg-color-query`](https://terminfo.dev)                                                     |
-| `cursor-color`      | OSC 12 or OSC 21       | [`osc-12-cursor-color`](https://terminfo.dev)                                                       |
-| `colordepth`        | XTGETTCAP `RGB`/`Tc`   | [`24-bit-truecolor`](https://terminfo.dev)                                                          |
-| `sync-output`       | DECRPM mode 2026       | [`decset-2026-synchronized-output`](https://terminfo.dev)                                           |
-| `kitty-keyboard`    | `CSI ? u`              | [`kitty-keyboard-protocol`](https://terminfo.dev)                                                   |
-| `kitty-graphics`    | APC `_G…`              | [`kitty-graphics-protocol`](https://terminfo.dev)                                                   |
-| `pointer-shape`     | OSC 22                 | [`osc-22-pointer-shape`](https://terminfo.dev)                                                      |
+| `key`              | Query                | terminfo.dev slug                                         |
+| ------------------ | -------------------- | --------------------------------------------------------- |
+| `foreground-color` | OSC 10               | [`osc-10-fg-color-query`](https://terminfo.dev)           |
+| `background-color` | OSC 11               | [`osc-11-bg-color-query`](https://terminfo.dev)           |
+| `cursor-color`     | OSC 12 or OSC 21     | [`osc-12-cursor-color`](https://terminfo.dev)             |
+| `colordepth`       | XTGETTCAP `RGB`/`Tc` | [`24-bit-truecolor`](https://terminfo.dev)                |
+| `sync-output`      | DECRPM mode 2026     | [`decset-2026-synchronized-output`](https://terminfo.dev) |
+| `kitty-keyboard`   | `CSI ? u`            | [`kitty-keyboard-protocol`](https://terminfo.dev)         |
+| `kitty-graphics`   | APC `_G…`            | [`kitty-graphics-protocol`](https://terminfo.dev)         |
+| `pointer-shape`    | OSC 22               | [`osc-22-pointer-shape`](https://terminfo.dev)            |
 
 **Color values.** `Rgb` values in probe responses MUST be recognized in at least
 the `rgb:RR/GG/BB` (1–4 hex digits per channel) and `#`-hash forms.
 
 **`colordepth` denial.** When XTGETTCAP replies with an invalid-capability
-response for both `RGB` and `Tc`, the parser emits `{ key: "colordepth", value:
-D }` where `D` is derived from the static `Capabilities.colors` field: `"16"`
-when `colors <= 16`, `"256"` otherwise. This preserves TINV-3: the probe
-response takes precedence over static evidence, including in the negative
-direction.
+response for both `RGB` and `Tc`, the parser emits
+`{ key: "colordepth", value:
+D }` where `D` is derived from the static
+`Capabilities.colors` field: `"16"` when `colors <= 16`, `"256"` otherwise. This
+preserves TINV-3: the probe response takes precedence over static evidence,
+including in the negative direction.
 
 **OSC 21.** An OSC 21 reply may supply any subset of `foreground-color`,
 `background-color`, and `cursor-color`. The parser emits one `CapabilityEvent`
@@ -283,21 +316,22 @@ _This section is normative._
 With no terminfo bytes, no environment evidence, and no probe responses,
 `Capabilities` is initialized to:
 
-| Field             | Default               |
-| ----------------- | --------------------- |
-| `colors`          | 256                   |
-| `trueColor`       | `false`               |
-| `bce`             | `true`                |
-| `autoMargin`      | `true`                |
-| `xenl`            | `true`                |
-| `altScreen`       | `true`                |
-| `styledUnderline` | `false`               |
+| Field             | Default |
+| ----------------- | ------- |
+| `colors`          | 256     |
+| `trueColor`       | `false` |
+| `bce`             | `true`  |
+| `autoMargin`      | `true`  |
+| `xenl`            | `true`  |
+| `altScreen`       | `true`  |
+| `styledUnderline` | `false` |
 
 Truecolor is not assumed at baseline. Per TINV-3, it requires positive evidence.
 
 ### 7.2 Environment evidence
 
-`detectTerminal()` applies environment evidence after parsing the terminfo entry:
+`detectTerminal()` applies environment evidence after parsing the terminfo
+entry:
 
 - `COLORTERM` equal to `truecolor` or `24bit` sets `trueColor: true`.
 
@@ -322,9 +356,9 @@ populates a `Capabilities`-shaped struct.
 - The maximum accepted size is 32 768 bytes, the extended ncurses format limit.
   The TypeScript boundary enforces this before bytes reach the parser.
 
-Standard capability indices consumed: booleans `am` (1), `xenl` (4), `bce`
-(28); number `max_colors` (13); strings `smcup` (28) and the `key_*` range
-(see Input Specification §6.1 for the key set).
+Standard capability indices consumed: booleans `am` (1), `xenl` (4), `bce` (28);
+number `max_colors` (13); strings `smcup` (28) and the `key_*` range (see Input
+Specification §6.1 for the key set).
 
 ---
 
@@ -382,7 +416,7 @@ _This section is normative for the shapes shown._
 ### 10.1 `detectTerminal`
 
 ```ts
-function detectTerminal(options?: DetectOptions): Promise<Detection>
+function detectTerminal(options?: DetectOptions): Promise<Detection>;
 
 interface DetectOptions {
   term?: string;
@@ -430,7 +464,7 @@ function createTerm(options: {
   width: number;
   height: number;
   detection?: Detection;
-}): Promise<Term>
+}): Promise<Term>;
 ```
 
 When `detection` is provided, the renderer initializes its private
@@ -444,7 +478,7 @@ dynamic fields at their baseline values. When omitted, the renderer uses the
 function createInput(options?: {
   escLatency?: number;
   detection?: Detection;
-}): Promise<Input>
+}): Promise<Input>;
 ```
 
 When `detection` is provided, the parser loads its key trie from
@@ -456,11 +490,11 @@ When `detection` is provided, the parser loads its key trie from
 function applyUpdate(
   current: RuntimeCapabilities,
   change: Update,
-): { readonly next: RuntimeCapabilities; readonly bytes: Uint8Array }
+): { readonly next: RuntimeCapabilities; readonly bytes: Uint8Array };
 
 type Update =
   | { width: number; height: number }
-  | CapabilityEvent
+  | CapabilityEvent;
 ```
 
 `applyUpdate` is a pure function. Given the current `RuntimeCapabilities` and
@@ -488,11 +522,11 @@ callers write it to their output stream when non-empty (TINV-5).
 
 ```ts
 import { detectTerminal } from "./terminfo.ts";
-import { createTerm }     from "./term.ts";
-import { createInput }    from "./input.ts";
+import { createTerm } from "./term.ts";
+import { createInput } from "./input.ts";
 
 const detection = await detectTerminal({ env: process.env });
-const term  = await createTerm({ width: 80, height: 24, detection });
+const term = await createTerm({ width: 80, height: 24, detection });
 const input = await createInput({ detection });
 
 process.stdout.write(detection.probe);

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
 import { createInput } from "../input.ts";
-import { offlineTermInfo } from "./caps.ts";
+import { offlineDetect } from "./caps.ts";
 import {
   close,
   fixed,
@@ -676,15 +676,12 @@ hi
       );
     });
 
-    it("accepts an event array, last resize wins, non-resize ignored", () => {
-      term.update({
-        events: [
-          { type: "key" },
-          { type: "resize", width: 30, height: 8 },
-          { type: "paste" },
-          { type: "resize", width: 12, height: 4 },
-        ],
-      });
+    it("accepts an update array, last resize wins, non-resize updates applied", () => {
+      term.update([
+        { width: 30, height: 8 },
+        { type: "capability", key: "sync-output", value: false },
+        { width: 12, height: 4 },
+      ]);
       let result = term.render(frame);
       expect(result.info.get("root")?.bounds).toEqual({
         x: 0,
@@ -694,11 +691,11 @@ hi
       });
     });
 
-    it("treats an event array with no resize events as a no-op", () => {
+    it("treats an update array with no resize as a no-op for layout", () => {
       term.render(frame);
-      term.update({ events: [{ type: "key" }, { type: "paste" }] });
+      term.update([{ type: "capability", key: "sync-output", value: false }]);
       expect(term.render(frame).output.length).toBe(0);
-      term.update({ events: [] });
+      term.update([]);
       expect(term.render(frame).output.length).toBe(0);
     });
 
@@ -765,22 +762,25 @@ describe("capability generation", () => {
   ];
 
   it("emits nothing for an unchanged frame", async () => {
-    let terminfo = await offlineTermInfo();
-    let term = await createTerm({ width: 12, height: 2, terminfo });
+    let detection = await offlineDetect();
+    let term = await createTerm({ width: 12, height: 2, detection });
     term.render(OPS);
     expect(term.render(OPS).output.length).toBe(0);
   });
 
   it("forces a full redraw when capabilities change between frames", async () => {
-    let terminfo = await offlineTermInfo();
-    let term = await createTerm({ width: 12, height: 2, terminfo });
-    let input = await createInput({ terminfo });
+    let detection = await offlineDetect();
+    let term = await createTerm({ width: 12, height: 2, detection });
+    let input = await createInput({ detection });
 
     term.render(OPS);
     expect(term.render(OPS).output.length).toBe(0);
 
-    // an XTGETTCAP reply confirms truecolor mid-session
-    input.scan(new TextEncoder().encode("\x1bP1+r524742\x1b\\"));
+    // an XTGETTCAP reply confirms truecolor mid-session; route the event to term
+    let { events } = input.scan(
+      new TextEncoder().encode("\x1bP1+r524742\x1b\\"),
+    );
+    term.update(events);
 
     let ansi = new TextDecoder().decode(term.render(OPS).output);
     expect(ansi).toContain("hi");
@@ -796,11 +796,16 @@ describe("synchronized output", () => {
   ];
 
   async function syncTerm() {
-    let terminfo = await offlineTermInfo();
-    let term = await createTerm({ width: 12, height: 2, terminfo });
-    let input = await createInput({ terminfo });
-    input.scan(new TextEncoder().encode("\x1b[?2026;2$y"));
-    expect(terminfo.capabilities.syncOutput).toBe(true);
+    let detection = await offlineDetect();
+    let term = await createTerm({ width: 12, height: 2, detection });
+    let input = await createInput({ detection });
+    let { events } = input.scan(new TextEncoder().encode("\x1b[?2026;2$y"));
+    expect(events).toContainEqual({
+      type: "capability",
+      key: "sync-output",
+      value: true,
+    });
+    term.update(events);
     return term;
   }
 
@@ -812,8 +817,8 @@ describe("synchronized output", () => {
   });
 
   it("does not wrap when syncOutput is unconfirmed", async () => {
-    let terminfo = await offlineTermInfo();
-    let term = await createTerm({ width: 12, height: 2, terminfo });
+    let detection = await offlineDetect();
+    let term = await createTerm({ width: 12, height: 2, detection });
     let ansi = new TextDecoder().decode(term.render(OPS).output);
     expect(ansi).not.toContain("2026");
   });

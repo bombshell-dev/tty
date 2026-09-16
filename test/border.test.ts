@@ -8,10 +8,10 @@ import {
   text,
 } from "../ops.ts";
 import { createTerm } from "../term.ts";
-import { trueColorTermInfo } from "./caps.ts";
+import { trueColorDetect } from "./caps.ts";
 
 async function trueColorTerm(options: { width: number; height: number }) {
-  return await createTerm({ ...options, terminfo: await trueColorTermInfo() });
+  return await createTerm({ ...options, detection: await trueColorDetect() });
 }
 import { describe, expect, it } from "./suite.ts";
 import { print } from "./print.ts";

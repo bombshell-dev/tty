@@ -35,6 +35,14 @@ void terminfo_grant(struct TermInfo *ti, uint32_t flags) {
   ti->generation++;
 }
 
+void terminfo_confirm(struct TermInfo *ti, uint32_t bit, int on) {
+  uint32_t next = on ? (ti->flags | bit) : (ti->flags & ~bit);
+  if (next == ti->flags)
+    return;
+  ti->flags = next;
+  ti->generation++;
+}
+
 static uint16_t rd_u16(const uint8_t *b, int off) {
   return (uint16_t)(b[off] | (b[off + 1] << 8));
 }

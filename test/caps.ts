@@ -1,20 +1,10 @@
-/**
- * Test helpers for building TermInfo handles without a filesystem or a
- * TTY: streams are non-TTY mocks so queryTermInfo never probes.
- */
+import { type DetectOptions, detectTerminal } from "../terminfo.ts";
 
-import { queryTermInfo, type QueryTermInfoOptions } from "../terminfo.ts";
-
-export function offlineTermInfo(options: Partial<QueryTermInfoOptions> = {}) {
-  return queryTermInfo({
-    env: {},
-    input: { isTTY: false, on() {}, off() {} },
-    output: { isTTY: false, write() {} },
-    ...options,
-  });
+export function offlineDetect(options: Partial<DetectOptions> = {}) {
+  return detectTerminal({ env: {}, ...options });
 }
 
-/** A handle with truecolor granted via COLORTERM evidence. */
-export function trueColorTermInfo() {
-  return offlineTermInfo({ env: { COLORTERM: "truecolor" } });
+/** A Detection with truecolor granted via COLORTERM evidence. */
+export function trueColorDetect() {
+  return offlineDetect({ env: { COLORTERM: "truecolor" } });
 }

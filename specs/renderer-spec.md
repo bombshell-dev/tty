@@ -424,8 +424,8 @@ yield, suspend, or require callbacks during execution.
 - `{ width: number; height: number }` — a resize to the given character-cell
   dimensions. Both MUST be positive integers; the transaction MUST throw
   otherwise.
-- A `CapabilityEvent` (see [Terminfo Specification](terminfo-spec.md) §6.3) —
-  a capability value delivered by the input parser from a probe response.
+- A `CapabilityEvent` (see [Terminfo Specification](terminfo-spec.md) §6.3) — a
+  capability value delivered by the input parser from a probe response.
 
 When a batch is provided, the Term folds each `Update` in order. The returned
 bytes are the concatenation of each fold's output.
@@ -479,8 +479,8 @@ never writes capabilities and holds no reference to the input parser (INV-7).
 `RuntimeCapabilities`:
 
 - `trueColor` set → 24-bit SGR (`38;2;r;g;b` / `48;2;r;g;b`)
-- otherwise `colors` ≥ 256 → 256-color SGR (`38;5;n` / `48;5;n`), mapping RGB
-  to the nearest entry of the 6×6×6 color cube and 24-step grayscale ramp
+- otherwise `colors` ≥ 256 → 256-color SGR (`38;5;n` / `48;5;n`), mapping RGB to
+  the nearest entry of the 6×6×6 color cube and 24-step grayscale ramp
 - otherwise → 16-color SGR (`30–37`, `90–97` and background equivalents),
   mapping RGB to the nearest of the 16 ANSI colors
 
@@ -542,8 +542,8 @@ parameters specify the terminal dimensions in character cells.
 
 The optional `detection` value (from `detectTerminal()`; see
 [Terminfo Specification](terminfo-spec.md) §10.1) initializes the Term's private
-`RuntimeCapabilities` from the static `Capabilities` it carries, gating
-emission per §7.8. When omitted, the Term uses the §7.1 baseline.
+`RuntimeCapabilities` from the static `Capabilities` it carries, gating emission
+per §7.8. When omitted, the Term uses the §7.1 baseline.
 
 ### 8.2 Render invocation
 
@@ -722,10 +722,9 @@ folded in order.
 terminal immediately when non-empty. Do not wait for the next `render()`. An
 empty array means the update changed no rendered state.
 
-**Resize shape.** The `{ width, height }` shape is defined structurally by
-this specification. It is intentionally assignable from the input
-specification's `ResizeEvent`, so events from `input.scan()` pass through
-directly:
+**Resize shape.** The `{ width, height }` shape is defined structurally by this
+specification. It is intentionally assignable from the input specification's
+`ResizeEvent`, so events from `input.scan()` pass through directly:
 
 ```
 const { events } = input.scan(bytes);
