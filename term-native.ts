@@ -90,7 +90,7 @@ export async function createTermNative(
 
   let ct = exports as unknown as {
     __heap_base: WebAssembly.Global;
-    clayterm_size(w: number, h: number): number;
+    tty_size(w: number, h: number): number;
     init(mem: number, w: number, h: number): number;
     reduce(
       ct: number,
@@ -129,7 +129,7 @@ export async function createTermNative(
   // (renderer-spec 7.7).
   function layout(lw: number, lh: number): void {
     let heap = ct.__heap_base.value as number;
-    let size = ct.clayterm_size(lw, lh);
+    let size = ct.tty_size(lw, lh);
     let needed = heap + size + transferBytes;
     let pages = Math.ceil(needed / WASM_PAGE_BYTES);
     let current = memory.buffer.byteLength / WASM_PAGE_BYTES;

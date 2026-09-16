@@ -27,7 +27,7 @@ function encodeZ85(data: Uint8Array): string {
   return out.join("");
 }
 
-const wasm = await Deno.readFile("clayterm.wasm");
+const wasm = await Deno.readFile("tty.wasm");
 
 const compressed = new Uint8Array(
   brotliCompressSync(wasm, {

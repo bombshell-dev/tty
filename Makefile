@@ -1,5 +1,5 @@
 CC = clang
-TARGET = clayterm.wasm
+TARGET = tty.wasm
 SRC = src/module.c
 CLAY_PATCHES = $(sort $(wildcard patches/*.patch))
 
@@ -12,7 +12,7 @@ CFLAGS = --target=wasm32 -nostdlib -O2 \
 
 EXPORTS = \
   -Wl,--export=__heap_base \
-  -Wl,--export=clayterm_size \
+  -Wl,--export=tty_size \
   -Wl,--export=init \
   -Wl,--export=reduce \
   -Wl,--export=output \

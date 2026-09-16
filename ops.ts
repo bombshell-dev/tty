@@ -214,7 +214,7 @@ export function pack(
           );
           o += 4;
 
-          // Must match render_border() in src/clayterm.c.
+          // Must match render_border() in src/tty.c.
           // Resolve CSS-like side fallbacks here, then write eight required
           // attribute words: fg/bg pairs in top, right, bottom, left order.
           // C treats the presence and order of these words as a wire-format
