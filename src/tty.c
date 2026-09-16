@@ -1,8 +1,8 @@
-/* clayterm.c — WASM terminal rendering engine for Clay UI
+/* tty.c — WASM terminal rendering engine for Clay UI
  *
  * Public API (exported to WASM):
- *   clayterm_size  — compute arena size for given dimensions
- *   init           — initialize a Clayterm instance in provided memory
+ *   tty_size  — compute arena size for given dimensions
+ *   init      — initialize a tty instance in provided memory
  *   reduce         — decode command buffer, run Clay layout, render to ANSI
  *   output         — pointer to output byte buffer
  *   length         — length of output byte buffer
@@ -11,7 +11,7 @@
  *                  — per-render Clay error accessors
  */
 
-#include "clayterm.h"
+#include "tty.h"
 #include "transitions.h"
 #include "../clay/clay.h"
 #include "buffer.h"
@@ -26,7 +26,7 @@
  * report back to the right Term's animating_count. Revisit once
  * nicbarker/clay#603 lands userData on transition callbacks; then the
  * handler can resolve its Term from args directly and this can go away. */
-struct Clayterm *ct_active_context = NULL;
+struct tty *ct_active_context = NULL;
 
 /* ── Command buffer protocol ──────────────────────────────────────── */
 
@@ -51,18 +51,18 @@ struct Clayterm *ct_active_context = NULL;
 /* clip stack depth: nesting beyond this clamps to the deepest rect */
 #define CLIP_STACK_MAX 16
 
-/* Clayterm-specific error code, numbered past Clay's error enum (0..8).
+/* tty-specific error code, numbered past Clay's error enum (0..8).
  * Mirrored by ERROR_TYPES in term.ts. */
-#define CLAYTERM_ERR_CLIP_DEPTH_EXCEEDED 9
+#define TTY_ERR_CLIP_DEPTH_EXCEEDED 9
 
-#define CLAYTERM_STR_(x) #x
-#define CLAYTERM_STR(x) CLAYTERM_STR_(x)
+#define TTY_STR_(x) #x
+#define TTY_STR(x) TTY_STR_(x)
 
 typedef struct {
   int x, y, w, h;
 } ClipRect;
 
-struct Clayterm {
+struct tty {
   int w, h;
   Cell *front;
   Cell *back;
@@ -104,7 +104,7 @@ struct Clayterm {
 };
 
 /* Memory layout inside the arena provided by the host:
- *   [Clayterm struct] [front cells] [back cells] [output buffer]
+ *   [tty struct] [front cells] [back cells] [output buffer]
  *
  * Output buffer is sized at 64 bytes per cell — enough for worst-case
  * full-screen redraws with truecolor SGR sequences on every cell.
@@ -113,11 +113,11 @@ struct Clayterm {
 
 /* ── Cell buffer ops ──────────────────────────────────────────────── */
 
-static Cell *cell_at(struct Clayterm *ct, Cell *buf, int x, int y) {
+static Cell *cell_at(struct tty *ct, Cell *buf, int x, int y) {
   return &buf[y * ct->w + x];
 }
 
-static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
+static void setcell(struct tty *ct, int x, int y, uint32_t ch, uint32_t fg,
                     uint32_t bg) {
   if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
     return;
@@ -137,7 +137,7 @@ static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
 
 /* ── Escape sequence generation ───────────────────────────────────── */
 
-static void emit_attr(struct Clayterm *ct, uint32_t fg, uint32_t bg) {
+static void emit_attr(struct tty *ct, uint32_t fg, uint32_t bg) {
   if (fg == ct->lastfg && bg == ct->lastbg)
     return;
 
@@ -187,7 +187,7 @@ static void emit_attr(struct Clayterm *ct, uint32_t fg, uint32_t bg) {
 }
 
 /** Emit CUP sequence. `row` is the 1-based terminal row of the region. */
-static void emit_cursor(struct Clayterm *ct, int x, int y, int row) {
+static void emit_cursor(struct tty *ct, int x, int y, int row) {
   buf_str(&ct->out, "\x1b[");
   buf_num(&ct->out, y + row);
   buf_put(&ct->out, ";", 1);
@@ -195,7 +195,7 @@ static void emit_cursor(struct Clayterm *ct, int x, int y, int row) {
   buf_put(&ct->out, "H", 1);
 }
 
-static void emit_ch(struct Clayterm *ct, int x, int y, int row, uint32_t ch) {
+static void emit_ch(struct tty *ct, int x, int y, int row, uint32_t ch) {
   if (ct->lastx != x - 1 || ct->lasty != y) {
     emit_cursor(ct, x, y, row);
   }
@@ -213,7 +213,7 @@ static void emit_ch(struct Clayterm *ct, int x, int y, int row, uint32_t ch) {
  * skipped, making this efficient for subsequent frames where most of
  * the screen is static. Derived from termbox2 tb_present.
  */
-static void present_cups(struct Clayterm *ct, int row) {
+static void present_cups(struct tty *ct, int row) {
   ct->lastx = -1;
   ct->lasty = -1;
 
@@ -273,7 +273,7 @@ static void present_cups(struct Clayterm *ct, int row) {
  * used for inline "region" rendering where the caller manages cursor
  * positioning externally and the output must work in pipes.
  */
-static void present_lines(struct Clayterm *ct) {
+static void present_lines(struct tty *ct) {
   for (int y = 0; y < ct->h; y++) {
     if (y > 0)
       buf_put(&ct->out, "\n", 1);
@@ -321,7 +321,7 @@ static uint32_t color(Clay_Color c) {
 
 /* ── Clay render backend ──────────────────────────────────────────── */
 
-static void render_rect(struct Clayterm *ct, int x0, int y0, int x1, int y1,
+static void render_rect(struct tty *ct, int x0, int y0, int x1, int y1,
                         Clay_RectangleRenderData *r) {
   uint32_t bg = color(r->backgroundColor);
   for (int y = y0; y < y1; y++)
@@ -353,7 +353,7 @@ static uint32_t utf8_bytes_for_cps(const char *start, uint32_t cps,
   return consumed;
 }
 
-static void render_text(struct Clayterm *ct, int x0, int y0,
+static void render_text(struct tty *ct, int x0, int y0,
                         Clay_RenderCommand *cmd) {
 
   Clay_TextRenderData *t = &cmd->renderData.text;
@@ -432,7 +432,7 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
   }
 }
 
-static void render_border(struct Clayterm *ct, int x0, int y0, int x1, int y1,
+static void render_border(struct tty *ct, int x0, int y0, int x1, int y1,
                           Clay_RenderCommand *cmd) {
   Clay_BorderRenderData *b = &cmd->renderData.border;
   /* Must match border packing in ops.ts.
@@ -556,7 +556,7 @@ static int align64(int n) { return (n + 63) & ~63; }
  * with the grid instead of shipping Clay's fixed 8192-element default. 2x cells
  * bounds sane trees (leaves >= 1 cell, branching >= 2); the ceiling preserves
  * today's capacity for large grids, the floor keeps headroom on tiny ones.
- * Must run before Clay_MinMemorySize in both clayterm_size and init so the
+ * Must run before Clay_MinMemorySize in both tty_size and init so the
  * size the host queries always matches the arena init consumes. */
 static void set_clay_capacity(int w, int h) {
   int elems = w * h * 2;
@@ -568,20 +568,20 @@ static void set_clay_capacity(int w, int h) {
   Clay_SetMaxMeasureTextCacheWordCount(elems * 2);
 }
 
-int clayterm_size(int w, int h) {
+int tty_size(int w, int h) {
   set_clay_capacity(w, h);
   int cell_count = w * h;
   int cell_bytes = cell_count * (int)sizeof(Cell);
   int out_bytes = cell_count * OUT_BYTES_PER_CELL;
   int clay_bytes = (int)Clay_MinMemorySize();
-  return align8((int)sizeof(struct Clayterm)) + align8(cell_bytes) /* front */
+  return align8((int)sizeof(struct tty)) + align8(cell_bytes) /* front */
          + align8(cell_bytes)                                      /* back */
          + align8(out_bytes)    /* output buffer */
          + align64(clay_bytes); /* Clay arena */
 }
 
 static void clay_error(Clay_ErrorData err) {
-  struct Clayterm *ct = (struct Clayterm *)err.userData;
+  struct tty *ct = (struct tty *)err.userData;
   if (ct->error_count < MAX_ERRORS) {
     ct->errors[ct->error_count++] = err;
   }
@@ -590,18 +590,18 @@ static void clay_error(Clay_ErrorData err) {
 /* Surface a CLIP_DEPTH_EXCEEDED error once per frame. The message is a static
  * literal, so its pointer lives in WASM linear memory and is readable by the
  * host via error_message_ptr/length. */
-static void report_clip_depth_exceeded(struct Clayterm *ct) {
+static void report_clip_depth_exceeded(struct tty *ct) {
   if (ct->clip_depth_exceeded)
     return;
   ct->clip_depth_exceeded = 1;
   if (ct->error_count >= MAX_ERRORS)
     return;
   static const char msg[] =
-      "clip nesting exceeds tracked depth limit of " CLAYTERM_STR(
+      "clip nesting exceeds tracked depth limit of " TTY_STR(
           CLIP_STACK_MAX) "; over-deep clips coalesced into the deepest "
                           "tracked region";
   ct->errors[ct->error_count++] = (Clay_ErrorData){
-      .errorType = (Clay_ErrorType)CLAYTERM_ERR_CLIP_DEPTH_EXCEEDED,
+      .errorType = (Clay_ErrorType)TTY_ERR_CLIP_DEPTH_EXCEEDED,
       .errorText = {.isStaticallyAllocated = true,
                     .length = (int32_t)(sizeof(msg) - 1),
                     .chars = msg},
@@ -609,33 +609,33 @@ static void report_clip_depth_exceeded(struct Clayterm *ct) {
   };
 }
 
-int error_count(struct Clayterm *ct) { return ct->error_count; }
+int error_count(struct tty *ct) { return ct->error_count; }
 
-int error_type(struct Clayterm *ct, int index) {
+int error_type(struct tty *ct, int index) {
   if (index < 0 || index >= ct->error_count)
     return -1;
   return (int)ct->errors[index].errorType;
 }
 
-int error_message_length(struct Clayterm *ct, int index) {
+int error_message_length(struct tty *ct, int index) {
   if (index < 0 || index >= ct->error_count)
     return 0;
   return ct->errors[index].errorText.length;
 }
 
-int error_message_ptr(struct Clayterm *ct, int index) {
+int error_message_ptr(struct tty *ct, int index) {
   if (index < 0 || index >= ct->error_count)
     return 0;
   return (int)ct->errors[index].errorText.chars;
 }
 
-struct Clayterm *init(void *mem, int w, int h) {
+struct tty *init(void *mem, int w, int h) {
   set_clay_capacity(w, h);
-  struct Clayterm *ct = (struct Clayterm *)mem;
+  struct tty *ct = (struct tty *)mem;
   int cell_count = w * h;
   int cell_bytes = align8(cell_count * (int)sizeof(Cell));
   int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL);
-  char *base = (char *)mem + align8((int)sizeof(struct Clayterm));
+  char *base = (char *)mem + align8((int)sizeof(struct tty));
 
   char *clay_mem = base + cell_bytes * 2 + out_bytes;
   int clay_bytes = align64((int)Clay_MinMemorySize());
@@ -644,7 +644,7 @@ struct Clayterm *init(void *mem, int w, int h) {
   Clay_Initialize(arena, (Clay_Dimensions){(float)w, (float)h},
                   (Clay_ErrorHandler){clay_error, ct});
 
-  *ct = (struct Clayterm){
+  *ct = (struct tty){
       .w = w,
       .h = h,
       .front = (Cell *)base,
@@ -664,7 +664,7 @@ struct Clayterm *init(void *mem, int w, int h) {
   return ct;
 }
 
-void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
+void reduce(struct tty *ct, uint32_t *buf, int len, int mode, int row,
             float deltaTime) {
   int i = 0;
   ct_active_context = ct;
@@ -980,11 +980,11 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   ct_active_context = NULL;
 }
 
-char *output(struct Clayterm *ct) { return ct->out.data; }
+char *output(struct tty *ct) { return ct->out.data; }
 
-int length(struct Clayterm *ct) { return ct->out.length; }
+int length(struct tty *ct) { return ct->out.length; }
 
-int animating(struct Clayterm *ct) { return ct->animating_count; }
+int animating(struct tty *ct) { return ct->animating_count; }
 
 int get_element_bounds(const char *name, int name_len, float *out) {
   Clay_String str = {.length = name_len, .chars = name};

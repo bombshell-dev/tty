@@ -1,7 +1,7 @@
 #include "transitions.h"
-#include "clayterm.h"
+#include "tty.h"
 
-extern struct Clayterm *ct_active_context;
+extern struct tty *ct_active_context;
 
 static float clampf(float v, float lo, float hi) {
   if (v < lo) {
