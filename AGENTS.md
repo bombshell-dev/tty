@@ -44,5 +44,5 @@ Do not include any agent marketing material (e.g. "Generated with...",
 ## C code conventions
 
 - No global mutable state. All state belongs on a struct instance (e.g.
-  `Clayterm`). Use Clay's `userData` pointer or similar mechanisms to route
+  `Tty`). Use Clay's `userData` pointer or similar mechanisms to route
   callbacks back to the owning instance.

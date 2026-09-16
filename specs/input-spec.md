@@ -1,4 +1,4 @@
-# Clayterm Input Specification
+# @bomb.sh/tty Input Specification
 
 **Version:** 0.1 (draft) **Status:** Current-state specification. Descriptive
 for the input parsing surface.
@@ -7,7 +7,7 @@ for the input parsing surface.
 
 ## 1. Purpose
 
-This specification describes Clayterm's terminal input parsing surface: the API
+This specification describes @bomb.sh/tty's terminal input parsing surface: the API
 for decoding raw terminal byte sequences into structured events.
 
 Input parsing is architecturally independent from rendering (see

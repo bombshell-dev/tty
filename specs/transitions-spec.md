@@ -1,4 +1,4 @@
-# Clayterm Transitions Specification
+# @bomb.sh/tty Transitions Specification
 
 **Version:** 0.1 (draft) **Status:** Design specification for a work-in-progress
 feature. Normative where it establishes invariants and contract. Descriptive
@@ -10,22 +10,22 @@ where surfaces may settle during implementation.
 
 A transition smoothly interpolates an element's visual properties over time when
 they change between frames. This specification defines how transitions integrate
-with Clayterm's frame-snapshot rendering model: how they are declared, how time
+with @bomb.sh/tty's frame-snapshot rendering model: how they are declared, how time
 is supplied, and how callers observe in-flight animation so they can drive the
 render loop.
 
 Transitions are a first-class extension of the rendering contract defined in the
-[Clayterm Renderer Specification](renderer-spec.md). They do not change the
+[@bomb.sh/tty Renderer Specification](renderer-spec.md). They do not change the
 architectural model, do not introduce a component tree, and do not require
 callers to hold cross-frame identity beyond the stable element identifiers they
 already use.
 
-This specification covers what clayterm ships against the current upstream Clay
-layout engine. Several capabilities that the rendering model naturally invites —
-per-property easing, per-element enter/exit behaviors, custom bezier easings —
-are intentionally excluded from v1 because the underlying Clay API cannot
-express them without upstream changes that are still in flight. Section 13
-records these deferrals and the upstream dependencies that unblock them.
+This specification covers what @bomb.sh/tty ships against the current upstream
+Clay layout engine. Several capabilities that the rendering model naturally
+invites — per-property easing, per-element enter/exit behaviors, custom bezier
+easings — are intentionally excluded from v1 because the underlying Clay API
+cannot express them without upstream changes that are still in flight. Section
+13 records these deferrals and the upstream dependencies that unblock them.
 
 ---
 
@@ -72,7 +72,7 @@ interpolated: position (x, y), size (width, height), background color, overlay
 color, border color, or border width.
 
 **Easing.** A function mapping normalized progress in [0, 1] to an eased value
-in [0, 1]. Clayterm exposes a fixed set of built-in easings.
+in [0, 1]. @bomb.sh/tty exposes a fixed set of built-in easings.
 
 **Delta time (`deltaTime`).** The number of seconds elapsed since the previous
 render transaction. Used by the renderer to advance interpolation.
@@ -127,7 +127,7 @@ negative deltas and corrupt interpolation.
 
 ### 4.3 Delta clamping
 
-Clayterm does not clamp `deltaTime`. Long gaps between frames (process
+@bomb.sh/tty does not clamp `deltaTime`. Long gaps between frames (process
 suspension, backgrounded terminal, debugger pause) produce large deltas. The
 underlying interpolation is duration-based and naturally clamps at 1.0 of
 progress, so a large delta causes in-flight transitions to complete rather than
@@ -355,7 +355,7 @@ CLAY_TRANSITION_PROPERTY_BORDER_WIDTH     = 256
 ```
 
 (Value 64, `CLAY_TRANSITION_PROPERTY_CORNER_RADIUS`, is defined upstream but has
-no field in `Clay_TransitionData` and is not emitted by clayterm.)
+no field in `Clay_TransitionData` and is not emitted by @bomb.sh/tty.)
 
 The property-name helpers on the TS side expand to this bitmask during packing.
 
@@ -442,10 +442,10 @@ _This section is descriptive and may change without affecting contract._
 
 ### 12.1 Clay submodule pin
 
-clayterm pins Clay at a specific commit that includes the transition API
+@bomb.sh/tty pins Clay at a specific commit that includes the transition API
 introduced upstream in commit `ee192f4`. The pin is recorded in the `clay`
 submodule pointer. Advancing the pin is a prerequisite when upstream adds
-capabilities clayterm depends on (Section 13).
+capabilities @bomb.sh/tty depends on (Section 13).
 
 ### 12.2 Handler architecture
 
@@ -528,7 +528,7 @@ handler.
 
 `CLAY_TRANSITION_PROPERTY_CORNER_RADIUS` is defined in the Clay property enum,
 but `Clay_TransitionData` has no field carrying corner radius. Upstream
-`Clay_EaseOut` does not interpolate it. Clayterm cannot either.
+`Clay_EaseOut` does not interpolate it. @bomb.sh/tty cannot either.
 
 **Unblocked by:** Clay adding a `cornerRadius` field to `Clay_TransitionData`
 and interpolating it in layout.

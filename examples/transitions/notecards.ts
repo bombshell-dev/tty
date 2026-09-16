@@ -1,5 +1,5 @@
 /**
- * Clay-transitions demo — a port of the raylib-transitions example to clayterm.
+ * Clay-transitions demo — a port of the raylib-transitions example to @bomb.sh/tty.
  *
  * A grid of colored boxes that animate position, size, and background color.
  * Press 's' to shuffle (animates position), 'c' to recolor (animates bg).

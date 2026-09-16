@@ -1,4 +1,4 @@
-# Clayterm Renderer Specification
+# @bomb.sh/tty Renderer Specification
 
 **Version:** 0.1 (draft) **Status:** Current-state specification. Normative for
 the rendering contract. Descriptive for settling surfaces.
@@ -7,26 +7,26 @@ the rendering contract. Descriptive for settling surfaces.
 
 ## 1. Purpose
 
-Clayterm is a terminal rendering engine. It accepts a declarative description of
+@bomb.sh/tty is a terminal rendering engine. It accepts a declarative description of
 a terminal UI layout, performs layout computation and cell-level diffing
 internally, and returns ANSI escape byte sequences suitable for direct write to
 a terminal output stream.
 
-This specification defines Clayterm's current-state rendering contract: its
+This specification defines @bomb.sh/tty's current-state rendering contract: its
 architectural model, its invariants, its stable public API surface, and its
 intentional boundaries. It is written to allow future feature work to extend the
 project without destabilizing the core.
 
-This specification does not attempt to define areas of Clayterm that are still
+This specification does not attempt to define areas of @bomb.sh/tty that are still
 settling. Where the project has working but evolving surfaces — including the
 pointer event model and certain wrapper types — those are described in Section
 12 as current implementation rather than normative contract.
 
 Input parsing is specified separately in the
-[Clayterm Input Specification](input-spec.md).
+[@bomb.sh/tty Input Specification](input-spec.md).
 
 Transitions are specified separately in the
-[Clayterm Transitions Specification](transitions-spec.md).
+[@bomb.sh/tty Transitions Specification](transitions-spec.md).
 
 ---
 
@@ -39,7 +39,7 @@ Transitions are specified separately in the
 - The stable public rendering API
 - The directive model and core helpers
 - Element identity and frame semantics
-- Boundary responsibilities (what Clayterm owns and what it does not)
+- Boundary responsibilities (what @bomb.sh/tty owns and what it does not)
 
 ### In scope (non-normative, descriptive)
 
@@ -56,8 +56,8 @@ Transitions are specified separately in the
 - Packaging, CI, or distribution workflow details
 - Higher-level UI framework concerns (e.g., component lifecycle, reconciliation)
 - Demo applications
-- The crankterm project or any specific framework built on Clayterm
-- Input parsing (see [Clayterm Input Specification](input-spec.md))
+- The crankterm project or any specific framework built on @bomb.sh/tty
+- Input parsing (see [@bomb.sh/tty Input Specification](input-spec.md))
 
 ---
 
@@ -90,16 +90,16 @@ sequences, and UTF-8 text.
 implement the render transaction. The renderer core owns layout computation,
 render-command walking, cell-buffer diffing, and ANSI byte generation.
 
-**Caller.** Any code that invokes Clayterm's public API to produce terminal
+**Caller.** Any code that invokes @bomb.sh/tty's public API to produce terminal
 output. The caller owns terminal setup, IO, input handling, and application
 lifecycle.
 
 **Higher-level framework.** A component model, reconciler, or application
-framework built on top of Clayterm. Examples include crankterm. Clayterm has no
+framework built on top of @bomb.sh/tty. Examples include crankterm. @bomb.sh/tty has no
 dependency on any higher-level framework, and this specification does not
 constrain their design.
 
-**Term.** An instance of the Clayterm renderer, bound to specific terminal
+**Term.** An instance of the @bomb.sh/tty renderer, bound to specific terminal
 dimensions. A Term is the object through which the caller performs render
 transactions.
 
@@ -111,7 +111,7 @@ _This section is normative._
 
 ### 4.1 Pipeline
 
-Clayterm implements a rendering pipeline with the following stages:
+@bomb.sh/tty implements a rendering pipeline with the following stages:
 
 1. **Directive acceptance.** The caller provides a complete directive array
    representing the desired UI state for a single frame.
@@ -165,7 +165,7 @@ internal to the renderer and not directly observable to the caller.
 _This section is normative._
 
 This specification defines the **architectural rendering contract**: the
-commitments that make Clayterm what it is and that callers and framework authors
+commitments that make @bomb.sh/tty what it is and that callers and framework authors
 can depend on.
 
 This specification **does not** define the following as normative:
@@ -771,7 +771,7 @@ caller's.
 
 Input parsing (keyboard events, mouse events, escape sequence decoding) is an
 independent concern specified separately in the
-[Clayterm Input Specification](input-spec.md). The renderer MUST NOT depend on
+[@bomb.sh/tty Input Specification](input-spec.md). The renderer MUST NOT depend on
 input-parsing state, types, or API.
 
 However, pointer hit detection does require the render loop to participate. The
@@ -790,7 +790,7 @@ The renderer MUST NOT implement or depend on:
 - State management or reactivity
 - Event propagation through a component hierarchy
 
-These are the domain of higher-level frameworks built on Clayterm.
+These are the domain of higher-level frameworks built on @bomb.sh/tty.
 
 ---
 
@@ -1013,7 +1013,7 @@ the most recent `render()` call. Each error is a `ClayError` object with:
 
 - `type`: a string identifying the error category. The following types are
   defined. Most mirror Clay's error taxonomy; `"CLIP_DEPTH_EXCEEDED"` is
-  Clayterm-specific.
+  @bomb.sh/tty-specific.
   - `"TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED"`
   - `"ARENA_CAPACITY_EXCEEDED"`
   - `"ELEMENTS_CAPACITY_EXCEEDED"`
@@ -1038,7 +1038,7 @@ Future versions may restructure the return type.
 
 ### 12.4 Pointer event model
 
-Clayterm currently supports pointer hit-testing via the underlying layout
+@bomb.sh/tty currently supports pointer hit-testing via the underlying layout
 engine's element-identification mechanism. The caller passes pointer state
 (`{ x, y, down }`) as part of render options, and the renderer returns pointer
 events as part of the render result:
@@ -1167,7 +1167,7 @@ confidence of any feature currently in the codebase.
 
 ### How to interpret "currently exported"
 
-Several symbols are currently accessible from Clayterm's module exports —
+Several symbols are currently accessible from @bomb.sh/tty's module exports —
 including `pack()`, `validate()`, and numerous input-related types — without
 clear evidence that they were intended as stable public contract. Being exported
 may mean "needed by internal modules" or "not yet audited for public/internal

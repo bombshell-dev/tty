@@ -64,7 +64,7 @@ await main(function* () {
   });
 
   // Introduction
-  say("Clayterm can render entire scenes, but it can also render");
+  say("@bomb.sh/tty can render entire scenes, but it can also render");
   say('"inline" for a streaming UI. This is useful for semi-interactive');
   say("CLI commands that write output to the normal console screen.");
   say("");

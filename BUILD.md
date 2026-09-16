@@ -18,8 +18,8 @@ The local source build is driven by `make`.
 
 It generates:
 
-- `clayterm.wasm` — the compiled WebAssembly module built from the C sources
-- `wasm.ts` — a generated TypeScript file derived from `clayterm.wasm`
+- `tty.wasm` — the compiled WebAssembly module built from the C sources
+- `wasm.ts` — a generated TypeScript file derived from `tty.wasm`
 
 `wasm.ts` is generated output, not hand-maintained source.
 
@@ -166,8 +166,8 @@ For a quick wasm-target smoke test, make sure `clang` can compile and link for
 `wasm32`:
 
 ```sh
-clang --target=wasm32 -nostdlib -Wl,--no-entry -x c /dev/null -o /tmp/clayterm-wasm-test.wasm
-rm -f /tmp/clayterm-wasm-test.wasm
+clang --target=wasm32 -nostdlib -Wl,--no-entry -x c /dev/null -o /tmp/tty-wasm-test.wasm
+rm -f /tmp/tty-wasm-test.wasm
 ```
 
 On macOS, if `which clang` still points to `/usr/bin/clang` and the wasm test
@@ -184,7 +184,7 @@ make
 
 This should produce:
 
-- `clayterm.wasm`
+- `tty.wasm`
 - `wasm.ts`
 
 For a clean rebuild:
@@ -199,7 +199,7 @@ Re-run `make` when:
 
 - you change files under `src/`
 - you update the `clay` submodule
-- `clayterm.wasm` or `wasm.ts` is missing
+- `tty.wasm` or `wasm.ts` is missing
 - generated outputs look stale after switching branches or pulling changes
 
 When in doubt, use a clean rebuild:
@@ -249,7 +249,7 @@ make clean && make
 Symptoms may include:
 
 - target-related `clang` errors mentioning `wasm32`
-- linker failures while producing `clayterm.wasm`
+- linker failures while producing `tty.wasm`
 
 Recovery:
 
@@ -260,8 +260,8 @@ Recovery:
 - rerun the wasm smoke test:
 
 ```sh
-clang --target=wasm32 -nostdlib -Wl,--no-entry -x c /dev/null -o /tmp/clayterm-wasm-test.wasm
-rm -f /tmp/clayterm-wasm-test.wasm
+clang --target=wasm32 -nostdlib -Wl,--no-entry -x c /dev/null -o /tmp/tty-wasm-test.wasm
+rm -f /tmp/tty-wasm-test.wasm
 ```
 
 If the smoke test fails, fix the toolchain first and only then rerun `make`.
@@ -270,7 +270,7 @@ If the smoke test fails, fix the toolchain first and only then rerun `make`.
 
 Symptoms may include:
 
-- `clayterm.wasm` is missing
+- `tty.wasm` is missing
 - `wasm.ts` is missing
 - you changed `src/` or updated `clay/`, but the generated outputs do not match
 
