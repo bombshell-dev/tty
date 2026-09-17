@@ -1,8 +1,6 @@
 import { close, fixed, grow, open, rgba, text } from "../ops.ts";
 import { createTerm } from "../term.ts";
 import { describe, expect, it } from "./suite.ts";
-import { offlineDetect, trueColorDetect } from "./caps.ts";
-import { CLAYTERM_16 } from "./fixtures.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -72,6 +70,10 @@ function firstCell(cells: Cell[], ch: string): Cell {
   return cell!;
 }
 
+async function trueColorTerm(options: { width: number; height: number }) {
+  return await createTerm(options);
+}
+
 describe("foreground", () => {
   it("emits uncolored text with no foreground", async () => {
     let term = await createTerm({ width: 12, height: 1 });
@@ -81,10 +83,6 @@ describe("foreground", () => {
     expect(ansi).not.toContain("\x1b[38;2;255;255;255");
   });
 });
-
-async function trueColorTerm(options: { width: number; height: number }) {
-  return await createTerm({ ...options, detection: await trueColorDetect() });
-}
 
 describe("background", () => {
   it("fills border cells with the requested border-level bg", async () => {
@@ -223,57 +221,5 @@ describe("background", () => {
     let afterHi = ansi.slice(hi + 2);
     expect(afterHi).not.toContain(bg.sgr);
     expect(afterHi.startsWith("\x1b[0m ")).toBe(true);
-  });
-});
-
-describe("capability-gated color encoding", () => {
-  let OPS = [
-    open("root", { layout: { width: grow(), height: grow() } }),
-    text("hi", { color: rgba(255, 0, 0), bg: rgba(0, 0, 255) }),
-    close(),
-  ];
-
-  it("emits 256-color SGR with no terminfo handle (baseline)", async () => {
-    let term = await createTerm({ width: 12, height: 1 });
-    let ansi = decode(term.render(OPS).output);
-
-    expect(ansi).toContain("\x1b[38;5;196m");
-    expect(ansi).toContain("\x1b[48;5;21m");
-    expect(ansi).not.toContain("38;2");
-    expect(ansi).not.toContain("48;2");
-  });
-
-  it("emits truecolor SGR when truecolor evidence is present", async () => {
-    let detection = await trueColorDetect();
-    let term = await createTerm({ width: 12, height: 1, detection });
-    let ansi = decode(term.render(OPS).output);
-
-    expect(ansi).toContain("\x1b[38;2;255;0;0m");
-    expect(ansi).toContain("\x1b[48;2;0;0;255m");
-  });
-
-  it("emits 16-color SGR when the terminfo entry reports 16 colors", async () => {
-    let detection = await offlineDetect({ terminfo: CLAYTERM_16 });
-    let term = await createTerm({ width: 12, height: 1, detection });
-    let ansi = decode(term.render(OPS).output);
-
-    expect(ansi).toContain("\x1b[91m");
-    expect(ansi).toContain("\x1b[44m");
-    expect(ansi).not.toContain("38;5");
-    expect(ansi).not.toContain("38;2");
-  });
-
-  it("maps grays onto the 256-color grayscale ramp", async () => {
-    let term = await createTerm({ width: 12, height: 1 });
-    let ansi = decode(
-      term.render([
-        open("root", { layout: { width: grow(), height: grow() } }),
-        text("hi", { color: rgba(128, 128, 128) }),
-        close(),
-      ]).output,
-    );
-
-    // (128,128,128) sits on the grayscale ramp: 232 + (128-8)/10 = 244
-    expect(ansi).toContain("\x1b[38;5;244m");
   });
 });

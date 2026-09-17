@@ -446,12 +446,10 @@ MUST be a no-op for that step.
    emitted.
 
 **Capability semantics.** A `CapabilityEvent` step folds the event's `key` and
-`value` into the Term's private `RuntimeCapabilities`. When the folded value
-changes a capability that affects rendered output (color encoding, synchronized
-output wrapping), the step MUST discard all diff state so the next render
-transaction emits a complete redraw. The step returns any bytes the change
-requires now — for example, enabling synchronized output on `sync-output: true`
-— per TINV-5 (Terminfo Specification §5).
+`value` into the Term's private `RuntimeCapabilities`. The foundation update
+transaction does not emit bytes or alter renderer output as a consequence of a
+capability event. A focused capability specification MUST define any output
+invalidation or immediate bytes required by its consumer.
 
 **Return value.** `update()` returns a `Uint8Array` of bytes to write to the
 terminal immediately. An empty array is valid when the update changes no
@@ -467,57 +465,18 @@ Output `Uint8Array`s returned by render transactions prior to a resize update
 MUST NOT be used after it (this strengthens the validity window in §7.3: output
 is valid until the next `render()` **or** `update()` call).
 
-### 7.8 Capability-gated emission
+### 7.8 Capability consumption
 
-The renderer reads its private `RuntimeCapabilities` at the start of each render
-transaction and gates its output accordingly. `RuntimeCapabilities` is set at
-Term creation from the `Detection.capabilities` passed to `createTerm`, and
-updated by `update()` when `CapabilityEvent` values arrive (§7.7). The renderer
-never writes capabilities and holds no reference to the input parser (INV-7).
+The renderer may consume the read-only capability snapshot maintained by
+`Term.update()`, but this foundation specification does not define any
+capability-specific output. Protocols that change emitted bytes MUST add their
+own renderer section, capability evidence, invalidation rules, and tests in a
+focused feature specification.
 
-**Color encoding ladder.** The renderer MUST select its SGR color encoding from
-`RuntimeCapabilities`:
-
-- `trueColor` set → 24-bit SGR (`38;2;r;g;b` / `48;2;r;g;b`)
-- otherwise `colors` ≥ 256 → 256-color SGR (`38;5;n` / `48;5;n`), mapping RGB to
-  the nearest entry of the 6×6×6 color cube and 24-step grayscale ramp
-- otherwise → 16-color SGR (`30–37`, `90–97` and background equivalents),
-  mapping RGB to the nearest of the 16 ANSI colors
-
-The nearest-color quantization method is implementation-defined but MUST be
-deterministic: the same RGB input always maps to the same palette entry within a
-process.
-
-**Back-color-erase.** When `bce` is set, the renderer MAY use erase sequences
-that rely on the terminal filling cleared cells with the current background.
-When it is clear, the renderer MUST NOT depend on that behavior.
-
-**Synchronized output.** When `syncOutput` is set, the renderer MUST wrap each
-non-empty cursor-update-mode frame in the synchronized output protocol:
-`CSI ? 2026 h` before the first output byte and `CSI ? 2026 l` after the last,
-within the same output buffer. The wrap is frame-scoped: begin and end always
-appear in the same render transaction's output, so no terminal state persists
-between frames (see §11.2). When the capability is unset, the wrap MUST NOT be
-emitted. Line-mode output is never wrapped.
-
-The wrap complements — never replaces — cell diffing. Emitting only changed
-cells (§4.4) remains the primary defense against tearing on terminals without
-mode 2026 and the dominant reduction in bytes sent, per the
-[guidance modern emulators publish for TUI developers](https://ghostty.org/docs/help/synchronized-output);
-the wrap adds atomic frame presentation on terminals that support it.
-
-**Capability change invalidation.** When `update()` folds a `CapabilityEvent`
-that changes a rendered capability (color encoding, synchronized output), the
-renderer MUST discard its diff state. The next render transaction MUST emit the
-frame as a complete redraw, so that no cell on screen retains bytes encoded
-under superseded capabilities. This invalidation happens inside `update()`, not
-at the next `render()` call.
-
-A Term created without a `detection` option uses the §7.1 baseline: 256-color
-emission. Per the progressive-enhancement invariant (Terminfo Specification
-TINV-3), truecolor emission requires positive evidence — a `Detection` with a
-terminfo entry confirming `RGB`/`Tc`, a `COLORTERM` environment variable, or a
-`colordepth` `CapabilityEvent` from a probe reply.
+In particular, color encoding, synchronized-output wrapping, pointer-shape
+output, Kitty keyboard mode setup, and Kitty graphics emission are deferred to
+their respective follow-up PRs. The renderer continues to emit its existing
+hardcoded ANSI output until one of those specifications is adopted.
 
 ---
 
@@ -542,8 +501,8 @@ parameters specify the terminal dimensions in character cells.
 
 The optional `detection` value (from `detectTerminal()`; see
 [Terminfo Specification](terminfo-spec.md) §10.1) initializes the Term's private
-`RuntimeCapabilities` from the static `Capabilities` it carries, gating emission
-per §7.8. When omitted, the Term uses the §7.1 baseline.
+`RuntimeCapabilities` from the static `Capabilities` it carries. When omitted,
+the Term uses the §7.1 baseline.
 
 ### 8.2 Render invocation
 
@@ -849,9 +808,9 @@ writes, SGR attributes for styling, and UTF-8 text) and, when a `caret`
 declaration is present, the cursor-positioning and cursor-visibility sequences
 specified in §7.6.
 
-The synchronized-output frame wrap (§7.6) is not terminal-state management in
-this sense: mode 2026 is begun and ended within a single frame's output and
-never persists across render transactions.
+Capability-specific output modes are not terminal-state management owned by the
+foundation renderer. A focused feature specification must define their state
+boundaries separately.
 
 ### 11.3 The renderer does not own application lifecycle
 
@@ -1221,8 +1180,8 @@ specification. Their omission is intentional, not an oversight._
 containers. No TypeScript-side API exists for providing scroll state to the
 renderer.
 
-**CSI helper for terminal setup.** No helper exists for generating paired apply/rollback
-byte arrays for terminal mode configuration.
+**CSI helper for terminal setup.** No helper exists for generating paired
+apply/rollback byte arrays for terminal mode configuration.
 
 **Browser-specific adapter.** The renderer's zero-IO architecture makes browser
 portability possible. No adapter exists.

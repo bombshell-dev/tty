@@ -163,17 +163,17 @@ ignored.
 
 ### 6.2 Query response recognition
 
-During a normal scan — with responses potentially interleaved with user input
-— the parser MUST recognize and consume the probe responses listed in Terminfo
+During a normal scan — with responses potentially interleaved with user input —
+the parser MUST recognize and consume the probe responses listed in Terminfo
 Specification §9.1: OSC 10/11/12 theme color reports, OSC 21 kitty color
 reports, OSC 22 pointer shape reports, XTGETTCAP DCS replies, DECRPM mode-2026
 reports, kitty keyboard flag reports, kitty graphics APC replies, and the DA1
 device attributes report.
 
 For each recognized response the parser MUST emit a `CapabilityEvent` in the
-`scan()` return value, per Terminfo Specification §6.3 and TINV-6. Responses
-are consumed silently: they MUST NOT surface as `InputEvent`s, and bytes
-belonging to a recognized response MUST NOT leak into adjacent events.
+`scan()` return value, per Terminfo Specification §6.3 and TINV-6. Responses are
+consumed silently: they MUST NOT surface as `InputEvent`s, and bytes belonging
+to a recognized response MUST NOT leak into adjacent events.
 
 When the parser is standalone (no `detection`), responses are still recognized
 and consumed so stray replies never corrupt the event stream.
@@ -192,4 +192,3 @@ event types have not been updated to surface them.
 **Whether input parsing should be a separate package.** Architecturally
 independent from the renderer but currently co-located. The distribution
 decision is open.
-

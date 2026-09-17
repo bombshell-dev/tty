@@ -22,10 +22,6 @@ const CLAY_DEFAULT_MAX_ELEMENT_COUNT = 8192;
 
 const MAX_FIXED_ELEMENT_WIRE_BYTES = 116;
 
-/* Flag bits — must match TERMINFO_* in src/terminfo.h */
-const FLAG_TRUECOLOR = 1 << 0;
-const FLAG_SYNC = 1 << 6;
-
 export interface Native {
   memory: WebAssembly.Memory;
   statePtr: number;
@@ -48,8 +44,6 @@ export interface Native {
   errorCount(ct: number): number;
   errorType(ct: number, index: number): number;
   errorMessage(ct: number, index: number): string;
-  /** Confirm (set/clear) a single capability flag on the private TermInfo struct. */
-  confirmFlag(bit: number, on: boolean): void;
 }
 
 import { compiled } from "./wasm.ts";
@@ -57,8 +51,6 @@ import { compiled } from "./wasm.ts";
 export async function createTermNative(
   w: number,
   h: number,
-  keys?: Uint8Array,
-  trueColor?: boolean,
 ): Promise<Native> {
   let memory = new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
@@ -91,7 +83,7 @@ export async function createTermNative(
   let ct = exports as unknown as {
     __heap_base: WebAssembly.Global;
     clayterm_size(w: number, h: number): number;
-    init(mem: number, w: number, h: number, ti: number): number;
+    init(mem: number, w: number, h: number): number;
     reduce(
       ct: number,
       buf: number,
@@ -112,11 +104,6 @@ export async function createTermNative(
     error_type(ct: number, index: number): number;
     error_message_length(ct: number, index: number): number;
     error_message_ptr(ct: number, index: number): number;
-    terminfo_size(): number;
-    terminfo_init(mem: number): number;
-    terminfo_parse(bytes: number, len: number, ti: number): number;
-    terminfo_grant(ti: number, flags: number): void;
-    terminfo_confirm(ti: number, bit: number, on: number): void;
   };
 
   let transferBytes = TEXT_TRANSFER_BUFFER_BYTES +
@@ -139,20 +126,6 @@ export async function createTermNative(
     return ptr;
   }
 
-  /* Allocate and initialize the private TermInfo struct. */
-  let tiPtr = bump(ct.terminfo_size());
-  ct.terminfo_init(tiPtr);
-
-  if (keys && keys.byteLength > 0) {
-    let keysPtr = bump(keys.byteLength);
-    new Uint8Array(memory.buffer).set(keys, keysPtr);
-    ct.terminfo_parse(keysPtr, keys.byteLength, tiPtr);
-  }
-
-  if (trueColor) {
-    ct.terminfo_grant(tiPtr, FLAG_TRUECOLOR);
-  }
-
   let statePtr!: number;
   let opsBuf = 0;
 
@@ -160,7 +133,7 @@ export async function createTermNative(
     let sz = ct.clayterm_size(lw, lh);
     let arena = bump(sz);
     if (!opsBuf) opsBuf = bump(transferBytes, 4);
-    statePtr = ct.init(arena, lw, lh, tiPtr);
+    statePtr = ct.init(arena, lw, lh);
   }
   layout(w, h);
 
@@ -179,9 +152,6 @@ export async function createTermNative(
     output: ct.output,
     length: ct.length,
     animating: ct.animating,
-    confirmFlag(bit: number, on: boolean): void {
-      ct.terminfo_confirm(tiPtr, bit, on ? 1 : 0);
-    },
     setPointer(x: number, y: number, down: boolean) {
       let view = new DataView(memory.buffer);
       view.setFloat32(opsBuf, x, true);
@@ -230,5 +200,3 @@ export async function createTermNative(
     },
   };
 }
-
-export { FLAG_SYNC, FLAG_TRUECOLOR };

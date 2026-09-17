@@ -69,12 +69,12 @@
  * 1=true/0=false; for colordepth, 0="16", 1="256", 2="truecolor". */
 #define CAP_FOREGROUND_COLOR 1
 #define CAP_BACKGROUND_COLOR 2
-#define CAP_CURSOR_COLOR     3
-#define CAP_COLORDEPTH       4
-#define CAP_SYNC_OUTPUT      5
-#define CAP_KITTY_KEYBOARD   6
-#define CAP_KITTY_GRAPHICS   7
-#define CAP_POINTER_SHAPE    8
+#define CAP_CURSOR_COLOR 3
+#define CAP_COLORDEPTH 4
+#define CAP_SYNC_OUTPUT 5
+#define CAP_KITTY_KEYBOARD 6
+#define CAP_KITTY_GRAPHICS 7
+#define CAP_POINTER_SHAPE 8
 
 /* ── Modifier flags (bitwise) ─────────────────────────────────────── */
 

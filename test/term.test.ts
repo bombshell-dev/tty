@@ -1,8 +1,6 @@
 // deno-lint-ignore-file no-control-regex
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
-import { createInput } from "../input.ts";
-import { offlineDetect } from "./caps.ts";
 import {
   close,
   fixed,
@@ -55,11 +53,10 @@ describe("term", () => {
       ]).output,
     );
 
-    // the SGR active when "h" is emitted should include the
-    // parent's red background (48;5;196 under baseline 256-color
-    // capabilities), not terminal default
+    // The SGR active when "h" is emitted should include the parent's red
+    // background, not the terminal default.
     let before = ansi.slice(0, ansi.indexOf("h"));
-    expect(before).toContain("\x1b[48;5;196");
+    expect(before).toContain("\x1b[48;2;255;0;0");
   });
 
   it("renders borders and padding", () => {
@@ -751,89 +748,5 @@ hi
       });
       expect(trim(print(decode(large.output), 120, 40))).toContain("Hi");
     });
-  });
-});
-
-describe("capability generation", () => {
-  let OPS = [
-    open("root", { layout: { width: grow(), height: grow() } }),
-    text("hi", { color: rgba(255, 0, 0) }),
-    close(),
-  ];
-
-  it("emits nothing for an unchanged frame", async () => {
-    let detection = await offlineDetect();
-    let term = await createTerm({ width: 12, height: 2, detection });
-    term.render(OPS);
-    expect(term.render(OPS).output.length).toBe(0);
-  });
-
-  it("forces a full redraw when capabilities change between frames", async () => {
-    let detection = await offlineDetect();
-    let term = await createTerm({ width: 12, height: 2, detection });
-    let input = await createInput({ detection });
-
-    term.render(OPS);
-    expect(term.render(OPS).output.length).toBe(0);
-
-    // an XTGETTCAP reply confirms truecolor mid-session; route the event to term
-    let { events } = input.scan(
-      new TextEncoder().encode("\x1bP1+r524742\x1b\\"),
-    );
-    term.update(events);
-
-    let ansi = new TextDecoder().decode(term.render(OPS).output);
-    expect(ansi).toContain("hi");
-    expect(ansi).toContain("\x1b[38;2;255;0;0m");
-  });
-});
-
-describe("synchronized output", () => {
-  let OPS = [
-    open("root", { layout: { width: grow(), height: grow() } }),
-    text("hi", { color: rgba(255, 0, 0) }),
-    close(),
-  ];
-
-  async function syncTerm() {
-    let detection = await offlineDetect();
-    let term = await createTerm({ width: 12, height: 2, detection });
-    let input = await createInput({ detection });
-    let { events } = input.scan(new TextEncoder().encode("\x1b[?2026;2$y"));
-    expect(events).toContainEqual({
-      type: "capability",
-      key: "sync-output",
-      value: true,
-    });
-    term.update(events);
-    return term;
-  }
-
-  it("wraps non-empty frames when syncOutput is confirmed", async () => {
-    let term = await syncTerm();
-    let ansi = new TextDecoder().decode(term.render(OPS).output);
-    expect(ansi.startsWith("\x1b[?2026h")).toBe(true);
-    expect(ansi.endsWith("\x1b[?2026l")).toBe(true);
-  });
-
-  it("does not wrap when syncOutput is unconfirmed", async () => {
-    let detection = await offlineDetect();
-    let term = await createTerm({ width: 12, height: 2, detection });
-    let ansi = new TextDecoder().decode(term.render(OPS).output);
-    expect(ansi).not.toContain("2026");
-  });
-
-  it("does not wrap empty frames", async () => {
-    let term = await syncTerm();
-    term.render(OPS);
-    expect(term.render(OPS).output.length).toBe(0);
-  });
-
-  it("does not wrap line-mode output", async () => {
-    let term = await syncTerm();
-    let ansi = new TextDecoder().decode(
-      term.render(OPS, { mode: "line" }).output,
-    );
-    expect(ansi).not.toContain("2026");
   });
 });

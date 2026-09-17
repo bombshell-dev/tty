@@ -1,10 +1,5 @@
 import { type Op, pack } from "./ops.ts";
-import {
-  type BoundingBox,
-  createTermNative,
-  FLAG_SYNC,
-  FLAG_TRUECOLOR,
-} from "./term-native.ts";
+import { type BoundingBox, createTermNative } from "./term-native.ts";
 import type { CapabilityEvent, ColorDepth, InputEvent } from "./input.ts";
 import type { Capabilities, Detection, Rgb } from "./terminfo.ts";
 
@@ -176,8 +171,6 @@ export async function createTerm(options: TermOptions): Promise<Term> {
   let native = await createTermNative(
     width,
     height,
-    detection?.keys,
-    detection?.capabilities.trueColor,
   );
   let { memory } = native;
 
@@ -320,12 +313,8 @@ export async function createTerm(options: TermOptions): Promise<Term> {
             wasAnimating = false;
           }
         } else {
-          let cap = c as CapabilityEvent;
-          if (cap.key === "colordepth") {
-            native.confirmFlag(FLAG_TRUECOLOR, cap.value === "truecolor");
-          } else if (cap.key === "sync-output") {
-            native.confirmFlag(FLAG_SYNC, cap.value as boolean);
-          }
+          // Capability events update the foundation snapshot. Feature PRs own
+          // any renderer-side output or invalidation for those capabilities.
         }
 
         currentCaps = next;

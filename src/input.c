@@ -17,8 +17,8 @@
 #include "trie.h"
 
 /* CAP_COLORDEPTH value encoding (must match input-native.ts): */
-#define COLORDEPTH_16       0
-#define COLORDEPTH_256      1
+#define COLORDEPTH_16 0
+#define COLORDEPTH_256 1
 #define COLORDEPTH_TRUECOLOR 2
 #include "mem.h"
 #include "utf8.h"
@@ -964,8 +964,7 @@ static int parse_apc_response(struct InputState *st) {
 
   const char *payload = st->buf + 3;
   int plen = end - 3 - (st->buf[end - 1] == '\x07' ? 1 : 2);
-  emit_cap_bool(st, CAP_KITTY_GRAPHICS,
-               payload_contains(payload, plen, ";OK"));
+  emit_cap_bool(st, CAP_KITTY_GRAPHICS, payload_contains(payload, plen, ";OK"));
 
   shift(st, end);
   return PARSE_OK;

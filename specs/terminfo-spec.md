@@ -13,10 +13,12 @@ capability data (compiled terminfo binaries) and runtime capability data
 typed values that the renderer and the input parser consume independently.
 
 The capability layer answers one question for both consumers: **what can this
-terminal do?** The renderer uses the answer to gate what it emits (color
-encoding, erase strategy, synchronized-output frame wrapping). The input parser
-uses the raw key-sequence material from the terminfo entry to seed its trie, and
-surfaces probe responses as `CapabilityEvent` values in the normal event stream.
+terminal do?** The renderer receives a read-only runtime snapshot. Focused
+renderer features decide how to consume that snapshot (color encoding, erase
+strategy, synchronized-output frame wrapping, or protocol-specific output). The
+input parser uses the raw key-sequence material from the terminfo entry to seed
+its trie, and surfaces probe responses as `CapabilityEvent` values in the normal
+event stream.
 
 ---
 
@@ -401,11 +403,10 @@ and mouse events in arrival order. The host loop routes them to `term.update()`.
 
 ### 9.3 Capability change over time
 
-A `colordepth` event can arrive after the renderer has already emitted frames
-under a different color encoding. `term.update()` handles this by returning a
-full-redraw priming sequence when the change affects rendered output, so no cell
-on screen retains bytes encoded under superseded capabilities. See Renderer
-Specification §7.8.
+A capability event can arrive after the renderer has already emitted frames.
+`term.update()` folds it into the runtime snapshot. Any renderer-side output
+invalidation or immediate bytes are defined by the focused feature specification
+that consumes that capability.
 
 ---
 
@@ -498,9 +499,10 @@ type Update =
 ```
 
 `applyUpdate` is a pure function. Given the current `RuntimeCapabilities` and
-one `Update`, it returns the next `RuntimeCapabilities` and the bytes to write
-now. `term.update()` is a loop over `applyUpdate`. Exporting the reducer allows
-tests to assert `(next, bytes)` against literal values without a live `Term`.
+one `Update`, it returns the next `RuntimeCapabilities` and any bytes defined by
+the consuming feature. The foundation returns an empty byte array;
+`term.update()` is a loop over `applyUpdate`. Exporting the reducer allows tests
+to assert `(next, bytes)` against literal values without a live `Term`.
 
 ### 10.5 `Term.update`
 
