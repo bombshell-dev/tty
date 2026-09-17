@@ -78,16 +78,11 @@ Options:
   responsiveness (lower values) and correct disambiguation of ESC-prefixed
   sequences (higher values).
 
-- **`terminfo`** — A `TermInfo` handle from `queryTermInfo()` (see
-  [Terminfo Specification](terminfo-spec.md) §10). Attaches the parser to the
-  handle's shared memory and capability struct. Terminal-specific key sequences
-  from the handle's terminfo bytes are loaded into the parser's sequence trie at
-  initialization (Section 6.1), and the parser becomes the capability struct's
-  runtime writer (Section 6.2). When omitted, the parser operates standalone
-  with xterm default sequences and a private capability struct.
-
-  The previous `Uint8Array` form of this option is replaced by the handle form;
-  raw bytes are supplied via `queryTermInfo({ terminfo: bytes })`.
+- **`detection`** — A `Detection` value from `detectTerminal()` (see
+  [Terminfo Specification](terminfo-spec.md) §10.1). Terminal-specific key
+  sequences from `detection.keys` are loaded into the parser's escape sequence
+  trie at initialization (Section 6.1). When omitted, the parser uses built-in
+  xterm default sequences.
 
 ### 4.2 Scan
 
@@ -154,11 +149,11 @@ capability layer specified by the [Terminfo Specification](terminfo-spec.md)._
 
 ### 6.1 Key sequences from terminfo
 
-When attached to a `TermInfo` handle whose terminfo bytes are present, the
-parser MUST load the terminal's `key_*` string capabilities into its escape
-sequence trie at initialization, before any scan. Terminfo-supplied sequences
-take precedence over the built-in xterm defaults when they conflict; defaults
-remain registered for sequences the terminfo entry does not define.
+When given a `detection` value whose `keys` field is present, the parser MUST
+load the terminal's `key_*` string capabilities into its escape sequence trie at
+initialization, before any scan. Terminfo-supplied sequences take precedence
+over the built-in xterm defaults when they conflict; defaults remain registered
+for sequences the terminfo entry does not define.
 
 The key capabilities consumed are the `key_*` string range mapped to existing
 `KEY_*` codes: arrows (`kcuu1`, `kcud1`, `kcub1`, `kcuf1`), function keys
@@ -166,27 +161,22 @@ The key capabilities consumed are the `key_*` string range mapped to existing
 and backtab (`kcbt`). Key capabilities with no corresponding `KEY_*` code are
 ignored.
 
-Strings are read directly from the raw terminfo bytes in the shared region; they
-are not copied into the capability struct.
-
 ### 6.2 Query response recognition
 
-The parser is the runtime write path for the capability struct. During a normal
-scan — with responses potentially interleaved with user input — it MUST
-recognize and consume the probe responses listed in Terminfo Specification §9.1:
-OSC 10/11/12 theme color reports, OSC 21 kitty color reports, OSC 22 pointer
-shape reports, XTGETTCAP DCS replies, DECRPM mode-2026 reports, kitty keyboard
-flag reports, kitty graphics APC replies, and the DA1 device attributes report.
+During a normal scan — with responses potentially interleaved with user input
+— the parser MUST recognize and consume the probe responses listed in Terminfo
+Specification §9.1: OSC 10/11/12 theme color reports, OSC 21 kitty color
+reports, OSC 22 pointer shape reports, XTGETTCAP DCS replies, DECRPM mode-2026
+reports, kitty keyboard flag reports, kitty graphics APC replies, and the DA1
+device attributes report.
 
-For each recognized response the parser updates the corresponding struct fields,
-sets the `confirmed` bit, and increments the generation, per Terminfo
-Specification §6. Responses are consumed silently: they MUST NOT surface as
-`InputEvent`s, and bytes belonging to a recognized response MUST NOT leak into
-adjacent events.
+For each recognized response the parser MUST emit a `CapabilityEvent` in the
+`scan()` return value, per Terminfo Specification §6.3 and TINV-6. Responses
+are consumed silently: they MUST NOT surface as `InputEvent`s, and bytes
+belonging to a recognized response MUST NOT leak into adjacent events.
 
-When the parser is standalone (no handle), responses are still recognized and
-consumed — writing into the parser's private struct — so stray replies never
-corrupt the event stream.
+When the parser is standalone (no `detection`), responses are still recognized
+and consumed so stray replies never corrupt the event stream.
 
 ---
 
@@ -203,18 +193,3 @@ event types have not been updated to surface them.
 independent from the renderer but currently co-located. The distribution
 decision is open.
 
----
-
-## Open Decisions
-
-1. **What are the normative Kitty progressive enhancement event types?** The
-   C-side struct has been extended. The TypeScript types have not been updated.
-   This specification does not attempt to predict the final shapes.
-
-2. **Should the input API be a separate package?** It is architecturally
-   independent from the renderer (INV-8) but currently co-located in the same
-   module.
-
-3. **Is the input API ready for normative specification?** The API has clear
-   design ownership but has undergone more revision than the rendering core.
-   This specification documents the current surface without freezing it.

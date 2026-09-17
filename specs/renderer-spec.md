@@ -238,9 +238,9 @@ concern MUST remain independent. Neither MUST depend on the other's state,
 types, or API surface. They MAY share a compiled WASM binary for loading
 efficiency, but this is an implementation convenience, not an architectural
 coupling. Both MAY consume the shared capability layer defined in the
-[Terminfo Specification](terminfo-spec.md); the renderer reads the capability
-struct and the input parser writes it, but neither observes the other through it
-beyond the capability facts it carries.
+[Terminfo Specification](terminfo-spec.md); the renderer reads capabilities and
+the input parser surfaces probe responses as `CapabilityEvent` values, but
+neither observes the other beyond the capability facts it carries.
 
 ---
 
@@ -1053,11 +1053,6 @@ Semantics of the additive rule:
   receive double-reservation (effective = 2 × borderWidth). This is a breaking
   change: remove the workaround padding to restore the original visual.
 
-This is a breaking change for callers who compensated for the old border-layout
-bug by setting `padding >= borderWidth`. Those callers should remove the
-compensating padding; border presence now implies the necessary layout
-reservation.
-
 ### 12.3 Render return type
 
 The `render()` method currently returns a `RenderResult` object shaped as
@@ -1226,49 +1221,14 @@ specification. Their omission is intentional, not an oversight._
 containers. No TypeScript-side API exists for providing scroll state to the
 renderer.
 
-**CSI helper for terminal setup.** A helper for generating paired apply/rollback
-byte arrays for terminal mode configuration was discussed but not implemented.
+**CSI helper for terminal setup.** No helper exists for generating paired apply/rollback
+byte arrays for terminal mode configuration.
 
 **Browser-specific adapter.** The renderer's zero-IO architecture makes browser
 portability possible. No adapter exists.
 
 **`betweenChildren` border support.** The underlying layout engine supports
 this. It is not exposed in the directive model.
-
----
-
-## Appendix A. Confidence Notes
-
-### Why the rendering core is specified more aggressively than other surfaces
-
-The rendering architecture — `createTerm`, `render(ops)`, the directive
-constructors, the bytes-output commitment, and the core invariants — was
-designed at the project's inception and has been stable since. It has survived
-the addition of pointer events, border junction resolution, and the crankterm
-integration without revision to its fundamental shapes. Its key abstractions
-(flat directive arrays, single render transaction, ANSI byte output) were chosen
-over explicitly rejected alternatives (per-element FFI, protobuf, builder
-pattern, string output). This level of stability and intentionality justifies
-normative specification.
-
-The pointer event model and render return wrapper are the least settled of the
-currently shipping features. Both were introduced during feature implementation
-rather than designed as part of the core architecture. The return type of
-`render()` has changed twice. The pointer calling convention was discovered
-through iteration. These are working and useful, but they carry the lowest
-confidence of any feature currently in the codebase.
-
-### How to interpret "currently exported"
-
-Several symbols are currently accessible from Clayterm's module exports —
-including `pack()`, `validate()`, and numerous input-related types — without
-clear evidence that they were intended as stable public contract. Being exported
-may mean "needed by internal modules" or "not yet audited for public/internal
-boundary."
-
-This specification does not treat the export list as a contract boundary.
-Instead, it uses stability over time, design ownership, survival of corrections,
-and absence of known reshaping forces as the criteria for normative inclusion.
 
 ---
 
@@ -1291,20 +1251,15 @@ resolution.
 3. **Is `pack()` public API?** `pack()` is currently exported but is an internal
    implementation detail, not public API. `validate()` is public API.
 
-4. **How should border widths interact with layout?** RESOLVED. Border widths
-   are now accounted for in layout additively (`padding + borderWidth`) per side
-   in the WASM renderer's decode step. See Section 12.2 for the full semantics.
-   This is a breaking change: prior workaround padding must be removed.
-
-5. **What are the specific transfer encoding details?** The encoding structure
+4. **What are the specific transfer encoding details?** The encoding structure
    is described in Section 12.1 as current implementation surface. Locking down
    opcode values would constrain future extensions unnecessarily.
 
-6. **What is the complete set of directive properties?** The property groups
+5. **What is the complete set of directive properties?** The property groups
    available in `open()` and `text()` are described in Section 12.2 as current
    implementation surface. They have been extended incrementally and will
    continue to grow.
 
-7. **What are the validation and error semantics?** How the renderer responds to
+6. **What are the validation and error semantics?** How the renderer responds to
    invalid input is unspecified. Callers SHOULD validate, but the validation
    model is not yet settled enough to define normatively.

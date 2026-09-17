@@ -591,8 +591,7 @@ continues to emit hardcoded ANSI; terminfo strings inform input parsing only.
    states no detection mechanism exists and the sequence degrades gracefully on
    unsupported terminals. Candidate sources: an extended user-capability
    convention, terminal identity heuristics from DA2/XTVERSION (currently
-   unparsed), or treating OSC 8 as permanently ignore-safe. A `hyperlinks` key
-   is reserved in `CapabilityEvent` once a source is settled.
+   unparsed), or treating OSC 8 as permanently ignore-safe.
 
 2. **Should per-shape pointer support be probed?** The kitty pointer shape
    protocol's `?name,name,…` query reports support for individual shape names.
