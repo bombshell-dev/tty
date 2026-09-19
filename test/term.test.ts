@@ -53,8 +53,8 @@ describe("term", () => {
       ]).output,
     );
 
-    // the SGR active when "h" is emitted should include the
-    // parent's red background (48;2;255;0;0), not terminal default
+    // The SGR active when "h" is emitted should include the parent's red
+    // background, not the terminal default.
     let before = ansi.slice(0, ansi.indexOf("h"));
     expect(before).toContain("\x1b[48;2;255;0;0");
   });
@@ -673,15 +673,12 @@ hi
       );
     });
 
-    it("accepts an event array, last resize wins, non-resize ignored", () => {
-      term.update({
-        events: [
-          { type: "key" },
-          { type: "resize", width: 30, height: 8 },
-          { type: "paste" },
-          { type: "resize", width: 12, height: 4 },
-        ],
-      });
+    it("accepts an update array, last resize wins, non-resize updates applied", () => {
+      term.update([
+        { width: 30, height: 8 },
+        { type: "capability", key: "sync-output", value: false },
+        { width: 12, height: 4 },
+      ]);
       let result = term.render(frame);
       expect(result.info.get("root")?.bounds).toEqual({
         x: 0,
@@ -691,11 +688,11 @@ hi
       });
     });
 
-    it("treats an event array with no resize events as a no-op", () => {
+    it("treats an update array with no resize as a no-op for layout", () => {
       term.render(frame);
-      term.update({ events: [{ type: "key" }, { type: "paste" }] });
+      term.update([{ type: "capability", key: "sync-output", value: false }]);
       expect(term.render(frame).output.length).toBe(0);
-      term.update({ events: [] });
+      term.update([]);
       expect(term.render(frame).output.length).toBe(0);
     });
 
