@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createInput, type Input } from "../input.ts";
+import { detectTerminal } from "../terminfo.ts";
+import { CLAYTERM_16, CLAYTERM_TC } from "./fixtures.ts";
 
 function bytes(...values: number[]): Uint8Array {
   return new Uint8Array(values);
@@ -740,6 +742,238 @@ describe("input", () => {
       expect(result.events[0]).toMatchObject({
         type: "keydown",
         key: "\u{1f389}",
+      });
+    });
+  });
+});
+
+describe("detection integration", () => {
+  async function withDetection() {
+    let detection = await detectTerminal({ env: {}, terminfo: CLAYTERM_TC });
+    let input = await createInput({ detection });
+    return { detection, input };
+  }
+
+  describe("key sequences from terminfo", () => {
+    it("decodes a terminfo-specific arrow sequence", async () => {
+      // clayterm-tc defines kcuu1=\EOZ
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1bOZ"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "keydown",
+        key: "ArrowUp",
+      });
+    });
+
+    it("decodes a terminfo-specific function key", async () => {
+      // clayterm-tc defines kf5=\E[99~
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b[99~"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({ type: "keydown", key: "F5" });
+    });
+
+    it("keeps the xterm defaults registered", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1bOA"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "keydown",
+        key: "ArrowUp",
+      });
+    });
+  });
+
+  describe("query response recognition", () => {
+    it("surfaces an OSC 10 foreground report as CapabilityEvent", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b]10;rgb:ffff/ffff/ffff\x07"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "foreground-color",
+        value: { r: 255, g: 255, b: 255 },
+      });
+    });
+
+    it("surfaces an OSC 11 background report (ST-terminated)", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b]11;rgb:1e1e/2a2a/3b3b\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "background-color",
+        value: { r: 0x1e, g: 0x2a, b: 0x3b },
+      });
+    });
+
+    it("surfaces an OSC 12 cursor color report", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b]12;#ff8800\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "cursor-color",
+        value: { r: 0xff, g: 0x88, b: 0 },
+      });
+    });
+
+    it("surfaces per-field events from an OSC 21 kitty color report", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(
+        str("\x1b]21;foreground=rgb:ff/00/00;background=\x1b\\"),
+      );
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "foreground-color",
+        value: { r: 255, g: 0, b: 0 },
+      });
+    });
+
+    it("surfaces an OSC 22 pointer shape report", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b]22;default\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "pointer-shape",
+        value: true,
+      });
+    });
+
+    it("surfaces truecolor colordepth from a valid XTGETTCAP reply", async () => {
+      let detection = await detectTerminal({ env: {}, terminfo: CLAYTERM_16 });
+      let input = await createInput({ detection });
+      let result = input.scan(str("\x1bP1+r524742\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "colordepth",
+        value: "truecolor",
+      });
+    });
+
+    it("surfaces 256-color colordepth denial from an invalid XTGETTCAP reply", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1bP0+r\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "colordepth",
+        value: "256",
+      });
+    });
+
+    it("surfaces 16-color colordepth denial when colors <= 16", async () => {
+      let detection = await detectTerminal({ env: {}, terminfo: CLAYTERM_16 });
+      let input = await createInput({ detection });
+      let result = input.scan(str("\x1bP0+r\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "colordepth",
+        value: "16",
+      });
+    });
+
+    it("surfaces synchronized output from a DECRPM confirm report", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b[?2026;2$y"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "sync-output",
+        value: true,
+      });
+    });
+
+    it("surfaces sync-output=false from a not-recognized DECRPM report", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b[?2026;0$y"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "sync-output",
+        value: false,
+      });
+    });
+
+    it("surfaces kitty-keyboard from a flags report", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b[?1u"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "kitty-keyboard",
+        value: true,
+      });
+    });
+
+    it("surfaces kitty-graphics=true from an OK APC reply", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b_Gi=31;OK\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "kitty-graphics",
+        value: true,
+      });
+    });
+
+    it("surfaces kitty-graphics=false from an error APC reply", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b_Gi=31;ENOTSUPPORTED:x\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "kitty-graphics",
+        value: false,
+      });
+    });
+
+    it("consumes a DA1 report without emitting any event", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(str("\x1b[?65;1;9c"));
+      expect(result.events).toEqual([]);
+    });
+
+    it("interleaves CapabilityEvents with key events correctly", async () => {
+      let { input } = await withDetection();
+      let result = input.scan(
+        str("a\x1b]11;rgb:0000/0000/0000\x1b\\b"),
+      );
+      expect(result.events.length).toBe(3);
+      expect(result.events[0]).toMatchObject({ type: "keydown", key: "a" });
+      expect(result.events[1]).toEqual({
+        type: "capability",
+        key: "background-color",
+        value: { r: 0, g: 0, b: 0 },
+      });
+      expect(result.events[2]).toMatchObject({ type: "keydown", key: "b" });
+    });
+
+    it("buffers a response split across scans", async () => {
+      let { input } = await withDetection();
+      let first = input.scan(str("\x1b]11;rgb:12"));
+      expect(first.events).toEqual([]);
+      let second = input.scan(str("34/5678/9abc\x1b\\"));
+      expect(second.events.length).toBe(1);
+      expect(second.events[0]).toEqual({
+        type: "capability",
+        key: "background-color",
+        value: { r: 0x12, g: 0x56, b: 0x9a },
+      });
+    });
+
+    it("surfaces CapabilityEvents on a standalone parser without detection", async () => {
+      let input = await createInput();
+      let result = input.scan(str("\x1b]11;rgb:0000/0000/0000\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "capability",
+        key: "background-color",
       });
     });
   });
