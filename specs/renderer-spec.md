@@ -40,6 +40,8 @@ Transitions are specified separately in the
 - The directive model and core helpers
 - Element identity and frame semantics
 - Boundary responsibilities (what Clayterm owns and what it does not)
+- Capability-gated emission (Section 7.6; the capability layer itself is
+  specified in the [Terminfo Specification](terminfo-spec.md))
 
 ### In scope (non-normative, descriptive)
 
@@ -58,6 +60,9 @@ Transitions are specified separately in the
 - Demo applications
 - The crankterm project or any specific framework built on Clayterm
 - Input parsing (see [Clayterm Input Specification](input-spec.md))
+- Terminfo parsing and capability probing (see
+  [Terminfo Specification](terminfo-spec.md)); this specification consumes the
+  capability struct, it does not define it
 
 ---
 
@@ -232,7 +237,10 @@ function scope.
 concern MUST remain independent. Neither MUST depend on the other's state,
 types, or API surface. They MAY share a compiled WASM binary for loading
 efficiency, but this is an implementation convenience, not an architectural
-coupling.
+coupling. Both MAY consume the shared capability layer defined in the
+[Terminfo Specification](terminfo-spec.md); the renderer reads capabilities and
+the input parser surfaces probe responses as `CapabilityEvent` values, but
+neither observes the other beyond the capability facts it carries.
 
 ---
 
@@ -404,32 +412,28 @@ multi-cursor extension without breaking this contract.
 This responsibility is limited to the hardware cursor's position and visibility.
 Cursor shape and blink rate remain caller-managed.
 
-### 7.7 Update transaction (resize)
+### 7.7 Update transaction
 
-The update transaction changes a Term instance's dimensions in place. Like the
-render transaction (§7.2), it is synchronous: it MUST NOT yield, suspend, or
-require callbacks during execution.
+The update transaction changes a Term instance's dimensions or capability state
+in place. Like the render transaction (§7.2), it is synchronous: it MUST NOT
+yield, suspend, or require callbacks during execution.
 
-**Inputs.** The update transaction accepts exactly one of:
+**Inputs.** The update transaction accepts one `Update` or an ordered array of
+`Update` values. `Update` is a discriminated union:
 
-- Explicit dimensions: a target width and height in character cells. Both MUST
-  be positive integers; the transaction MUST throw otherwise.
-- A resize event array: an ordered array of event objects. The transaction reads
-  objects whose `type` field is `"resize"`, taking `width` and `height` from
-  them; objects with any other `type` MUST be ignored. When the array contains
-  multiple resize events, the last one wins (coalescing). An array with no
-  resize events is a no-op.
+- `{ width: number; height: number }` — a resize to the given character-cell
+  dimensions. Both MUST be positive integers; the transaction MUST throw
+  otherwise.
+- A `CapabilityEvent` (see [Terminfo Specification](terminfo-spec.md) §6.3) — a
+  capability value delivered by the input parser from a probe response.
 
-The accepted event shape is defined structurally by this specification: an
-object with `type: "resize"` and numeric `width` and `height` fields. It is
-intentionally assignable from the input specification's `ResizeEvent`, but the
-renderer MUST NOT depend on the input parser (§11.4) — the shape, not the type,
-is normative.
+When a batch is provided, the Term folds each `Update` in order. The returned
+bytes are the concatenation of each fold's output.
 
-An update transaction whose target dimensions equal the Term's current
-dimensions MUST be a no-op.
+A resize `Update` whose target dimensions equal the Term's current dimensions
+MUST be a no-op for that step.
 
-**Semantics.** A non-no-op update transaction:
+**Resize semantics.** A non-no-op resize step:
 
 1. Reallocates renderer state for the new dimensions within the Term's existing
    WASM instance and linear memory, growing the memory if required. The renderer
@@ -441,14 +445,38 @@ dimensions MUST be a no-op.
    coordinates under the pointer have changed. No synthetic pointer events are
    emitted.
 
+**Capability semantics.** A `CapabilityEvent` step folds the event's `key` and
+`value` into the Term's private `RuntimeCapabilities`. The foundation update
+transaction does not emit bytes or alter renderer output as a consequence of a
+capability event. A focused capability specification MUST define any output
+invalidation or immediate bytes required by its consumer.
+
+**Return value.** `update()` returns a `Uint8Array` of bytes to write to the
+terminal immediately. An empty array is valid when the update changes no
+rendered state (TINV-5). The caller writes the bytes to its output stream before
+the next render.
+
 **Memory.** WASM linear memory can only grow. An update to smaller dimensions
 retains the high-water-mark allocation; memory is not reclaimed until the Term
 itself is discarded. This is accepted behavior, not a defect.
 
 **Output invalidation.** Growing linear memory detaches existing buffer views.
-Output `Uint8Array`s returned by render transactions prior to an update
-transaction MUST NOT be used after it (this strengthens the validity window in
-§7.3: output is valid until the next `render()` **or** `update()` call).
+Output `Uint8Array`s returned by render transactions prior to a resize update
+MUST NOT be used after it (this strengthens the validity window in §7.3: output
+is valid until the next `render()` **or** `update()` call).
+
+### 7.8 Capability consumption
+
+The renderer may consume the read-only capability snapshot maintained by
+`Term.update()`, but this foundation specification does not define any
+capability-specific output. Protocols that change emitted bytes MUST add their
+own renderer section, capability evidence, invalidation rules, and tests in a
+focused feature specification.
+
+In particular, color encoding, synchronized-output wrapping, pointer-shape
+output, Kitty keyboard mode setup, and Kitty graphics emission are deferred to
+their respective follow-up PRs. The renderer continues to emit its existing
+hardcoded ANSI output until one of those specifications is adopted.
 
 ---
 
@@ -460,12 +488,21 @@ included. See Section 5 for what this section does and does not freeze._
 ### 8.1 Term creation
 
 ```
-createTerm(options: { width: number; height: number }): Promise<Term>
+createTerm(options: {
+  width: number;
+  height: number;
+  detection?: Detection;
+}): Promise<Term>
 ```
 
 Creates a new Term instance bound to the specified terminal dimensions. The
 returned promise resolves when the renderer is ready. The `width` and `height`
 parameters specify the terminal dimensions in character cells.
+
+The optional `detection` value (from `detectTerminal()`; see
+[Terminfo Specification](terminfo-spec.md) §10.1) initializes the Term's private
+`RuntimeCapabilities` from the static `Capabilities` it carries. When omitted,
+the Term uses the §7.1 baseline.
 
 ### 8.2 Render invocation
 
@@ -624,30 +661,41 @@ wherever the directive model expects a color.
 ### 8.6 Term update
 
 ```
-term.update(options:
+term.update(change: Update | readonly Update[]): Uint8Array
+
+type Update =
   | { width: number; height: number }
-  | { events: ResizeEvent[] }
-): void
+  | CapabilityEvent
 ```
 
-Performs an update transaction as defined in §7.7, changing the Term's
-dimensions in place. The options bag is a discriminated union: either explicit
-dimensions, or an array of events from which resize events are read (last one
-wins; non-resize events are ignored).
+Performs an update transaction as defined in §7.7. `update()` is the universal
+sink for both resize and capability change.
 
-`ResizeEvent` here denotes the structural shape defined in §7.7 — an object with
-`type: "resize"` and numeric `width`/`height` — not a type imported from the
-input parser. The input specification's `ResizeEvent` is assignable to it, so
-events produced by `input.scan()` can be passed through directly:
+**`Update` shapes.** A resize step is `{ width, height }`. A capability step is
+any `CapabilityEvent` value (see [Terminfo Specification](terminfo-spec.md)
+§6.3). The two shapes are structurally distinct and MUST NOT be combined in a
+single object. Pass an array to apply multiple updates in one call; they are
+folded in order.
+
+**Return value.** `update()` always returns a `Uint8Array`. Write it to the
+terminal immediately when non-empty. Do not wait for the next `render()`. An
+empty array means the update changed no rendered state.
+
+**Resize shape.** The `{ width, height }` shape is defined structurally by this
+specification. It is intentionally assignable from the input specification's
+`ResizeEvent`, so events from `input.scan()` pass through directly:
 
 ```
 const { events } = input.scan(bytes);
-const resizes = events.filter((e) => e.type === "resize");
-if (resizes.length > 0) term.update({ events: resizes });
+for (const event of events) {
+  if (event.type === "resize" || event.type === "capability") {
+    const out = term.update(event);
+    if (out.length) stdout.write(out);
+  }
+}
 ```
 
-The method returns nothing. The next `render()` after a non-no-op update emits a
-complete redraw (§7.7).
+A resize to the Term's current dimensions is a no-op for that step.
 
 ---
 
@@ -759,6 +807,10 @@ escape sequences needed to render the frame content (cursor positioning for cell
 writes, SGR attributes for styling, and UTF-8 text) and, when a `caret`
 declaration is present, the cursor-positioning and cursor-visibility sequences
 specified in §7.6.
+
+Capability-specific output modes are not terminal-state management owned by the
+foundation renderer. A focused feature specification must define their state
+boundaries separately.
 
 ### 11.3 The renderer does not own application lifecycle
 
@@ -960,11 +1012,6 @@ Semantics of the additive rule:
   receive double-reservation (effective = 2 × borderWidth). This is a breaking
   change: remove the workaround padding to restore the original visual.
 
-This is a breaking change for callers who compensated for the old border-layout
-bug by setting `padding >= borderWidth`. Those callers should remove the
-compensating padding; border presence now implies the necessary layout
-reservation.
-
 ### 12.3 Render return type
 
 The `render()` method currently returns a `RenderResult` object shaped as
@@ -1133,49 +1180,14 @@ specification. Their omission is intentional, not an oversight._
 containers. No TypeScript-side API exists for providing scroll state to the
 renderer.
 
-**CSI helper for terminal setup.** A helper for generating paired apply/rollback
-byte arrays for terminal mode configuration was discussed but not implemented.
+**CSI helper for terminal setup.** No helper exists for generating paired
+apply/rollback byte arrays for terminal mode configuration.
 
 **Browser-specific adapter.** The renderer's zero-IO architecture makes browser
 portability possible. No adapter exists.
 
 **`betweenChildren` border support.** The underlying layout engine supports
 this. It is not exposed in the directive model.
-
----
-
-## Appendix A. Confidence Notes
-
-### Why the rendering core is specified more aggressively than other surfaces
-
-The rendering architecture — `createTerm`, `render(ops)`, the directive
-constructors, the bytes-output commitment, and the core invariants — was
-designed at the project's inception and has been stable since. It has survived
-the addition of pointer events, border junction resolution, and the crankterm
-integration without revision to its fundamental shapes. Its key abstractions
-(flat directive arrays, single render transaction, ANSI byte output) were chosen
-over explicitly rejected alternatives (per-element FFI, protobuf, builder
-pattern, string output). This level of stability and intentionality justifies
-normative specification.
-
-The pointer event model and render return wrapper are the least settled of the
-currently shipping features. Both were introduced during feature implementation
-rather than designed as part of the core architecture. The return type of
-`render()` has changed twice. The pointer calling convention was discovered
-through iteration. These are working and useful, but they carry the lowest
-confidence of any feature currently in the codebase.
-
-### How to interpret "currently exported"
-
-Several symbols are currently accessible from Clayterm's module exports —
-including `pack()`, `validate()`, and numerous input-related types — without
-clear evidence that they were intended as stable public contract. Being exported
-may mean "needed by internal modules" or "not yet audited for public/internal
-boundary."
-
-This specification does not treat the export list as a contract boundary.
-Instead, it uses stability over time, design ownership, survival of corrections,
-and absence of known reshaping forces as the criteria for normative inclusion.
 
 ---
 
@@ -1198,20 +1210,15 @@ resolution.
 3. **Is `pack()` public API?** `pack()` is currently exported but is an internal
    implementation detail, not public API. `validate()` is public API.
 
-4. **How should border widths interact with layout?** RESOLVED. Border widths
-   are now accounted for in layout additively (`padding + borderWidth`) per side
-   in the WASM renderer's decode step. See Section 12.2 for the full semantics.
-   This is a breaking change: prior workaround padding must be removed.
-
-5. **What are the specific transfer encoding details?** The encoding structure
+4. **What are the specific transfer encoding details?** The encoding structure
    is described in Section 12.1 as current implementation surface. Locking down
    opcode values would constrain future extensions unnecessarily.
 
-6. **What is the complete set of directive properties?** The property groups
+5. **What is the complete set of directive properties?** The property groups
    available in `open()` and `text()` are described in Section 12.2 as current
    implementation surface. They have been extended incrementally and will
    continue to grow.
 
-7. **What are the validation and error semantics?** How the renderer responds to
+6. **What are the validation and error semantics?** How the renderer responds to
    invalid input is unspecified. Callers SHOULD validate, but the validation
    model is not yet settled enough to define normatively.
