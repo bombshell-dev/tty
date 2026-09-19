@@ -8,7 +8,8 @@
  * Usage:
  *   1. input does not allocate any memory itself, so start by allocating
  *      input_size() bytes of memory.
- *   2. Call input_init(mem, esc_latency_ms) to get an InputState.
+ *   2. Call input_init(mem, esc_latency_ms, terminfo, len, ti) to get
+ *      an InputState (terminfo and ti may be NULL for xterm defaults).
  *   3. When bytes arrive from stdin, call input_scan(st, buf, len, now).
  *   4. Read events with input_count(st) and input_event(st, i).
  *   5. Check input_delay(st): if non-zero, re-call input_scan() with
@@ -18,7 +19,7 @@
  * Example:
  *
  *   void *mem = malloc(input_size());
- *   struct InputState *st = input_init(mem, 50);
+ *   struct InputState *st = input_init(mem, 50, NULL, 0, NULL);
  *
  *   // in your event loop:
  *   int accepted = input_scan(st, buf, nread, now_ms);
@@ -59,6 +60,21 @@
 #define EVENT_MOUSE 2
 #define EVENT_RESIZE 3
 #define EVENT_CURSOR 4
+#define EVENT_CAPABILITY 5
+
+/* ── Capability keys (EVENT_CAPABILITY) ───────────────────────────── */
+
+/* key field values for EVENT_CAPABILITY events. The value field (ch)
+ * carries the payload: for colors, packed 0x00RRGGBB; for booleans,
+ * 1=true/0=false; for colordepth, 0="16", 1="256", 2="truecolor". */
+#define CAP_FOREGROUND_COLOR 1
+#define CAP_BACKGROUND_COLOR 2
+#define CAP_CURSOR_COLOR 3
+#define CAP_COLORDEPTH 4
+#define CAP_SYNC_OUTPUT 5
+#define CAP_KITTY_KEYBOARD 6
+#define CAP_KITTY_GRAPHICS 7
+#define CAP_POINTER_SHAPE 8
 
 /* ── Modifier flags (bitwise) ─────────────────────────────────────── */
 
@@ -212,9 +228,19 @@ int input_size(void);
  *
  * @param mem             Pointer to at least input_size() bytes.
  * @param esc_latency_ms  ESC disambiguation latency in milliseconds.
+ * @param terminfo        Raw compiled terminfo entry whose key_* string
+ *                        capabilities seed the sequence trie (they take
+ *                        precedence over the xterm defaults), or NULL.
+ * @param terminfo_len    Byte length of terminfo, or 0.
+ * @param initial_colors  The terminal's static max_colors value, used
+ *                        when emitting a colordepth denial event to pick
+ *                        the right tier ("16" vs "256"). Pass 0 for the
+ *                        256-color baseline.
  * @return                Initialized parser state.
  */
-struct InputState *input_init(void *mem, int esc_latency_ms);
+struct InputState *input_init(void *mem, int esc_latency_ms,
+                              const uint8_t *terminfo, int terminfo_len,
+                              int initial_colors);
 
 /**
  * Feed raw bytes into the parser and produce events.

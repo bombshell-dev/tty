@@ -2,12 +2,28 @@ export const EVENT_KEY = 1;
 export const EVENT_MOUSE = 2;
 export const EVENT_RESIZE = 3;
 export const EVENT_CURSOR = 4;
+export const EVENT_CAPABILITY = 5;
 
 export const MOD_ALT = 1;
 export const MOD_CTRL = 2;
 export const MOD_SHIFT = 4;
 export const MOD_MOTION = 8;
 export const MOD_RELEASE = 16;
+
+/* Capability key constants — must match CAP_* in src/input.h */
+export const CAP_FOREGROUND_COLOR = 1;
+export const CAP_BACKGROUND_COLOR = 2;
+export const CAP_CURSOR_COLOR = 3;
+export const CAP_COLORDEPTH = 4;
+export const CAP_SYNC_OUTPUT = 5;
+export const CAP_KITTY_KEYBOARD = 6;
+export const CAP_KITTY_GRAPHICS = 7;
+export const CAP_POINTER_SHAPE = 8;
+
+/* CAP_COLORDEPTH ch values — must match COLORDEPTH_* in src/input.c */
+export const COLORDEPTH_16 = 0;
+export const COLORDEPTH_256 = 1;
+export const COLORDEPTH_TRUECOLOR = 2;
 
 export const KEY_F1 = 0xFFFF;
 export const KEY_F2 = 0xFFFE;
@@ -173,6 +189,8 @@ import { compiled } from "./wasm.ts";
 
 export async function createInputNative(
   escLatency: number,
+  keys?: Uint8Array,
+  initialColors?: number,
 ): Promise<InputNative> {
   let memory = new WebAssembly.Memory({ initial: 4 });
 
@@ -191,7 +209,13 @@ export async function createInputNative(
   let exports = instance.exports as unknown as {
     __heap_base: WebAssembly.Global;
     input_size(): number;
-    input_init(mem: number, escLatency: number): number;
+    input_init(
+      mem: number,
+      escLatency: number,
+      terminfo: number,
+      terminfoLen: number,
+      initialColors: number,
+    ): number;
     input_scan(st: number, buf: number, len: number, now: number): number;
     input_count(st: number): number;
     input_event(st: number, index: number): number;
@@ -200,8 +224,29 @@ export async function createInputNative(
 
   let heap = exports.__heap_base.value as number;
   let size = exports.input_size();
-  let state = exports.input_init(heap, escLatency);
-  let buffer = (heap + size + 7) & ~7;
+
+  let keysPtr = 0;
+  let keysLen = 0;
+  let top = (heap + 7) & ~7;
+  if (keys && keys.byteLength > 0) {
+    top = (top + 7) & ~7;
+    keysPtr = top;
+    keysLen = keys.byteLength;
+    top += (keysLen + 7) & ~7;
+    let pages = Math.ceil(top / 65536);
+    let current = memory.buffer.byteLength / 65536;
+    if (pages > current) memory.grow(pages - current);
+    new Uint8Array(memory.buffer).set(keys, keysPtr);
+  }
+
+  let state = exports.input_init(
+    top,
+    escLatency,
+    keysPtr,
+    keysLen,
+    initialColors ?? 256,
+  );
+  let buffer = (top + size + 7) & ~7;
 
   return {
     memory,
@@ -213,11 +258,6 @@ export async function createInputNative(
     delay: exports.input_delay,
   };
 }
-
-// Compiled terminfo entries are limited to 4096 bytes (legacy) or 32768
-// bytes (extended ncurses format). We use the extended limit as our upper
-// bound. See https://man7.org/linux/man-pages/man5/term.5.html
-export const MAX_TERMINFO = 32768;
 
 // Must match SCAN_BUFFER_SIZE in input.c — the maximum bytes input_scan()
 // can accept in a single call.
