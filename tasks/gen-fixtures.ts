@@ -1,0 +1,155 @@
+/**
+ * Regenerates test/fixtures.ts: compiled terminfo entries embedded as
+ * base64 so the test suite needs no filesystem or tic at run time.
+ *
+ * Usage: deno run -A tasks/gen-fixtures.ts
+ *
+ * Sources:
+ * - xterm-256color copied from the system terminfo database (legacy
+ *   format, magic 0432): real-world entry with am/xenl/bce/smcup and
+ *   colors#256, no truecolor capabilities.
+ * - clayterm-tc / clayterm-16 compiled with tic -x from the inline
+ *   source below (legacy format with an extended capability block).
+ * - clayterm-direct hand-assembled in the extended number format
+ *   (magic 01036, 32-bit numbers) because macOS ships ncurses 6.0,
+ *   which predates that format: colors#0x1000000 plus an extended RGB
+ *   boolean, mirroring xterm-direct.
+ */
+
+import { encodeBase64 } from "@std/encoding/base64";
+
+const ENTRIES_SRC = `clayterm-tc|clayterm truecolor extended-caps test entry,
+\tam, xenl, bce, Tc, Su,
+\tcolors#256, pairs#65536, cols#80, lines#24,
+\tsmcup=\\E[?1049h, rmcup=\\E[?1049l,
+\tcup=\\E[%i%p1%d;%p2%dH,
+\tkcuu1=\\EOZ, kf5=\\E[99~,
+\tSmulx=\\E[4:%p1%dm,
+
+clayterm-16|clayterm sixteen color test entry,
+\tam, xenl,
+\tcolors#16, pairs#256, cols#80, lines#24,
+\tcup=\\E[%i%p1%d;%p2%dH,
+`;
+
+async function tic(src: string): Promise<Record<string, Uint8Array>> {
+  let dir = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${dir}/entries.src`, src);
+  let out = await new Deno.Command("tic", {
+    args: ["-x", "-o", `${dir}/db`, `${dir}/entries.src`],
+  }).output();
+  if (!out.success) {
+    throw new Error(`tic failed: ${new TextDecoder().decode(out.stderr)}`);
+  }
+  let entries: Record<string, Uint8Array> = {};
+  // tic stores under a two-hex-digit dir on macOS ("63" for 'c').
+  for await (let f of Deno.readDir(`${dir}/db/63`)) {
+    entries[f.name] = await Deno.readFile(`${dir}/db/63/${f.name}`);
+  }
+  return entries;
+}
+
+/** Little-endian int16 writer. */
+function i16(view: DataView, offset: number, value: number): void {
+  view.setInt16(offset, value, true);
+}
+
+/**
+ * Hand-assemble a minimal extended-number-format entry (magic 01036,
+ * 32-bit numbers): am, xenl, colors#0x1000000, smcup, plus an extended
+ * boolean RGB. Layout verified against tic 6.0 output for the legacy
+ * sections and ncurses term(5) for the 32-bit number width.
+ */
+function buildDirect(): Uint8Array {
+  let name = "clayterm-direct|clayterm extended number format test entry\0";
+  let bools = new Uint8Array(29); // through bce (index 28)
+  bools[1] = 1; // am
+  bools[4] = 1; // xenl
+  let numCount = 14; // through colors (index 13)
+  let nums = new Int32Array(numCount).fill(-1);
+  nums[0] = 80; // cols
+  nums[2] = 24; // lines
+  nums[13] = 0x1000000; // colors
+  let strCount = 29; // through smcup (index 28)
+  let strs = new Int16Array(strCount).fill(-1);
+  let table = "\x1b[?1049h\0";
+  strs[28] = 0; // smcup
+
+  // Extended block: one boolean capability, RGB=1.
+  // Header, values, value/name offset table, then the string table
+  // (value strings first, names after; name offsets are relative to
+  // the start of the names sub-table).
+  let extName = "RGB\0";
+
+  let nameBytes = new TextEncoder().encode(name);
+  let tableBytes = new TextEncoder().encode(table);
+  let extNameBytes = new TextEncoder().encode(extName);
+
+  let size = 12 + nameBytes.length + bools.length;
+  if (size % 2) size += 1;
+  size += numCount * 4 + strCount * 2 + tableBytes.length;
+  if (size % 2) size += 1;
+  size += 10 + 1 + 1 + 1 * 2 + extNameBytes.length;
+
+  let buf = new Uint8Array(size);
+  let view = new DataView(buf.buffer);
+  let o = 0;
+  i16(view, 0, 0x021e); // magic
+  i16(view, 2, nameBytes.length);
+  i16(view, 4, bools.length);
+  i16(view, 6, numCount);
+  i16(view, 8, strCount);
+  i16(view, 10, tableBytes.length);
+  o = 12;
+  buf.set(nameBytes, o);
+  o += nameBytes.length;
+  buf.set(bools, o);
+  o += bools.length;
+  if (o % 2) o += 1;
+  for (let i = 0; i < numCount; i++) {
+    view.setInt32(o + i * 4, nums[i], true);
+  }
+  o += numCount * 4;
+  for (let i = 0; i < strCount; i++) {
+    i16(view, o + i * 2, strs[i]);
+  }
+  o += strCount * 2;
+  buf.set(tableBytes, o);
+  o += tableBytes.length;
+  if (o % 2) o += 1;
+  i16(view, o, 1); // ext bool count
+  i16(view, o + 2, 0); // ext num count
+  i16(view, o + 4, 0); // ext str count
+  i16(view, o + 6, 1); // ext table string count (names only)
+  i16(view, o + 8, extNameBytes.length); // ext table size
+  o += 10;
+  buf[o] = 1; // RGB = true
+  o += 1;
+  if (o % 2) o += 1;
+  i16(view, o, 0); // name offset (relative to names sub-table)
+  o += 2;
+  buf.set(extNameBytes, o);
+  return buf;
+}
+
+let compiled = await tic(ENTRIES_SRC);
+let xterm256 = await Deno.readFile("/usr/share/terminfo/78/xterm-256color");
+
+function constant(name: string, bytes: Uint8Array): string {
+  return `export const ${name}: Uint8Array = decodeBase64(\n` +
+    `  "${encodeBase64(bytes)}",\n);\n`;
+}
+
+let out = `// Generated by tasks/gen-fixtures.ts — do not edit by hand.
+import { decodeBase64 } from "@std/encoding/base64";
+
+${constant("XTERM_256COLOR", xterm256)}
+${constant("CLAYTERM_TC", compiled["clayterm-tc"])}
+${constant("CLAYTERM_16", compiled["clayterm-16"])}
+${constant("CLAYTERM_DIRECT", buildDirect())}`;
+
+await Deno.writeTextFile(
+  new URL("../test/fixtures.ts", import.meta.url).pathname,
+  out,
+);
+console.log("wrote test/fixtures.ts");
