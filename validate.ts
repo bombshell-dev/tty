@@ -230,6 +230,9 @@ export function assert(ops: unknown): asserts ops is Op[] {
 
 export function validated(term: Term): Term {
   return {
+    get capabilities() {
+      return term.capabilities;
+    },
     render(ops: Op[], options?: RenderOptions): RenderResult {
       assert(ops);
       return term.render(ops, options);
