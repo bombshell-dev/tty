@@ -559,7 +559,3 @@ Specifically:
 - **INV-5 (Layout/render/diff ownership).** The renderer additionally owns
   transition interpolation. Interpolated values feed into the existing layout
   and diff pipeline at the same pipeline stage that resolved values would.
-
-The "Deferred/Future Areas" section of the renderer specification should be
-updated to reference this specification rather than list transitions as a single
-bullet.
