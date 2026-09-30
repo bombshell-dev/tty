@@ -31,8 +31,8 @@ event stream.
 - The `CapabilityEvent` discriminated union and its `key`/`value` shapes
 - Compiled terminfo binary parsing (legacy and extended formats)
 - The probe model: query batch, DA1 completion fence, and sans-IO contract
-- The public API: `detectTerminal()`, `createTerm`, `createInput`, and the
-  `applyUpdate` reducer
+- The public API: `detectTerminal()`, `createTerm`, `createInput`, and
+  `Term.update`
 - The baseline capability set and the progressive-enhancement evidence model
 
 ### Out of scope
@@ -497,26 +497,7 @@ function createInput(options?: {
 When `detection` is provided, the parser loads its key trie from
 `detection.keys`. When omitted, the parser uses built-in xterm key sequences.
 
-### 10.4 `applyUpdate`
-
-```ts
-function applyUpdate(
-  current: RuntimeCapabilities,
-  change: Update,
-): { readonly next: RuntimeCapabilities; readonly bytes: Uint8Array };
-
-type Update =
-  | { width: number; height: number }
-  | CapabilityEvent;
-```
-
-`applyUpdate` is a pure function. Given the current `RuntimeCapabilities` and
-one `Update`, it returns the next `RuntimeCapabilities` and any bytes defined by
-the consuming feature. The foundation returns an empty byte array;
-`term.update()` is a loop over `applyUpdate`. Exporting the reducer allows tests
-to assert `(next, bytes)` against literal values without a live `Term`.
-
-### 10.5 `Term.update`
+### 10.4 `Term.update`
 
 ```ts
 interface Term {
@@ -524,15 +505,21 @@ interface Term {
   update(change: Update | readonly Update[]): Uint8Array;
   readonly capabilities: RuntimeCapabilities;
 }
+
+type Update =
+  | { width: number; height: number }
+  | CapabilityEvent;
 ```
 
-`update()` accepts one change or a batch. A batch is folded in order; the
-returned bytes are concatenated. The return value is always a `Uint8Array`;
-callers write it to their output stream when non-empty (TINV-5).
+`update()` accepts one change or a batch. A batch is folded in order: each
+`Update` produces the next `RuntimeCapabilities` and any bytes defined by the
+consuming feature, and the returned bytes are concatenated. The foundation
+defines no such bytes. The return value is always a `Uint8Array`; callers write
+it to their output stream when non-empty (TINV-5).
 
 `term.capabilities` is a frozen snapshot of the current `RuntimeCapabilities`.
 
-### 10.6 Host loop
+### 10.5 Host loop
 
 ```ts
 import { detectTerminal } from "./terminfo.ts";
