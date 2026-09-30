@@ -7,7 +7,17 @@
  */
 
 import {
+  CAP_BACKGROUND_COLOR,
+  CAP_COLORDEPTH,
+  CAP_CURSOR_COLOR,
+  CAP_FOREGROUND_COLOR,
+  CAP_KITTY_GRAPHICS,
+  CAP_KITTY_KEYBOARD,
+  CAP_POINTER_SHAPE,
+  CAP_SYNC_OUTPUT,
+  COLORDEPTH_TRUECOLOR,
   createInputNative,
+  EVENT_CAPABILITY,
   EVENT_CURSOR,
   EVENT_KEY,
   EVENT_MOUSE,
@@ -77,7 +87,6 @@ import {
   KEY_SUPER_LEFT,
   KEY_SUPER_RIGHT,
   KEY_TAB,
-  MAX_TERMINFO,
   MOD_ALT,
   MOD_CTRL,
   MOD_MOTION,
@@ -87,6 +96,8 @@ import {
   readEvent,
   SCAN_BUFFER_SIZE,
 } from "./input-native.ts";
+import type { Detection, Rgb } from "./terminfo.ts";
+import { rgbOf } from "./terminfo.ts";
 
 /**
  * Modifier keys held during a key or mouse event.
@@ -371,6 +382,57 @@ export interface CursorEvent {
   column: number;
 }
 
+/** Color depth tier reported by the terminal's XTGETTCAP probe response. */
+export type ColorDepth = "truecolor" | "256" | "16";
+
+/**
+ * A probe-response event emitted by scan() when the terminal answers one
+ * of the capability queries in Detection.probe. Route to term.update().
+ */
+export type CapabilityEvent =
+  | {
+    readonly type: "capability";
+    readonly key: "foreground-color";
+    readonly value: Rgb;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "background-color";
+    readonly value: Rgb;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "cursor-color";
+    readonly value: Rgb;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "colordepth";
+    readonly value: ColorDepth;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "sync-output";
+    readonly value: boolean;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "kitty-keyboard";
+    readonly value: boolean;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "kitty-graphics";
+    readonly value: boolean;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "pointer-shape";
+    readonly value: boolean;
+  };
+
+export type { Rgb };
+
 import type { PointerEvent } from "./term.ts";
 
 export type InputEvent =
@@ -381,6 +443,7 @@ export type InputEvent =
   | WheelEvent
   | ResizeEvent
   | CursorEvent
+  | CapabilityEvent
   | PointerEvent;
 
 /**
@@ -426,38 +489,31 @@ export interface Input {
 export interface InputOptions {
   /**
    * Milliseconds to wait before resolving a lone ESC byte as the Escape
-   * key rather than the start of an escape sequence. Lower values feel
-   * snappier but risk misinterpreting sequences on slow connections.
-   *
-   * For reference, Vim's `ttimeoutlen` defaults to 100ms and ncurses
-   * `ESCDELAY` defaults to 1000ms. The default of 25ms is tuned for
-   * local terminals where escape sequences arrive within microseconds.
+   * key rather than the start of an escape sequence.
    *
    * @default 25
    */
   escLatency?: number;
 
   /**
-   * Compiled terminfo binary to load terminal-specific escape sequences.
-   *
-   * This is the format used by files like /usr/lib/terminfo/78/xterm-256color
-   * and they can be directly loaded from disk into this option.
-   *
-   * If no terminfo is provided it will use xterm capabilities as the default
+   * Detection from detectTerminal(). Seeds the key trie from
+   * detection.keys and uses detection.capabilities.colors for
+   * colordepth denial events. When omitted, the parser uses xterm
+   * default key sequences and a 256-color baseline.
    */
-  terminfo?: Uint8Array;
+  detection?: Detection;
 }
 
 export async function createInput(options: InputOptions = {}): Promise<Input> {
-  let { escLatency = 25, terminfo } = options;
+  let { escLatency = 25, detection } = options;
 
-  if (terminfo && terminfo.byteLength > MAX_TERMINFO) {
-    throw new RangeError(
-      `terminfo exceeds ${MAX_TERMINFO} byte limit (got ${terminfo.byteLength})`,
-    );
-  }
+  let native = await createInputNative(
+    escLatency,
+    detection?.keys,
+    detection?.capabilities.colors,
+  );
 
-  let native = await createInputNative(escLatency);
+  let initialColors = detection?.capabilities.colors ?? 256;
 
   return {
     scan(bytes: Uint8Array = new Uint8Array(0)): ScanResult {
@@ -483,7 +539,7 @@ export async function createInput(options: InputOptions = {}): Promise<Input> {
         for (let i = 0; i < count; i++) {
           let ptr = native.event(native.state, i);
           if (ptr !== 0) {
-            events.push(mapEvent(readEvent(view, ptr)));
+            events.push(mapEvent(readEvent(view, ptr), initialColors));
           }
         }
 
@@ -632,8 +688,70 @@ function mapKeyEvent(native: NativeInputEvent): KeyEvent {
   return ev;
 }
 
-function mapEvent(native: NativeInputEvent): InputEvent {
+function mapCapEvent(
+  native: NativeInputEvent,
+  initialColors: number,
+): CapabilityEvent {
+  switch (native.key) {
+    case CAP_FOREGROUND_COLOR:
+      return {
+        type: "capability",
+        key: "foreground-color",
+        value: rgbOf(native.ch),
+      };
+    case CAP_BACKGROUND_COLOR:
+      return {
+        type: "capability",
+        key: "background-color",
+        value: rgbOf(native.ch),
+      };
+    case CAP_CURSOR_COLOR:
+      return {
+        type: "capability",
+        key: "cursor-color",
+        value: rgbOf(native.ch),
+      };
+    case CAP_COLORDEPTH: {
+      let value: ColorDepth = native.ch === COLORDEPTH_TRUECOLOR
+        ? "truecolor"
+        : initialColors <= 16
+        ? "16"
+        : "256";
+      return { type: "capability", key: "colordepth", value };
+    }
+    case CAP_SYNC_OUTPUT:
+      return { type: "capability", key: "sync-output", value: native.ch !== 0 };
+    case CAP_KITTY_KEYBOARD:
+      return {
+        type: "capability",
+        key: "kitty-keyboard",
+        value: native.ch !== 0,
+      };
+    case CAP_KITTY_GRAPHICS:
+      return {
+        type: "capability",
+        key: "kitty-graphics",
+        value: native.ch !== 0,
+      };
+    case CAP_POINTER_SHAPE:
+      return {
+        type: "capability",
+        key: "pointer-shape",
+        value: native.ch !== 0,
+      };
+    default:
+      return { type: "capability", key: "pointer-shape", value: false };
+  }
+}
+
+function mapEvent(
+  native: NativeInputEvent,
+  initialColors: number,
+): InputEvent {
   switch (native.type) {
+    case EVENT_CAPABILITY: {
+      return mapCapEvent(native, initialColors);
+    }
     case EVENT_KEY: {
       return mapKeyEvent(native);
     }
