@@ -9,9 +9,9 @@ export const MAX_TERMINFO = 32768;
 
 /* Flag bits — must match src/terminfo.h. */
 const FLAG_TRUECOLOR = 1 << 0;
-const FLAG_BCE = 1 << 1;
-const FLAG_AM = 1 << 2;
-const FLAG_XENL = 1 << 3;
+const FLAG_BACK_COLOR_ERASE = 1 << 1;
+const FLAG_AUTO_RIGHT_MARGIN = 1 << 2;
+const FLAG_EAT_NEWLINE_GLITCH = 1 << 3;
 const FLAG_ALTSCREEN = 1 << 4;
 const FLAG_STYLED_UNDERLINE = 1 << 5;
 
@@ -173,9 +173,9 @@ export async function detectTerminal(
   let capabilities: Capabilities = Object.freeze({
     colors: view.getUint32(structPtr + TI.colors, true),
     trueColor: !!(flags & FLAG_TRUECOLOR),
-    bce: !!(flags & FLAG_BCE),
-    autoMargin: !!(flags & FLAG_AM),
-    xenl: !!(flags & FLAG_XENL),
+    bce: !!(flags & FLAG_BACK_COLOR_ERASE),
+    autoMargin: !!(flags & FLAG_AUTO_RIGHT_MARGIN),
+    xenl: !!(flags & FLAG_EAT_NEWLINE_GLITCH),
     altScreen: !!(flags & FLAG_ALTSCREEN),
     styledUnderline: !!(flags & FLAG_STYLED_UNDERLINE),
   });
