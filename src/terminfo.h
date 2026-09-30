@@ -63,7 +63,7 @@ struct TermInfo *terminfo_init(void *mem);
  * Supports the legacy (0432) and extended number (01036) storage
  * formats, including the extended capability table (RGB, Tc, Su,
  * Smulx). All reads are bounds-checked. On any malformed input the
- * struct is left untouched (all-or-nothing, TINV-3).
+ * struct is left untouched (all-or-nothing, TINV-2).
  *
  * On success the entry's standard capabilities replace the baseline:
  * booleans absent from the entry are cleared, colors becomes the
