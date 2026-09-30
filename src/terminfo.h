@@ -13,9 +13,9 @@
 
 /* Capability flag bits (terminfo-spec section 6). */
 #define TERMINFO_TRUECOLOR (1u << 0)
-#define TERMINFO_BCE (1u << 1)
-#define TERMINFO_AM (1u << 2)
-#define TERMINFO_XENL (1u << 3)
+#define TERMINFO_BACK_COLOR_ERASE (1u << 1)
+#define TERMINFO_AUTO_RIGHT_MARGIN (1u << 2)
+#define TERMINFO_EAT_NEWLINE_GLITCH (1u << 3)
 #define TERMINFO_ALTSCREEN (1u << 4)
 #define TERMINFO_STYLED_UNDERLINE (1u << 5)
 #define TERMINFO_SYNC (1u << 6)

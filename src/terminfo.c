@@ -20,7 +20,8 @@ struct TermInfo *terminfo_init(void *mem) {
   struct TermInfo *ti = (struct TermInfo *)mem;
   ti->generation = 1;
   ti->colors = 256;
-  ti->flags = TERMINFO_BCE | TERMINFO_AM | TERMINFO_XENL | TERMINFO_ALTSCREEN;
+  ti->flags = TERMINFO_BACK_COLOR_ERASE | TERMINFO_AUTO_RIGHT_MARGIN |
+              TERMINFO_EAT_NEWLINE_GLITCH | TERMINFO_ALTSCREEN;
   ti->confirmed = 0;
   ti->theme_fg = 0;
   ti->theme_bg = 0;
@@ -244,13 +245,13 @@ int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *ti) {
   uint32_t flags = 0;
   if (bool_count > TERMINFO_BOOL_AUTO_RIGHT_MARGIN &&
       bytes[bools_off + TERMINFO_BOOL_AUTO_RIGHT_MARGIN])
-    flags |= TERMINFO_AM;
+    flags |= TERMINFO_AUTO_RIGHT_MARGIN;
   if (bool_count > TERMINFO_BOOL_EAT_NEWLINE_GLITCH &&
       bytes[bools_off + TERMINFO_BOOL_EAT_NEWLINE_GLITCH])
-    flags |= TERMINFO_XENL;
+    flags |= TERMINFO_EAT_NEWLINE_GLITCH;
   if (bool_count > TERMINFO_BOOL_BACK_COLOR_ERASE &&
       bytes[bools_off + TERMINFO_BOOL_BACK_COLOR_ERASE])
-    flags |= TERMINFO_BCE;
+    flags |= TERMINFO_BACK_COLOR_ERASE;
 
   int32_t colors = 0;
   if (num_count > TERMINFO_NUM_MAX_COLORS) {
@@ -272,9 +273,9 @@ int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *ti) {
 
   /* The entry describes the terminal completely for the capabilities it
    * owns: replace them, leave probe-only flags and theme fields alone. */
-  uint32_t keep =
-      ~(TERMINFO_TRUECOLOR | TERMINFO_BCE | TERMINFO_AM | TERMINFO_XENL |
-        TERMINFO_ALTSCREEN | TERMINFO_STYLED_UNDERLINE);
+  uint32_t keep = ~(TERMINFO_TRUECOLOR | TERMINFO_BACK_COLOR_ERASE |
+                    TERMINFO_AUTO_RIGHT_MARGIN | TERMINFO_EAT_NEWLINE_GLITCH |
+                    TERMINFO_ALTSCREEN | TERMINFO_STYLED_UNDERLINE);
   ti->flags = (ti->flags & keep) | flags;
   ti->colors = (uint32_t)colors;
   ti->generation++;
