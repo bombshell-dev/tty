@@ -508,10 +508,12 @@ interface Term {
 
 type Update =
   | { width: number; height: number }
-  | CapabilityEvent;
+  | InputEvent;
 ```
 
-`update()` accepts one change or a batch. A batch is folded in order: each
+`update()` accepts one change or a batch. `InputEvent` values other than
+`ResizeEvent` and `CapabilityEvent` are no-op steps, so the full `events` array
+from `scan()` can be passed without filtering. A batch is folded in order: each
 `Update` produces the next `RuntimeCapabilities` and any bytes defined by the
 consuming feature, and the returned bytes are concatenated. The foundation
 defines no such bytes. The return value is always a `Uint8Array`; callers write

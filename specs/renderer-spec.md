@@ -426,6 +426,8 @@ yield, suspend, or require callbacks during execution.
   otherwise.
 - A `CapabilityEvent` (see [Terminfo Specification](terminfo-spec.md) §6.3) — a
   capability value delivered by the input parser from a probe response.
+- Any other `InputEvent` (see [Input Specification](input-spec.md) §5) — a no-op
+  step. It changes no state and contributes no bytes.
 
 When a batch is provided, the Term folds each `Update` in order. The returned
 bytes are the concatenation of each fold's output.
@@ -665,7 +667,7 @@ term.update(change: Update | readonly Update[]): Uint8Array
 
 type Update =
   | { width: number; height: number }
-  | CapabilityEvent
+  | InputEvent
 ```
 
 Performs an update transaction as defined in §7.7. `update()` is the universal
@@ -674,8 +676,9 @@ sink for both resize and capability change.
 **`Update` shapes.** A resize step is `{ width, height }`. A capability step is
 any `CapabilityEvent` value (see [Terminfo Specification](terminfo-spec.md)
 §6.3). The two shapes are structurally distinct and MUST NOT be combined in a
-single object. Pass an array to apply multiple updates in one call; they are
-folded in order.
+single object. Every other `InputEvent` is accepted and ignored, so the full
+`events` array from `input.scan()` can be passed without filtering. Pass an
+array to apply multiple updates in one call; they are folded in order.
 
 **Return value.** `update()` always returns a `Uint8Array`. Write it to the
 terminal immediately when non-empty. Do not wait for the next `render()`. An
