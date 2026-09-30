@@ -252,16 +252,16 @@ Each variant maps to one probe query. The `key` identifies the capability; the
 `value` is the terminal's answer. Capability references per
 [terminfo.dev](https://terminfo.dev):
 
-| `key`              | Query                | terminfo.dev slug                                         |
-| ------------------ | -------------------- | --------------------------------------------------------- |
-| `foreground-color` | OSC 10               | [`osc-10-fg-color-query`](https://terminfo.dev)           |
-| `background-color` | OSC 11               | [`osc-11-bg-color-query`](https://terminfo.dev)           |
-| `cursor-color`     | OSC 12 or OSC 21     | [`osc-12-cursor-color`](https://terminfo.dev)             |
-| `colordepth`       | XTGETTCAP `RGB`/`Tc` | [`24-bit-truecolor`](https://terminfo.dev)                |
-| `sync-output`      | DECRPM mode 2026     | [`decset-2026-synchronized-output`](https://terminfo.dev) |
-| `kitty-keyboard`   | `CSI ? u`            | [`kitty-keyboard-protocol`](https://terminfo.dev)         |
-| `kitty-graphics`   | APC `_G…`            | [`kitty-graphics-protocol`](https://terminfo.dev)         |
-| `pointer-shape`    | OSC 22               | [`osc-22-pointer-shape`](https://terminfo.dev)            |
+| `key`              | Query                | terminfo.dev slug                                                                               |
+| ------------------ | -------------------- | ----------------------------------------------------------------------------------------------- |
+| `foreground-color` | OSC 10               | [`osc-10-fg-color-query`](https://terminfo.dev/extensions/osc-10-fg-color-query)                |
+| `background-color` | OSC 11               | [`osc-11-bg-color-query`](https://terminfo.dev/extensions/osc-11-bg-color-query)                |
+| `cursor-color`     | OSC 12 or OSC 21     | [`osc-12-cursor-color`](https://terminfo.dev/extensions/osc-12-cursor-color)                    |
+| `colordepth`       | XTGETTCAP `RGB`/`Tc` | [`24-bit-truecolor`](https://terminfo.dev/extensions/24-bit-truecolor)                          |
+| `sync-output`      | DECRPM mode 2026     | [`decset-2026-synchronized-output`](https://terminfo.dev/modes/decset-2026-synchronized-output) |
+| `kitty-keyboard`   | `CSI ? u`            | [`kitty-keyboard-protocol`](https://terminfo.dev/extensions/kitty-keyboard-protocol)            |
+| `kitty-graphics`   | APC `_G…`            | [`kitty-graphics-protocol`](https://terminfo.dev/extensions/kitty-graphics-protocol)            |
+| `pointer-shape`    | OSC 22               | [`osc-22-pointer-shape`](https://terminfo.dev/extensions/osc-22-pointer-shape)                  |
 
 **Color values.** `Rgb` values in probe responses MUST be recognized in at least
 the `rgb:RR/GG/BB` (1–4 hex digits per channel) and `#`-hash forms.
