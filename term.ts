@@ -43,7 +43,7 @@ export type Update = { width: number; height: number } | InputEvent;
  * Apply one Update to the current RuntimeCapabilities and return the next
  * snapshot plus any bytes to write now. Pure: performs no IO, no WASM calls.
  */
-export function applyUpdate(
+function applyUpdate(
   current: RuntimeCapabilities,
   change: Update,
 ): { readonly next: RuntimeCapabilities; readonly bytes: Uint8Array } {
