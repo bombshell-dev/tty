@@ -346,8 +346,20 @@ responses (TINV-3).
 
 _This section is normative._
 
-`terminfo_parse(bytes, len, out)` accepts a compiled terminfo entry and
-populates a `Capabilities`-shaped struct.
+Parsing is implemented in C and exported from the wasm module. It is internal:
+`detectTerminal()` is the only caller, and nothing below is part of the public
+API.
+
+```c
+int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *out);
+```
+
+`terminfo_parse` accepts a compiled terminfo entry and populates a
+`Capabilities`-shaped struct. It returns `0` on success and a nonzero
+parse-result code on failure. The specific nonzero values are unspecified. On
+failure, `out` is left untouched (TINV-2), and `detectTerminal()` proceeds from
+the §7.1 baseline. Parse failures are never surfaced to public callers; they
+observe only the resulting `Capabilities`.
 
 - Both storage formats MUST be supported: legacy (magic `0432`, 16-bit numbers)
   and extended number format (magic `01036`, 32-bit numbers).
