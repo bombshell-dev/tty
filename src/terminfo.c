@@ -4,15 +4,15 @@
 
 #include "mem.h"
 
-#define TI_MAGIC_LEGACY 0x011a
-#define TI_MAGIC_EXTENDED 0x021e
+#define TERMINFO_MAGIC_LEGACY 0x011a
+#define TERMINFO_MAGIC_EXTENDED 0x021e
 
 /* Standard capability indices (ncurses Caps). */
-#define TI_BOOL_AM 1
-#define TI_BOOL_XENL 4
-#define TI_BOOL_BCE 28
-#define TI_NUM_MAX_COLORS 13
-#define TI_STR_SMCUP 28
+#define TERMINFO_BOOL_AUTO_RIGHT_MARGIN 1
+#define TERMINFO_BOOL_EAT_NEWLINE_GLITCH 4
+#define TERMINFO_BOOL_BACK_COLOR_ERASE 28
+#define TERMINFO_NUM_MAX_COLORS 13
+#define TERMINFO_STR_ENTER_CA_MODE 28
 
 int terminfo_size(void) { return align8(sizeof(struct TermInfo)); }
 
@@ -170,9 +170,9 @@ const char *terminfo_str(const uint8_t *bytes, int len, int index,
     return 0;
   uint16_t magic = rd_u16(bytes, 0);
   int numw;
-  if (magic == TI_MAGIC_LEGACY) {
+  if (magic == TERMINFO_MAGIC_LEGACY) {
     numw = 2;
-  } else if (magic == TI_MAGIC_EXTENDED) {
+  } else if (magic == TERMINFO_MAGIC_EXTENDED) {
     numw = 4;
   } else {
     return 0;
@@ -214,9 +214,9 @@ int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *ti) {
 
   uint16_t magic = rd_u16(bytes, 0);
   int numw;
-  if (magic == TI_MAGIC_LEGACY) {
+  if (magic == TERMINFO_MAGIC_LEGACY) {
     numw = 2;
-  } else if (magic == TI_MAGIC_EXTENDED) {
+  } else if (magic == TERMINFO_MAGIC_EXTENDED) {
     numw = 4;
   } else {
     return 2;
@@ -242,24 +242,27 @@ int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *ti) {
     return 4;
 
   uint32_t flags = 0;
-  if (bool_count > TI_BOOL_AM && bytes[bools_off + TI_BOOL_AM])
+  if (bool_count > TERMINFO_BOOL_AUTO_RIGHT_MARGIN &&
+      bytes[bools_off + TERMINFO_BOOL_AUTO_RIGHT_MARGIN])
     flags |= TERMINFO_AM;
-  if (bool_count > TI_BOOL_XENL && bytes[bools_off + TI_BOOL_XENL])
+  if (bool_count > TERMINFO_BOOL_EAT_NEWLINE_GLITCH &&
+      bytes[bools_off + TERMINFO_BOOL_EAT_NEWLINE_GLITCH])
     flags |= TERMINFO_XENL;
-  if (bool_count > TI_BOOL_BCE && bytes[bools_off + TI_BOOL_BCE])
+  if (bool_count > TERMINFO_BOOL_BACK_COLOR_ERASE &&
+      bytes[bools_off + TERMINFO_BOOL_BACK_COLOR_ERASE])
     flags |= TERMINFO_BCE;
 
   int32_t colors = 0;
-  if (num_count > TI_NUM_MAX_COLORS) {
-    int32_t v = rd_num(bytes, nums_off + TI_NUM_MAX_COLORS * numw, numw);
+  if (num_count > TERMINFO_NUM_MAX_COLORS) {
+    int32_t v = rd_num(bytes, nums_off + TERMINFO_NUM_MAX_COLORS * numw, numw);
     if (v > 0)
       colors = v;
   }
   if (colors >= (1 << 24))
     flags |= TERMINFO_TRUECOLOR;
 
-  if (str_count > TI_STR_SMCUP) {
-    int v = rd_i16(bytes, strs_off + TI_STR_SMCUP * 2);
+  if (str_count > TERMINFO_STR_ENTER_CA_MODE) {
+    int v = rd_i16(bytes, strs_off + TERMINFO_STR_ENTER_CA_MODE * 2);
     if (v >= 0 && v < table_len)
       flags |= TERMINFO_ALTSCREEN;
   }
