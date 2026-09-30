@@ -696,6 +696,18 @@ hi
       expect(term.render(frame).output.length).toBe(0);
     });
 
+    it("ignores input events that are neither resize nor capability", () => {
+      term.render(frame);
+      let before = term.capabilities;
+      let out = term.update([
+        { type: "keydown", key: "a", code: "a", text: "a" },
+        { type: "mousemove", button: "left", x: 1, y: 1 },
+      ]);
+      expect(out).toEqual(new Uint8Array(0));
+      expect(term.capabilities).toEqual(before);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
     it("discards pointer interaction state on resize", () => {
       let pointer = { x: 1, y: 0, down: false };
       let first = term.render(frame, { pointer });
