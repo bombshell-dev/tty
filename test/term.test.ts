@@ -12,6 +12,7 @@ import {
   text,
 } from "../ops.ts";
 import { print } from "./print.ts";
+import { trueColorDetect } from "./caps.ts";
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const trim = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n");
@@ -734,6 +735,22 @@ hi
 │                  │
 │                  │
 └──────────────────┘`);
+    });
+  });
+
+  describe("capabilities", () => {
+    it("starts from the 256-color baseline without terminfo", () => {
+      expect(term.capabilities.colors).toBe(256);
+      expect(term.capabilities.trueColor).toBe(false);
+    });
+
+    it("seeds static capabilities from terminfo", async () => {
+      let terminfo = await trueColorDetect();
+      let seeded = await createTerm({ width: 40, height: 10, terminfo });
+      expect(seeded.capabilities.trueColor).toBe(true);
+      for (let [key, value] of Object.entries(terminfo.capabilities)) {
+        expect(seeded.capabilities).toHaveProperty(key, value);
+      }
     });
   });
 

@@ -1,7 +1,7 @@
 import { type Op, pack } from "./ops.ts";
 import { type BoundingBox, createTermNative } from "./term-native.ts";
 import type { CapabilityEvent, ColorDepth, InputEvent } from "./input.ts";
-import type { Capabilities, Detection, Rgb } from "./terminfo.ts";
+import type { Capabilities, Rgb, TerminalInfo } from "./terminfo.ts";
 
 export type { BoundingBox };
 
@@ -9,11 +9,11 @@ export interface TermOptions {
   height: number;
   width: number;
   /**
-   * Detection from detectTerminal(). Initializes the renderer with the
-   * static capabilities from the detection and seeds the private TermInfo
+   * Terminal info from detectTerminal(). Initializes the renderer with
+   * its static capabilities and seeds the private TermInfo
    * struct. When omitted, the renderer uses the 256-color baseline.
    */
-  detection?: Detection;
+  terminfo?: TerminalInfo;
 }
 
 /**
@@ -167,7 +167,7 @@ export interface Term {
 }
 
 export async function createTerm(options: TermOptions): Promise<Term> {
-  let { width, height, detection } = options;
+  let { width, height, terminfo } = options;
 
   let native = await createTermNative(
     width,
@@ -176,7 +176,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
   let { memory } = native;
 
   let currentCaps: RuntimeCapabilities = runtimeFromStatic(
-    detection?.capabilities ?? {
+    terminfo?.capabilities ?? {
       colors: 256,
       trueColor: false,
       bce: true,
