@@ -133,8 +133,8 @@ _This section is normative._
 it.
 
 **TINV-2. Pure parsing.** `terminfo_parse` performs no IO, allocates no memory,
-and never traps on malformed input. Input larger than `MAX_TERMINFO_ENTRY` (32
-768 bytes) never reaches the parser: an oversized `entry` rejects at the
+and never traps on malformed input. Input larger than `MAX_TERMINFO_ENTRY`
+(32768 bytes) never reaches the parser: an oversized `entry` rejects at the
 TypeScript boundary (§10.1), and an oversized file found on the search path is
 skipped. Malformed or truncated binaries yield the §7.1 baseline and a nonzero
 parse-result code. They MUST NOT partially apply.
