@@ -39,7 +39,7 @@ describe("baseline", () => {
 
 describe("terminfo parsing", () => {
   it("parses a real xterm-256color entry (legacy format)", async () => {
-    let d = await detectTerminal({ env: {}, terminfo: XTERM_256COLOR });
+    let d = await detectTerminal({ env: {}, entry: XTERM_256COLOR });
     let caps = d.capabilities;
     expect(caps.colors).toBe(256);
     expect(caps.trueColor).toBe(false);
@@ -49,7 +49,7 @@ describe("terminfo parsing", () => {
   });
 
   it("reads Tc / Su / Smulx from the extended capability table", async () => {
-    let d = await detectTerminal({ env: {}, terminfo: CLAYTERM_TC });
+    let d = await detectTerminal({ env: {}, entry: CLAYTERM_TC });
     let caps = d.capabilities;
     expect(caps.trueColor).toBe(true);
     expect(caps.styledUnderline).toBe(true);
@@ -58,7 +58,7 @@ describe("terminfo parsing", () => {
   });
 
   it("parses the extended number format (magic 01036)", async () => {
-    let d = await detectTerminal({ env: {}, terminfo: CLAYTERM_DIRECT });
+    let d = await detectTerminal({ env: {}, entry: CLAYTERM_DIRECT });
     let caps = d.capabilities;
     expect(caps.colors).toBe(0x1000000);
     expect(caps.trueColor).toBe(true);
@@ -67,7 +67,7 @@ describe("terminfo parsing", () => {
   });
 
   it("downgrades below baseline on terminfo evidence", async () => {
-    let d = await detectTerminal({ env: {}, terminfo: CLAYTERM_16 });
+    let d = await detectTerminal({ env: {}, entry: CLAYTERM_16 });
     let caps = d.capabilities;
     expect(caps.colors).toBe(16);
     expect(caps.altScreen).toBe(false);
@@ -78,19 +78,19 @@ describe("terminfo parsing", () => {
   it("keeps the baseline untouched on truncated input", async () => {
     let d = await detectTerminal({
       env: {},
-      terminfo: XTERM_256COLOR.slice(0, 30),
+      entry: XTERM_256COLOR.slice(0, 30),
     });
     expect(d.capabilities).toEqual(BASELINE);
   });
 
   it("keeps the baseline untouched on garbage input", async () => {
-    let d = await detectTerminal({ env: {}, terminfo: new Uint8Array(128) });
+    let d = await detectTerminal({ env: {}, entry: new Uint8Array(128) });
     expect(d.capabilities).toEqual(BASELINE);
   });
 
-  it("rejects terminfo larger than 32768 bytes", async () => {
+  it("rejects a terminfo entry larger than 32768 bytes", async () => {
     await expect(
-      detectTerminal({ env: {}, terminfo: new Uint8Array(32769) }),
+      detectTerminal({ env: {}, entry: new Uint8Array(32769) }),
     ).rejects.toThrow(RangeError);
   });
 });
@@ -99,7 +99,7 @@ describe("environment evidence", () => {
   it("grants truecolor from COLORTERM=truecolor", async () => {
     let d = await detectTerminal({
       env: { COLORTERM: "truecolor" },
-      terminfo: XTERM_256COLOR,
+      entry: XTERM_256COLOR,
     });
     expect(d.capabilities.trueColor).toBe(true);
   });
@@ -188,7 +188,7 @@ describe("probe", () => {
   });
 });
 
-describe("Detection shape", () => {
+describe("TerminalInfo shape", () => {
   it("is frozen", async () => {
     let d = await detectTerminal({ env: {} });
     expect(Object.isFrozen(d)).toBe(true);
@@ -201,7 +201,7 @@ describe("Detection shape", () => {
   });
 
   it("keys holds the parsed terminfo bytes when an entry is found", async () => {
-    let d = await detectTerminal({ env: {}, terminfo: CLAYTERM_TC });
+    let d = await detectTerminal({ env: {}, entry: CLAYTERM_TC });
     expect(d.keys.byteLength).toBe(CLAYTERM_TC.byteLength);
   });
 });

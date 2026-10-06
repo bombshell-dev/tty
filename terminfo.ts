@@ -5,7 +5,7 @@ import process from "node:process";
 import { compiled } from "./wasm.ts";
 import { offsets, struct, uint32 } from "./typedef.ts";
 
-export const MAX_TERMINFO = 32768;
+export const MAX_TERMINFO_ENTRY = 32768;
 
 /* Flag bits — must match src/terminfo.h. */
 const FLAG_TRUECOLOR = 1 << 0;
@@ -49,7 +49,7 @@ export interface Capabilities {
 export type KeyTable = Uint8Array;
 
 /** Result of detectTerminal(). */
-export interface Detection {
+export interface TerminalInfo {
   /** Static capabilities, frozen at detection time. */
   readonly capabilities: Capabilities;
   /**
@@ -70,7 +70,7 @@ export interface DetectOptions {
    */
   env?: Record<string, string | undefined>;
   /** Raw compiled terminfo bytes; skips the filesystem lookup. */
-  terminfo?: Uint8Array;
+  entry?: Uint8Array;
   signal?: AbortSignal;
 }
 
@@ -106,13 +106,13 @@ function rgbOf(packed: number): Rgb {
  */
 export async function detectTerminal(
   options: DetectOptions = {},
-): Promise<Detection> {
+): Promise<TerminalInfo> {
   let env = options.env ?? process.env;
-  let bytes = options.terminfo;
+  let bytes = options.entry;
 
-  if (bytes && bytes.byteLength > MAX_TERMINFO) {
+  if (bytes && bytes.byteLength > MAX_TERMINFO_ENTRY) {
     throw new RangeError(
-      `terminfo exceeds ${MAX_TERMINFO} byte limit (got ${bytes.byteLength})`,
+      `terminfo entry exceeds ${MAX_TERMINFO_ENTRY} byte limit (got ${bytes.byteLength})`,
     );
   }
 
@@ -156,7 +156,7 @@ export async function detectTerminal(
 
   let keys: KeyTable = new Uint8Array(0);
   if (bytes) {
-    let bytesPtr = alloc(MAX_TERMINFO);
+    let bytesPtr = alloc(MAX_TERMINFO_ENTRY);
     new Uint8Array(memory.buffer).set(bytes, bytesPtr);
     if (exports.terminfo_parse(bytesPtr, bytes.byteLength, structPtr) === 0) {
       keys = bytes.slice();
@@ -180,7 +180,7 @@ export async function detectTerminal(
     styledUnderline: !!(flags & FLAG_STYLED_UNDERLINE),
   });
 
-  return Object.freeze<Detection>({
+  return Object.freeze<TerminalInfo>({
     capabilities,
     probe: PROBE.slice(),
     keys,
@@ -266,7 +266,7 @@ async function loadTerminfo(
   for (let base of searchPath(options.env)) {
     for (let url of candidates(base, name)) {
       let b = await tryRead(url);
-      if (b && b.byteLength <= MAX_TERMINFO && hasTerminfoMagic(b)) {
+      if (b && b.byteLength <= MAX_TERMINFO_ENTRY && hasTerminfoMagic(b)) {
         return b;
       }
     }

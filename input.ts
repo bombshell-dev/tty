@@ -96,7 +96,7 @@ import {
   readEvent,
   SCAN_BUFFER_SIZE,
 } from "./input-native.ts";
-import type { Detection, Rgb } from "./terminfo.ts";
+import type { Rgb, TerminalInfo } from "./terminfo.ts";
 import { rgbOf } from "./terminfo.ts";
 
 /**
@@ -387,7 +387,7 @@ export type ColorDepth = "truecolor" | "256" | "16";
 
 /**
  * A probe-response event emitted by scan() when the terminal answers one
- * of the capability queries in Detection.probe. Route to term.update().
+ * of the capability queries in TerminalInfo.probe. Route to term.update().
  */
 export type CapabilityEvent =
   | {
@@ -501,7 +501,7 @@ export interface InputOptions {
    * colordepth denial events. When omitted, the parser uses xterm
    * default key sequences and a 256-color baseline.
    */
-  terminfo?: Detection;
+  terminfo?: TerminalInfo;
 }
 
 export async function createInput(options: InputOptions = {}): Promise<Input> {

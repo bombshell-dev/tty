@@ -493,7 +493,7 @@ included. See Section 5 for what this section does and does not freeze._
 createTerm(options: {
   width: number;
   height: number;
-  terminfo?: Detection;
+  terminfo?: TerminalInfo;
 }): Promise<Term>
 ```
 

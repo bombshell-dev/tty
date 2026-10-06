@@ -27,7 +27,7 @@ event stream.
 ### In scope (normative)
 
 - The `Capabilities` interface: its fields and the rules for how they are set
-- The `Detection` value returned by `detectTerminal()`
+- The `TerminalInfo` value returned by `detectTerminal()`
 - The `CapabilityEvent` discriminated union and its `key`/`value` shapes
 - Compiled terminfo binary parsing (legacy and extended formats)
 - The probe model: query batch, DA1 completion fence, and sans-IO contract
@@ -52,7 +52,7 @@ event stream.
 state of one terminal, resolved at detection time. Frozen after `detectTerminal`
 returns. No WASM backing.
 
-**`Detection`.** The value returned by `detectTerminal()`. Carries the frozen
+**`TerminalInfo`.** The value returned by `detectTerminal()`. Carries the frozen
 `Capabilities`, the probe query batch (`probe`), and the raw terminfo
 key-sequence bytes the input parser needs to seed its trie (`keys`).
 
@@ -117,9 +117,9 @@ probe bytes ──▶ terminal ──▶ stdin                │
 
 ### 4.3 Standalone operation
 
-`createTerm` and `createInput` remain usable without a `Detection`. When no
+`createTerm` and `createInput` remain usable without a `TerminalInfo`. When no
 `terminfo` option is provided, each factory initializes from the §7.1 baseline.
-Behavior is identical to a `Detection` with no terminfo bytes, no environment
+Behavior is identical to a `TerminalInfo` with no terminfo bytes, no environment
 evidence, and no probe responses.
 
 ---
@@ -145,7 +145,7 @@ responses. A capability no evidence supports keeps its baseline value.
 Higher-precedence evidence overrides lower-precedence evidence in both
 directions: a probe denial overrides a statically-set capability.
 
-**TINV-4. Sans-IO probe.** `Detection.probe` is a `Uint8Array` produced by
+**TINV-4. Sans-IO probe.** `TerminalInfo.probe` is a `Uint8Array` produced by
 `detectTerminal()` without touching any stream. The host writes the bytes.
 `detectTerminal()` resolves — never rejects — on timeout, non-TTY streams, a
 missing terminfo file, or abort.
@@ -190,8 +190,8 @@ interface Capabilities {
 | `styledUnderline` | `Su` boolean or `Smulx` string                                      |
 
 Key sequences (`key_*` capabilities) are not stored here. The input parser reads
-them directly from the raw terminfo bytes in `Detection.keys` at initialization
-time.
+them directly from the raw terminfo bytes in `TerminalInfo.keys` at
+initialization time.
 
 ### 6.2 `ColorDepth`
 
@@ -382,7 +382,8 @@ Specification §6.1 for the key set).
 
 _This section is normative._
 
-`Detection.probe` contains the following queries as one `Uint8Array`, in order:
+`TerminalInfo.probe` contains the following queries as one `Uint8Array`, in
+order:
 
 | #  | Query               | Bytes                                                | `CapabilityEvent` key |
 | -- | ------------------- | ---------------------------------------------------- | --------------------- |
@@ -429,16 +430,16 @@ _This section is normative for the shapes shown._
 ### 10.1 `detectTerminal`
 
 ```ts
-function detectTerminal(options?: DetectOptions): Promise<Detection>;
+function detectTerminal(options?: DetectOptions): Promise<TerminalInfo>;
 
 interface DetectOptions {
   term?: string;
   env?: Record<string, string | undefined>;
-  terminfo?: Uint8Array;
+  entry?: Uint8Array;
   signal?: AbortSignal;
 }
 
-interface Detection {
+interface TerminalInfo {
   readonly capabilities: Capabilities;
   /**
    * Write to stdout immediately after detection. Responses arrive as
@@ -455,7 +456,7 @@ type KeyTable = Uint8Array;
 `detectTerminal()`:
 
 1. Locates and reads the compiled terminfo entry for the terminal (unless raw
-   bytes are provided via `terminfo`), following the ncurses search path:
+   bytes are provided via `entry`), following the ncurses search path:
    `$TERMINFO`, `$HOME/.terminfo`, `$TERMINFO_DIRS` (empty entry = compiled-in
    defaults), then `/usr/share/terminfo`, `/etc/terminfo`, `/lib/terminfo`,
    `/usr/lib/terminfo`. Both directory layouts are probed: first-letter (Linux)
@@ -465,9 +466,9 @@ type KeyTable = Uint8Array;
    `keys`.
 3. Applies environment evidence (§7.2) from the injectable `env`.
 4. Constructs `probe` without performing any IO.
-5. Resolves the `Detection`. It never rejects.
+5. Resolves the `TerminalInfo`. It never rejects.
 
-Every environmental dependency is injectable (`env`, `terminfo`), making the
+Every environmental dependency is injectable (`env`, `entry`), making the
 function fully testable without a TTY or real terminfo files.
 
 ### 10.2 `createTerm`
@@ -476,7 +477,7 @@ function fully testable without a TTY or real terminfo files.
 function createTerm(options: {
   width: number;
   height: number;
-  terminfo?: Detection;
+  terminfo?: TerminalInfo;
 }): Promise<Term>;
 ```
 
@@ -490,7 +491,7 @@ dynamic fields at their baseline values. When omitted, the renderer uses the
 ```ts
 function createInput(options?: {
   escLatency?: number;
-  terminfo?: Detection;
+  terminfo?: TerminalInfo;
 }): Promise<Input>;
 ```
 
@@ -557,8 +558,8 @@ process.on("SIGWINCH", () => {
 ```
 
 `createTerm` and `createInput` each take `terminfo` and build their own private
-state from it. Passing the same `Detection` to both passes the same plain value
-twice. There is no shared memory and no attachment guard.
+state from it. Passing the same `TerminalInfo` to both passes the same plain
+value twice. There is no shared memory and no attachment guard.
 
 ---
 
@@ -575,8 +576,8 @@ dark/light switching is not tracked.
 **XTVERSION / DA2 / DA3 identity parsing.** The DA1 reply is used purely as a
 fence; terminal identification is not extracted.
 
-**Re-probing after suspend/resume.** `Detection.probe` may be written again by
-the host at any time; responses arrive as events as normal. The spec does not
+**Re-probing after suspend/resume.** `TerminalInfo.probe` may be written again
+by the host at any time; responses arrive as events as normal. The spec does not
 define a managed re-probe lifecycle.
 
 **Pixel mouse (1016) and in-band resize (2048) probing.** Candidates for the

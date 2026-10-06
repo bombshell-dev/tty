@@ -749,7 +749,7 @@ describe("input", () => {
 
 describe("terminfo integration", () => {
   async function withTerminfo() {
-    let terminfo = await detectTerminal({ env: {}, terminfo: CLAYTERM_TC });
+    let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_TC });
     let input = await createInput({ terminfo });
     return { terminfo, input };
   }
@@ -844,7 +844,7 @@ describe("terminfo integration", () => {
     });
 
     it("surfaces truecolor colordepth from a valid XTGETTCAP reply", async () => {
-      let terminfo = await detectTerminal({ env: {}, terminfo: CLAYTERM_16 });
+      let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_16 });
       let input = await createInput({ terminfo });
       let result = input.scan(str("\x1bP1+r524742\x1b\\"));
       expect(result.events.length).toBe(1);
@@ -867,7 +867,7 @@ describe("terminfo integration", () => {
     });
 
     it("surfaces 16-color colordepth denial when colors <= 16", async () => {
-      let terminfo = await detectTerminal({ env: {}, terminfo: CLAYTERM_16 });
+      let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_16 });
       let input = await createInput({ terminfo });
       let result = input.scan(str("\x1bP0+r\x1b\\"));
       expect(result.events.length).toBe(1);

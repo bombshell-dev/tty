@@ -78,7 +78,7 @@ Options:
   responsiveness (lower values) and correct disambiguation of ESC-prefixed
   sequences (higher values).
 
-- **`terminfo`** — A `Detection` value from `detectTerminal()` (see
+- **`terminfo`** — A `TerminalInfo` value from `detectTerminal()` (see
   [Terminfo Specification](terminfo-spec.md) §10.1). Terminal-specific key
   sequences from `terminfo.keys` are loaded into the parser's escape sequence
   trie at initialization (Section 6.1). When omitted, the parser uses built-in
