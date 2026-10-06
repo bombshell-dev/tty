@@ -1,4 +1,5 @@
 ---
+"@bomb.sh/tty": "minor"
 ---
 
 Adds `CapabilityEvent` to `InputEvent` and a `detection` option to `InputOptions`.
