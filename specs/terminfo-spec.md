@@ -118,7 +118,7 @@ probe bytes ──▶ terminal ──▶ stdin                │
 ### 4.3 Standalone operation
 
 `createTerm` and `createInput` remain usable without a `Detection`. When no
-`detection` option is provided, each factory initializes from the §7.1 baseline.
+`terminfo` option is provided, each factory initializes from the §7.1 baseline.
 Behavior is identical to a `Detection` with no terminfo bytes, no environment
 evidence, and no probe responses.
 
@@ -476,12 +476,12 @@ function fully testable without a TTY or real terminfo files.
 function createTerm(options: {
   width: number;
   height: number;
-  detection?: Detection;
+  terminfo?: Detection;
 }): Promise<Term>;
 ```
 
-When `detection` is provided, the renderer initializes its private
-`RuntimeCapabilities` from `detection.capabilities` and `RuntimeCapabilities`
+When `terminfo` is provided, the renderer initializes its private
+`RuntimeCapabilities` from `terminfo.capabilities` and `RuntimeCapabilities`
 dynamic fields at their baseline values. When omitted, the renderer uses the
 §7.1 baseline for all fields.
 
@@ -490,12 +490,12 @@ dynamic fields at their baseline values. When omitted, the renderer uses the
 ```ts
 function createInput(options?: {
   escLatency?: number;
-  detection?: Detection;
+  terminfo?: Detection;
 }): Promise<Input>;
 ```
 
-When `detection` is provided, the parser loads its key trie from
-`detection.keys`. When omitted, the parser uses built-in xterm key sequences.
+When `terminfo` is provided, the parser loads its key trie from `terminfo.keys`.
+When omitted, the parser uses built-in xterm key sequences.
 
 ### 10.4 `Term.update`
 
@@ -528,11 +528,11 @@ import { detectTerminal } from "./terminfo.ts";
 import { createTerm } from "./term.ts";
 import { createInput } from "./input.ts";
 
-const detection = await detectTerminal({ env: process.env });
-const term = await createTerm({ width: 80, height: 24, detection });
-const input = await createInput({ detection });
+const terminfo = await detectTerminal({ env: process.env });
+const term = await createTerm({ width: 80, height: 24, terminfo });
+const input = await createInput({ terminfo });
 
-process.stdout.write(detection.probe);
+process.stdout.write(terminfo.probe);
 
 process.stdin.on("data", (bytes: Uint8Array) => {
   const { events } = input.scan(bytes);
@@ -556,7 +556,7 @@ process.on("SIGWINCH", () => {
 });
 ```
 
-`createTerm` and `createInput` each take `detection` and build their own private
+`createTerm` and `createInput` each take `terminfo` and build their own private
 state from it. Passing the same `Detection` to both passes the same plain value
 twice. There is no shared memory and no attachment guard.
 

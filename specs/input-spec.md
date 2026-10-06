@@ -78,9 +78,9 @@ Options:
   responsiveness (lower values) and correct disambiguation of ESC-prefixed
   sequences (higher values).
 
-- **`detection`** — A `Detection` value from `detectTerminal()` (see
+- **`terminfo`** — A `Detection` value from `detectTerminal()` (see
   [Terminfo Specification](terminfo-spec.md) §10.1). Terminal-specific key
-  sequences from `detection.keys` are loaded into the parser's escape sequence
+  sequences from `terminfo.keys` are loaded into the parser's escape sequence
   trie at initialization (Section 6.1). When omitted, the parser uses built-in
   xterm default sequences.
 
@@ -149,7 +149,7 @@ capability layer specified by the [Terminfo Specification](terminfo-spec.md)._
 
 ### 6.1 Key sequences from terminfo
 
-When given a `detection` value whose `keys` field is present, the parser MUST
+When given a `terminfo` value whose `keys` field is present, the parser MUST
 load the terminal's `key_*` string capabilities into its escape sequence trie at
 initialization, before any scan. Terminfo-supplied sequences take precedence
 over the built-in xterm defaults when they conflict; defaults remain registered
@@ -175,7 +175,7 @@ For each recognized response the parser MUST emit a `CapabilityEvent` in the
 consumed silently: they MUST NOT surface as `InputEvent`s, and bytes belonging
 to a recognized response MUST NOT leak into adjacent events.
 
-When the parser is standalone (no `detection`), responses are still recognized
+When the parser is standalone (no `terminfo`), responses are still recognized
 and consumed so stray replies never corrupt the event stream.
 
 ---

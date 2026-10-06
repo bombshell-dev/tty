@@ -747,17 +747,17 @@ describe("input", () => {
   });
 });
 
-describe("detection integration", () => {
-  async function withDetection() {
-    let detection = await detectTerminal({ env: {}, terminfo: CLAYTERM_TC });
-    let input = await createInput({ detection });
-    return { detection, input };
+describe("terminfo integration", () => {
+  async function withTerminfo() {
+    let terminfo = await detectTerminal({ env: {}, terminfo: CLAYTERM_TC });
+    let input = await createInput({ terminfo });
+    return { terminfo, input };
   }
 
   describe("key sequences from terminfo", () => {
     it("decodes a terminfo-specific arrow sequence", async () => {
       // clayterm-tc defines kcuu1=\EOZ
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1bOZ"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toMatchObject({
@@ -768,14 +768,14 @@ describe("detection integration", () => {
 
     it("decodes a terminfo-specific function key", async () => {
       // clayterm-tc defines kf5=\E[99~
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b[99~"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toMatchObject({ type: "keydown", key: "F5" });
     });
 
     it("keeps the xterm defaults registered", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1bOA"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toMatchObject({
@@ -787,7 +787,7 @@ describe("detection integration", () => {
 
   describe("query response recognition", () => {
     it("surfaces an OSC 10 foreground report as CapabilityEvent", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b]10;rgb:ffff/ffff/ffff\x07"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -798,7 +798,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces an OSC 11 background report (ST-terminated)", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b]11;rgb:1e1e/2a2a/3b3b\x1b\\"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -809,7 +809,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces an OSC 12 cursor color report", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b]12;#ff8800\x1b\\"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -820,7 +820,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces per-field events from an OSC 21 kitty color report", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(
         str("\x1b]21;foreground=rgb:ff/00/00;background=\x1b\\"),
       );
@@ -833,7 +833,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces an OSC 22 pointer shape report", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b]22;default\x1b\\"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -844,8 +844,8 @@ describe("detection integration", () => {
     });
 
     it("surfaces truecolor colordepth from a valid XTGETTCAP reply", async () => {
-      let detection = await detectTerminal({ env: {}, terminfo: CLAYTERM_16 });
-      let input = await createInput({ detection });
+      let terminfo = await detectTerminal({ env: {}, terminfo: CLAYTERM_16 });
+      let input = await createInput({ terminfo });
       let result = input.scan(str("\x1bP1+r524742\x1b\\"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -856,7 +856,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces 256-color colordepth denial from an invalid XTGETTCAP reply", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1bP0+r\x1b\\"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -867,8 +867,8 @@ describe("detection integration", () => {
     });
 
     it("surfaces 16-color colordepth denial when colors <= 16", async () => {
-      let detection = await detectTerminal({ env: {}, terminfo: CLAYTERM_16 });
-      let input = await createInput({ detection });
+      let terminfo = await detectTerminal({ env: {}, terminfo: CLAYTERM_16 });
+      let input = await createInput({ terminfo });
       let result = input.scan(str("\x1bP0+r\x1b\\"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -879,7 +879,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces synchronized output from a DECRPM confirm report", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b[?2026;2$y"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -890,7 +890,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces sync-output=false from a not-recognized DECRPM report", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b[?2026;0$y"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -901,7 +901,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces kitty-keyboard from a flags report", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b[?1u"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -912,7 +912,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces kitty-graphics=true from an OK APC reply", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b_Gi=31;OK\x1b\\"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -923,7 +923,7 @@ describe("detection integration", () => {
     });
 
     it("surfaces kitty-graphics=false from an error APC reply", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b_Gi=31;ENOTSUPPORTED:x\x1b\\"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toEqual({
@@ -934,13 +934,13 @@ describe("detection integration", () => {
     });
 
     it("consumes a DA1 report without emitting any event", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(str("\x1b[?65;1;9c"));
       expect(result.events).toEqual([]);
     });
 
     it("interleaves CapabilityEvents with key events correctly", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let result = input.scan(
         str("a\x1b]11;rgb:0000/0000/0000\x1b\\b"),
       );
@@ -955,7 +955,7 @@ describe("detection integration", () => {
     });
 
     it("buffers a response split across scans", async () => {
-      let { input } = await withDetection();
+      let { input } = await withTerminfo();
       let first = input.scan(str("\x1b]11;rgb:12"));
       expect(first.events).toEqual([]);
       let second = input.scan(str("34/5678/9abc\x1b\\"));
@@ -967,7 +967,7 @@ describe("detection integration", () => {
       });
     });
 
-    it("surfaces CapabilityEvents on a standalone parser without detection", async () => {
+    it("surfaces CapabilityEvents on a standalone parser without terminfo", async () => {
       let input = await createInput();
       let result = input.scan(str("\x1b]11;rgb:0000/0000/0000\x1b\\"));
       expect(result.events.length).toBe(1);

@@ -493,7 +493,7 @@ included. See Section 5 for what this section does and does not freeze._
 createTerm(options: {
   width: number;
   height: number;
-  detection?: Detection;
+  terminfo?: Detection;
 }): Promise<Term>
 ```
 
@@ -501,7 +501,7 @@ Creates a new Term instance bound to the specified terminal dimensions. The
 returned promise resolves when the renderer is ready. The `width` and `height`
 parameters specify the terminal dimensions in character cells.
 
-The optional `detection` value (from `detectTerminal()`; see
+The optional `terminfo` value (from `detectTerminal()`; see
 [Terminfo Specification](terminfo-spec.md) §10.1) initializes the Term's private
 `RuntimeCapabilities` from the static `Capabilities` it carries. When omitted,
 the Term uses the §7.1 baseline.

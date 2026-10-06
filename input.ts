@@ -496,24 +496,24 @@ export interface InputOptions {
   escLatency?: number;
 
   /**
-   * Detection from detectTerminal(). Seeds the key trie from
-   * detection.keys and uses detection.capabilities.colors for
+   * Terminal detection from detectTerminal(). Seeds the key trie from
+   * terminfo.keys and uses terminfo.capabilities.colors for
    * colordepth denial events. When omitted, the parser uses xterm
    * default key sequences and a 256-color baseline.
    */
-  detection?: Detection;
+  terminfo?: Detection;
 }
 
 export async function createInput(options: InputOptions = {}): Promise<Input> {
-  let { escLatency = 25, detection } = options;
+  let { escLatency = 25, terminfo } = options;
 
   let native = await createInputNative(
     escLatency,
-    detection?.keys,
-    detection?.capabilities.colors,
+    terminfo?.keys,
+    terminfo?.capabilities.colors,
   );
 
-  let initialColors = detection?.capabilities.colors ?? 256;
+  let initialColors = terminfo?.capabilities.colors ?? 256;
 
   return {
     scan(bytes: Uint8Array = new Uint8Array(0)): ScanResult {
