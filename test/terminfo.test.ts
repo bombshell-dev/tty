@@ -156,6 +156,18 @@ describe("filesystem lookup", () => {
     expect(d.capabilities).toEqual(BASELINE);
   });
 
+  it("skips an oversized entry and resolves to the baseline", async () => {
+    let db = await Deno.makeTempDir();
+    await Deno.mkdir(`${db}/63`, { recursive: true });
+    let oversized = new Uint8Array(32769);
+    oversized.set(CLAYTERM_TC);
+    await Deno.writeFile(`${db}/63/clayterm-tc`, oversized);
+    let d = await detectTerminal({
+      env: { TERM: "clayterm-tc", TERMINFO: db },
+    });
+    expect(d.capabilities).toEqual(BASELINE);
+  });
+
   it("rejects terminal names with path separators", async () => {
     let db = await Deno.makeTempDir();
     let d = await detectTerminal({

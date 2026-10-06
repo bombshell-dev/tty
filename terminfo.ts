@@ -102,7 +102,8 @@ function rgbOf(packed: number): Rgb {
 /**
  * Detect the terminal's capabilities from the compiled terminfo entry and
  * process environment. Pure: performs no IO beyond reading the terminfo file.
- * Never rejects. See specs/terminfo-spec.md.
+ * Rejects only when `entry` exceeds MAX_TERMINFO_ENTRY (caller error);
+ * environmental failures resolve to the baseline. See specs/terminfo-spec.md.
  */
 export async function detectTerminal(
   options: DetectOptions = {},

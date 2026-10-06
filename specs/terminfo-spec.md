@@ -133,9 +133,11 @@ _This section is normative._
 it.
 
 **TINV-2. Pure parsing.** `terminfo_parse` performs no IO, allocates no memory,
-and never traps on malformed input. Input larger than 32 768 bytes is rejected
-at the TypeScript boundary. Malformed or truncated binaries yield the §7.1
-baseline and a nonzero parse-result code. They MUST NOT partially apply.
+and never traps on malformed input. Input larger than `MAX_TERMINFO_ENTRY` (32
+768 bytes) never reaches the parser: an oversized `entry` rejects at the
+TypeScript boundary (§10.1), and an oversized file found on the search path is
+skipped. Malformed or truncated binaries yield the §7.1 baseline and a nonzero
+parse-result code. They MUST NOT partially apply.
 
 **TINV-3. Progressive enhancement.** The capability layer starts from the
 conservative §7.1 baseline and raises a capability only on positive evidence.
@@ -148,7 +150,9 @@ directions: a probe denial overrides a statically-set capability.
 **TINV-4. Sans-IO probe.** `TerminalInfo.probe` is a `Uint8Array` produced by
 `detectTerminal()` without touching any stream. The host writes the bytes.
 `detectTerminal()` resolves — never rejects — on timeout, non-TTY streams, a
-missing terminfo file, or abort.
+missing, oversized, or malformed terminfo file, or abort. Environmental
+conditions degrade to the §7.1 baseline. The only rejection is caller error
+(§10.1).
 
 **TINV-5. Immediate update output.** `term.update()` returns a `Uint8Array` of
 bytes to write now. It MUST NOT defer output to the next `render()` call. An
@@ -455,18 +459,22 @@ type KeyTable = Uint8Array;
 
 `detectTerminal()`:
 
-1. Locates and reads the compiled terminfo entry for the terminal (unless raw
+1. Rejects with a `RangeError` if `entry` is provided and exceeds
+   `MAX_TERMINFO_ENTRY` bytes. This is the only rejection: it reports invalid
+   caller input, not an environmental condition.
+2. Locates and reads the compiled terminfo entry for the terminal (unless raw
    bytes are provided via `entry`), following the ncurses search path:
    `$TERMINFO`, `$HOME/.terminfo`, `$TERMINFO_DIRS` (empty entry = compiled-in
    defaults), then `/usr/share/terminfo`, `/etc/terminfo`, `/lib/terminfo`,
    `/usr/lib/terminfo`. Both directory layouts are probed: first-letter (Linux)
    and two-hex-digit (macOS). Names with path separators, NUL, or a leading `.`
-   are rejected. Files are validated by magic number.
-2. Parses the bytes into `Capabilities` and extracts key-sequence bytes into
+   are rejected. Files are validated by magic number and skipped when larger
+   than `MAX_TERMINFO_ENTRY`.
+3. Parses the bytes into `Capabilities` and extracts key-sequence bytes into
    `keys`.
-3. Applies environment evidence (§7.2) from the injectable `env`.
-4. Constructs `probe` without performing any IO.
-5. Resolves the `TerminalInfo`. It never rejects.
+4. Applies environment evidence (§7.2) from the injectable `env`.
+5. Constructs `probe` without performing any IO.
+6. Resolves the `TerminalInfo`. Apart from step 1, it never rejects.
 
 Every environmental dependency is injectable (`env`, `entry`), making the
 function fully testable without a TTY or real terminfo files.
