@@ -483,6 +483,69 @@ exception: it is specified in the
 [Color Encoding Specification](color-encoding-spec.md), which the renderer
 follows once adopted.
 
+Color compositing (§7.9) is the first adopted consumer: it reads
+`theme.foreground` and `theme.background`.
+
+### 7.9 Color compositing
+
+Every color carries an alpha channel (§8.5). The renderer composites each color
+onto the cell buffer in draw order, which is the layout engine's render-command
+order for the frame (painter's order). Compositing is source-over, per R, G and
+B channel, with `α` in 0–255:
+
+```
+out = round((src × α + dst × (255 − α)) / 255)
+```
+
+Compositing operates on 24-bit RGB. It happens before color encoding: when an
+output color encoding narrower than truecolor is in effect, the renderer narrows
+the composited result.
+
+**Backgrounds.** For each cell covered by a background (`open({ bg })`,
+`text({ bg })`, or a border side's `bg`), the destination is that cell's current
+background.
+
+- `α = 255` replaces the background. For an element background, it also replaces
+  the cell's glyph with a space. This is the existing opaque behavior.
+- `α = 0` leaves the cell unchanged. This is equivalent to omitting `bg`.
+- `0 < α < 255` composites the background. For an element background, the cell's
+  existing glyph is kept, and the glyph's foreground is composited toward the
+  background color with the same `α`. A translucent element acts as a tint over
+  the content beneath it.
+
+**Foregrounds.** A glyph's foreground (`text({ color })` or a border's `color`)
+composites against the cell's background after any background from the same
+directive has been applied. A cell holds one glyph, so glyphs are never blended
+with each other: the new glyph replaces the old one, and only its color is
+composited.
+
+**Terminal defaults.** The destination may be the terminal's default background
+(no opaque background has been applied to the cell) or the default foreground (a
+glyph with no `color`). The renderer resolves these destinations as follows:
+
+1. The color the terminal reported: `theme.background` or `theme.foreground`
+   from `term.capabilities`.
+2. Otherwise, the caller's fallback: `defaultTheme.background` or
+   `defaultTheme.foreground` from `createTerm()` (§8.1).
+3. Otherwise, black (`{ r: 0, g: 0, b: 0 }`) for the background and white
+   (`{ r: 255, g: 255, b: 255 }`) for the foreground.
+
+A reported color always takes precedence over `defaultTheme`, consistent with
+progressive enhancement ([Terminfo Specification](terminfo-spec.md) TINV-3).
+
+A cell left at a terminal default (nothing drawn, or only `α = 0`) MUST still be
+emitted as the default (no color SGR), so the terminal's own color shows. A cell
+whose color results from compositing over a default with `0 < α < 255` is
+emitted as an explicit color.
+
+**Theme changes.** Compositing reads the theme at render time. A `term.update()`
+that changes `theme.foreground` or `theme.background` returns no bytes; it takes
+effect on the next `render()`, and cells whose composited color changes are
+re-emitted by normal diffing (§4.4).
+
+**Transparent numbers.** A color whose alpha byte is 0 is fully transparent. A
+raw `0xRRGGBB` number has alpha 0. Use `rgba()` to build colors.
+
 ---
 
 ## 8. Public Rendering API
@@ -497,6 +560,7 @@ createTerm(options: {
   width: number;
   height: number;
   terminfo?: TerminalInfo;
+  defaultTheme?: { foreground?: Rgb; background?: Rgb };
 }): Promise<Term>
 ```
 
@@ -510,6 +574,10 @@ The optional `terminfo` value (from `detectTerminal()`; see
 the Term uses the §7.1 baseline. The renderer resolves its color encoding from
 this capability snapshot; the derivation rule and downmapping behavior are
 specified in the [Color Encoding Specification](color-encoding-spec.md).
+
+The optional `defaultTheme` supplies the terminal default colors that color
+compositing (§7.9) uses until the terminal reports its own. It does not change
+`term.capabilities.theme`, which holds only reported colors.
 
 ### 8.2 Render invocation
 
@@ -672,7 +740,8 @@ rgba(r: number, g: number, b: number, a?: number): number
 
 Packs color channel values (each 0–255) into a single 32-bit integer in ARGB
 format. Alpha defaults to 255 (fully opaque). The returned value is used
-wherever the directive model expects a color.
+wherever the directive model expects a color. Colors with alpha below 255 are
+composited as defined in §7.9.
 
 ### 8.6 Term update
 

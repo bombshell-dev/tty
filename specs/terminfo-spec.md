@@ -486,13 +486,15 @@ function createTerm(options: {
   width: number;
   height: number;
   terminfo?: TerminalInfo;
+  defaultTheme?: { foreground?: Rgb; background?: Rgb };
 }): Promise<Term>;
 ```
 
 When `terminfo` is provided, the renderer initializes its private
 `RuntimeCapabilities` from `terminfo.capabilities` and `RuntimeCapabilities`
 dynamic fields at their baseline values. When omitted, the renderer uses the
-§7.1 baseline for all fields.
+§7.1 baseline for all fields. `defaultTheme` is a renderer concern defined in
+[Renderer Specification](renderer-spec.md) §7.9.
 
 ### 10.3 `createInput`
 
