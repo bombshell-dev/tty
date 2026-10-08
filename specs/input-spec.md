@@ -113,6 +113,13 @@ returns immediately.
   relative duration in milliseconds. The `deadline` field is an absolute
   timestamp (milliseconds since epoch) for the same point in time.
 
+An ESC followed by exactly one introducer byte — `[`, `O`, `]`, `P`, or `_` —
+and nothing else is ambiguous in the same way: it is either an Alt-modified key
+or the start of an escape sequence or probe response. The parser MUST treat it
+as pending and report `pending`. If no further bytes arrive within `escLatency`,
+the rescan MUST resolve it as a key event for the introducer character with
+`alt: true`.
+
 ---
 
 ## 5. InputEvent Types
@@ -159,7 +166,7 @@ The key capabilities consumed are the `key_*` string range mapped to existing
 `KEY_*` codes: arrows (`kcuu1`, `kcud1`, `kcub1`, `kcuf1`), function keys
 (`kf1`–`kf12`), editing keys (`khome`, `kend`, `kich1`, `kdch1`, `kpp`, `knp`),
 and backtab (`kcbt`). Key capabilities with no corresponding `KEY_*` code are
-ignored.
+ignored. Terminfo key sequences longer than 16 bytes are ignored.
 
 ### 6.2 Query response recognition
 
@@ -177,6 +184,21 @@ to a recognized response MUST NOT leak into adjacent events.
 
 When the parser is standalone (no `terminfo`), responses are still recognized
 and consumed so stray replies never corrupt the event stream.
+
+### 6.3 Response termination
+
+OSC, DCS, and APC responses are terminated by BEL (`0x07`) or ST (`ESC \`). Once
+the parser has recognized a response header — `ESC ] Ps ;` with `Ps` one of 10,
+11, 12, 21, or 22; `ESC P 0 + r` or `ESC P 1 + r`; or `ESC _ G` — the following
+bytes end the response early instead:
+
+- any other C0 control: `0x00`–`0x06`, `0x08`–`0x1A`, `0x1C`–`0x1F`;
+- DEL (`0x7F`);
+- ESC followed by any byte other than `\`.
+
+When a response ends early, the parser MUST discard the bytes received for it
+and MUST NOT emit a `CapabilityEvent` for it. Parsing resumes at the byte that
+ended the response, so the key or sequence it begins is delivered normally.
 
 ---
 
