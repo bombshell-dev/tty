@@ -441,6 +441,31 @@ describe("term", () => {
 
       expect(countOf(out, grave)).toBe(8);
     });
+
+    it("drops combining marks whose base cell is clipped", async () => {
+      let term2 = await createTerm({ width: 6, height: 1 });
+      let out = decode(
+        term2
+          .render(
+            [
+              open("root", {
+                layout: { width: grow(), height: grow(), direction: "ltr" },
+              }),
+              open("clip", {
+                layout: { width: fixed(2), height: fixed(1) },
+                clip: { horizontal: true, vertical: true },
+              }),
+              text("abe\u{0301}"),
+              close(),
+              close(),
+            ],
+            { mode: "line" },
+          )
+          .output,
+      );
+
+      expect(out).not.toContain("\u{0301}");
+    });
   });
 
   describe("caret placement", () => {

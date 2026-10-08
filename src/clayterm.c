@@ -119,15 +119,15 @@ static Cell *cell_at(struct Clayterm *ct, Cell *buf, int x, int y) {
   return &buf[y * ct->w + x];
 }
 
-static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
-                    uint32_t bg) {
+static int setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
+                   uint32_t bg) {
   if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
-    return;
+    return 0;
   if (ct->clipping) {
     if (x < ct->clipx || x >= ct->clipx + ct->clipw)
-      return;
+      return 0;
     if (y < ct->clipy || y >= ct->clipy + ct->cliph)
-      return;
+      return 0;
   }
   Cell *c = cell_at(ct, ct->back, x, y);
   c->ch = ch;
@@ -137,6 +137,7 @@ static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
   }
   for (int i = 0; i < CELL_MAX_COMBINING; i++)
     c->combining[i] = 0;
+  return 1;
 }
 
 /* Append a combining-mark codepoint to the cell at (x, y) in the back buffer.
@@ -438,8 +439,7 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
     if (cw < 0)
       cw = 1;
     if (cw > 0) {
-      setcell(ct, x, y0, cp, fg, bg);
-      last_x = x;
+      last_x = setcell(ct, x, y0, cp, fg, bg) ? x : -1;
       x += cw;
     } else if (last_x >= 0) {
       /* combining mark: attach to the preceding base cell */
