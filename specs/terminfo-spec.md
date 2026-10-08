@@ -511,19 +511,15 @@ When omitted, the parser uses built-in xterm key sequences.
 ```ts
 interface Term {
   render(ops: Op[], options?: RenderOptions): RenderResult;
-  update(change: Update | readonly Update[]): Uint8Array;
+  update(events: readonly InputEvent[]): Uint8Array;
   readonly capabilities: RuntimeCapabilities;
 }
-
-type Update =
-  | { width: number; height: number }
-  | InputEvent;
 ```
 
-`update()` accepts one change or a batch. `InputEvent` values other than
+`update()` accepts an array of `InputEvent` values. Events other than
 `ResizeEvent` and `CapabilityEvent` are no-op steps, so the full `events` array
-from `scan()` can be passed without filtering. A batch is folded in order: each
-`Update` produces the next `RuntimeCapabilities` and any bytes defined by the
+from `scan()` can be passed without filtering. Events are folded in order: each
+event produces the next `RuntimeCapabilities` and any bytes defined by the
 consuming feature, and the returned bytes are concatenated. The foundation
 defines no such bytes. The return value is always a `Uint8Array`; callers write
 it to their output stream when non-empty (TINV-5).
@@ -545,22 +541,13 @@ process.stdout.write(terminfo.probe);
 
 process.stdin.on("data", (bytes: Uint8Array) => {
   const { events } = input.scan(bytes);
-  for (const event of events) {
-    switch (event.type) {
-      case "capability":
-      case "resize": {
-        const out = term.update(event);
-        if (out.length) process.stdout.write(out);
-        break;
-      }
-      default:
-        dispatch(event);
-    }
-  }
+  const out = term.update(events);
+  if (out.length) process.stdout.write(out);
+  for (const event of events) dispatch(event);
 });
 
 process.on("SIGWINCH", () => {
-  const out = term.update({ width: cols(), height: rows() });
+  const out = term.update([{ type: "resize", width: cols(), height: rows() }]);
   if (out.length) process.stdout.write(out);
 });
 ```
