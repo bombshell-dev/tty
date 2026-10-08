@@ -27,6 +27,7 @@
 #define MAX_EVENTS 128
 /* Longest capability query response we will buffer before giving up. */
 #define MAX_RESPONSE 1024
+#define MAX_CSI_PARAM 99999
 
 /* ── State ────────────────────────────────────────────────────────── */
 
@@ -985,11 +986,14 @@ static int parse_csi_private(struct InputState *st) {
   int i = 3;
 
   while (i < st->len) {
+    if (i - 3 > MAX_RESPONSE)
+      return PARSE_ERR;
     char c = st->buf[i];
     if (c >= '0' && c <= '9') {
       if (cur == -1)
         cur = 0;
-      cur = cur * 10 + (c - '0');
+      if (cur <= MAX_CSI_PARAM)
+        cur = cur * 10 + (c - '0');
     } else if (c == ';' || c == ':') {
       if (ni < 4)
         nums[ni++] = cur;

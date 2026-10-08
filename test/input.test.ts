@@ -990,4 +990,33 @@ describe("terminfo integration", () => {
       });
     });
   });
+
+  describe("response recovery", () => {
+    function drain(input: Input, data: Uint8Array) {
+      let events = input.scan(data).events;
+      for (
+        let more = input.scan().events;
+        more.length;
+        more = input.scan().events
+      ) {
+        events.push(...more);
+      }
+      return events;
+    }
+
+    it("recovers when an incomplete private CSI response fills the input buffer", async () => {
+      let input = await createInput();
+      let events = drain(input, str("\x1b[?" + ";".repeat(4093)));
+      events.push(...drain(input, str("a")));
+      expect(events.at(-1)).toMatchObject({ type: "keydown", key: "a" });
+    });
+
+    it("does not wrap an overflowing private CSI parameter into a known mode", async () => {
+      let input = await createInput();
+      // 4294969322 = 2026 + 2^32
+      let result = input.scan(str("\x1b[?4294969322;1$ya"));
+      expect(result.events.filter((e) => e.type === "capability")).toEqual([]);
+      expect(result.events.at(-1)).toMatchObject({ type: "keydown", key: "a" });
+    });
+  });
 });
