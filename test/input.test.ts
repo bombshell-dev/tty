@@ -1034,6 +1034,56 @@ describe("terminfo integration", () => {
       });
     });
 
+    it("recognizes every supported response split at every byte boundary", async () => {
+      let cap = (key: string, value: unknown) => ({
+        type: "capability",
+        key,
+        value,
+      });
+      let white = { r: 255, g: 255, b: 255 };
+      let cases: [string, unknown[]][] = [
+        ["\x1b]10;rgb:ffff/ffff/ffff\x07", [cap("foreground-color", white)]],
+        ["\x1b]11;rgb:ff/ff/ff\x1b\\", [cap("background-color", white)]],
+        ["\x1b]12;#ffffff\x1b\\", [cap("cursor-color", white)]],
+        [
+          "\x1b]21;foreground=#ffffff;cursor=rgb:f/f/f\x1b\\",
+          [cap("foreground-color", white), cap("cursor-color", white)],
+        ],
+        ["\x1b]22;default\x1b\\", [cap("pointer-shape", true)]],
+        ["\x1bP1+r524742=382F382F38\x1b\\", [cap("colordepth", "truecolor")]],
+        ["\x1bP0+r\x1b\\", [cap("colordepth", "256")]],
+        ["\x1b[?2026;2$y", [cap("sync-output", true)]],
+        ["\x1b[?1u", [cap("kitty-keyboard", true)]],
+        ["\x1b_Gi=31;OK\x1b\\", [cap("kitty-graphics", true)]],
+        ["\x1b[?65;1;9c", []],
+      ];
+      let x = expect.objectContaining({ type: "keydown", key: "x" });
+      let y = expect.objectContaining({ type: "keydown", key: "y" });
+
+      for (let [response, expected] of cases) {
+        let data = str("x" + response + "y");
+        for (let at = 1; at < data.length; at++) {
+          let input = await createInput({ escLatency: 60_000 });
+          let events = [
+            ...input.scan(data.subarray(0, at)).events,
+            ...input.scan(data.subarray(at)).events,
+          ];
+          expect({ response, at, events }).toEqual({
+            response,
+            at,
+            events: [x, ...expected, y],
+          });
+        }
+
+        let input = await createInput({ escLatency: 60_000 });
+        let events = [...data].flatMap((b) => input.scan(bytes(b)).events);
+        expect({ response, events }).toEqual({
+          response,
+          events: [x, ...expected, y],
+        });
+      }
+    });
+
     it("surfaces CapabilityEvents on a standalone parser without terminfo", async () => {
       let input = await createInput();
       let result = input.scan(str("\x1b]11;rgb:0000/0000/0000\x1b\\"));
