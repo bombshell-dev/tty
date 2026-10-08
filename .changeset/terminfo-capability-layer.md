@@ -8,7 +8,7 @@ Adds `detectTerminal()`, `TerminalInfo`, `Capabilities`, `DetectOptions`, `KeyTa
 
 Pass the same `TerminalInfo` as `terminfo` to `createTerm` and `createInput`. `term.capabilities` exposes the renderer's current capability snapshot, seeded from `terminfo.capabilities` (or the 256-color baseline when omitted).
 
-**Breaking:** `term.update()` now takes one change or an array of changes — a `{ width, height }` resize or any `InputEvent` — instead of `{ events }`. Capability events from `scan()` are folded into `term.capabilities`; other input events are ignored, so the whole `events` array can be passed through. `update()` returns a `Uint8Array` of bytes to write immediately (empty when there are none).
+**Breaking:** Changes `term.update()` to take an array of `InputEvent`s instead of `{ events }` or `{ width, height }`. Resizes are now `ResizeEvent`s tagged `type: "resize"`; capability events from `scan()` are folded into `term.capabilities`; every other input event is ignored, so the `events` array from `scan()` can be passed straight through. `update()` returns a `Uint8Array` of bytes to write immediately (empty when there are none).
 
 #### Migration
 
@@ -17,6 +17,13 @@ Pass the same `TerminalInfo` as `terminfo` to `createTerm` and `createInput`. `t
 +const out = term.update(events);
 +if (out.length) process.stdout.write(out);
 ```
+
+```diff
+-term.update({ width, height });
++term.update([{ type: "resize", width, height }]);
+```
+
+To opt in to terminfo-based capability detection:
 
 ```diff
 +const terminfo = await detectTerminal({ env: process.env });
