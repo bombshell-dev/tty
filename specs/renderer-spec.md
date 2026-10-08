@@ -1071,8 +1071,8 @@ The `errors` field contains any errors reported by the Clay layout engine during
 the most recent `render()` call. Each error is a `ClayError` object with:
 
 - `type`: a string identifying the error category. The following types are
-  defined. Most mirror Clay's error taxonomy; `"CLIP_DEPTH_EXCEEDED"` is
-  Clayterm-specific.
+  defined. Most mirror Clay's error taxonomy; `"CLIP_DEPTH_EXCEEDED"` and
+  `"COMBINING_MARKS_EXCEEDED"` are Clayterm-specific.
   - `"TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED"`
   - `"ARENA_CAPACITY_EXCEEDED"`
   - `"ELEMENTS_CAPACITY_EXCEEDED"`
@@ -1085,6 +1085,10 @@ the most recent `render()` call. Each error is a `ClayError` object with:
   - `"CLIP_DEPTH_EXCEEDED"` — A frame nested clip regions more deeply than the
     renderer could track. See §7.5 for the guarantees that still hold in this
     case. The `message` SHOULD identify the renderer's tracking limit.
+  - `"COMBINING_MARKS_EXCEEDED"` — A frame attached more combining marks to a
+    single cell than the cell can store. The excess marks are truncated (see
+    §13, Cell representation). Reported at most once per frame, on the first
+    truncation. The `message` SHOULD identify the per-cell limit.
 - `message`: a human-readable string describing the error in detail.
 
 Errors are collected per-render; each call to `render()` returns only the errors
@@ -1158,9 +1162,11 @@ base Unicode codepoint plus up to 8 combining-mark codepoints — together with 
 foreground color (packed ARGB with attribute flags in the high byte) and a
 background color. The combining-mark slots are zero-terminated; a cell with no
 combining marks stores zero in every slot. When a text string produces more than
-8 combining marks for a single base codepoint, the excess marks are silently
-truncated from the end (marks 1–8 are kept, marks 9+ are discarded), ensuring
-that the first and most semantically significant marks always survive. Cell
+8 combining marks for a single base codepoint, the excess marks are truncated
+from the end (marks 1–8 are kept, marks 9+ are discarded), ensuring that the
+first and most semantically significant marks always survive. The first
+truncation in a frame is reported as a `"COMBINING_MARKS_EXCEEDED"` error
+(§12.3); later truncations in the same frame are not reported again. Cell
 comparison for diffing considers combining marks: a cell is considered changed
 when any combining mark differs from the front buffer, not only when the base
 codepoint or color attributes differ.
