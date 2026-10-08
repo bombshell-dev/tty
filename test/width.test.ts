@@ -1,6 +1,6 @@
-import { describe, expect, it } from "./suite.ts";
-import { createTerm } from "../term.ts";
-import { close, grow, open, pack, text } from "../ops.ts";
+import { beforeEach, describe, expect, it } from "./suite.ts";
+import { createTerm, type Term } from "../term.ts";
+import { close, fixed, grow, open, pack, text } from "../ops.ts";
 import { createTermNative } from "../term-native.ts";
 import { print } from "./print.ts";
 
@@ -93,5 +93,53 @@ describe("width", () => {
     // the invalid sequence must never reach the terminal
     expect(indexOfSeq(out, [0xed, 0xa0, 0x80])).toBe(-1);
     expect(print(decode(out), 10, 3)).toContain("a�b");
+  });
+});
+
+describe("wide characters", () => {
+  let term: Term;
+  beforeEach(async () => {
+    term = await createTerm({ width: 12, height: 1 });
+  });
+
+  it("overlay on a wide char's trailing column clears the orphaned lead to a space", () => {
+    // X is floated onto col 1, the trailing column of 你 (cols 0-1).
+    let out = print(
+      decode(
+        term.render([
+          open("root", { layout: { width: grow(), height: grow() } }),
+          text("你好"),
+          open("ov", {
+            floating: { x: 1, y: 0, attachTo: "root" },
+            layout: { width: fixed(1), height: fixed(1) },
+          }),
+          text("X"),
+          close(),
+          close(),
+        ]).output,
+      ),
+      12,
+      1,
+    );
+    // half-overwritten 你 collapses to a space, X lands at col 1, 好 untouched at 2-3.
+    expect(out).toBe(" X好         ");
+  });
+
+  it("emits an explicit byte for an overlay landing on a placeholder column", () => {
+    let ansi = decode(
+      term.render([
+        open("root", { layout: { width: grow(), height: grow() } }),
+        text("你好"),
+        open("ov", {
+          floating: { x: 1, y: 0, attachTo: "root" },
+          layout: { width: fixed(1), height: fixed(1) },
+        }),
+        text("X"),
+        close(),
+        close(),
+      ]).output,
+    );
+    // the overlay glyph reaches the byte stream rather than being swallowed by the column skip.
+    expect(ansi).toContain("X");
   });
 });
