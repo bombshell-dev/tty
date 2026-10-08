@@ -51,9 +51,10 @@ struct Clayterm *ct_active_context = NULL;
 /* clip stack depth: nesting beyond this clamps to the deepest rect */
 #define CLIP_STACK_MAX 16
 
-/* Clayterm-specific error code, numbered past Clay's error enum (0..8).
+/* Clayterm-specific error codes, numbered past Clay's error enum (0..8).
  * Mirrored by ERROR_TYPES in term.ts. */
 #define CLAYTERM_ERR_CLIP_DEPTH_EXCEEDED 9
+#define CLAYTERM_ERR_COMBINING_MARKS_EXCEEDED 10
 
 #define CLAYTERM_STR_(x) #x
 #define CLAYTERM_STR(x) CLAYTERM_STR_(x)
@@ -80,6 +81,8 @@ struct Clayterm {
   int clipoverflow;
   /* set once per frame when nesting first exceeds the tracked depth */
   int clip_depth_exceeded;
+  /* set once per frame when a cell first runs out of combining-mark slots */
+  int combining_exceeded;
   /* error collection */
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
@@ -140,8 +143,28 @@ static int setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
   return 1;
 }
 
+/* Surface a COMBINING_MARKS_EXCEEDED error once per frame. */
+static void report_combining_exceeded(struct Clayterm *ct) {
+  if (ct->combining_exceeded)
+    return;
+  ct->combining_exceeded = 1;
+  if (ct->error_count >= MAX_ERRORS)
+    return;
+  static const char msg[] =
+      "cell exceeds combining-mark limit of " CLAYTERM_STR(
+          CELL_MAX_COMBINING) "; excess marks truncated";
+  ct->errors[ct->error_count++] = (Clay_ErrorData){
+      .errorType = (Clay_ErrorType)CLAYTERM_ERR_COMBINING_MARKS_EXCEEDED,
+      .errorText = {.isStaticallyAllocated = true,
+                    .length = (int32_t)(sizeof(msg) - 1),
+                    .chars = msg},
+      .userData = ct,
+  };
+}
+
 /* Append a combining-mark codepoint to the cell at (x, y) in the back buffer.
- * Marks beyond CELL_MAX_COMBINING are silently dropped (truncation from end).
+ * Marks beyond CELL_MAX_COMBINING are dropped (truncation from end) and
+ * reported once per frame.
  */
 static void append_combining(struct Clayterm *ct, int x, int y, uint32_t cp) {
   if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
@@ -153,6 +176,7 @@ static void append_combining(struct Clayterm *ct, int x, int y, uint32_t cp) {
       return;
     }
   }
+  report_combining_exceeded(ct);
 }
 
 /* ── Escape sequence generation ───────────────────────────────────── */
@@ -898,6 +922,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   ct->clipdepth = 0;
   ct->clipoverflow = 0;
   ct->clip_depth_exceeded = 0;
+  ct->combining_exceeded = 0;
   ct->clipping = 0;
 
   cells_fill(ct->back, ct->w, ct->h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);

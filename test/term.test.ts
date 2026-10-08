@@ -389,6 +389,28 @@ describe("term", () => {
 └──────────┘`);
     });
 
+    it("reports COMBINING_MARKS_EXCEEDED once per frame on truncation", async () => {
+      let t = await createTerm({ width: 12, height: 3 });
+      let frame = (content: string) => [
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        text(content),
+        close(),
+      ];
+      let types = (content: string) =>
+        t.render(frame(content)).errors.map((e) => e.type);
+      let grave = "̀";
+
+      expect(types("a" + grave.repeat(9) + "b" + grave.repeat(9))).toEqual([
+        "COMBINING_MARKS_EXCEEDED",
+      ]);
+      expect(types("a" + grave.repeat(8))).toEqual([]);
+      expect(types("c" + grave.repeat(10))).toEqual([
+        "COMBINING_MARKS_EXCEEDED",
+      ]);
+    });
+
     it("drops combining marks whose base cell is clipped", async () => {
       let t = await createTerm({ width: 6, height: 1 });
       let ansi = decode(
