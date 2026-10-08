@@ -791,6 +791,27 @@ describe("input", () => {
   });
 });
 
+function terminfoEntry(strings: Record<number, string>): Uint8Array {
+  let names = str("synthetic|generated key-length test entry\0");
+  let count = Math.max(...Object.keys(strings).map(Number)) + 1;
+  let offsets = new Int16Array(count).fill(-1);
+  let table: number[] = [];
+  for (let [index, value] of Object.entries(strings)) {
+    offsets[Number(index)] = table.length;
+    table.push(...str(value), 0);
+  }
+  let header = new Int16Array([0o432, names.length, 0, 0, count, table.length]);
+  let pad = names.length % 2;
+  let out = new Uint8Array(12 + names.length + pad + count * 2 + table.length);
+  let view = new DataView(out.buffer);
+  header.forEach((v, i) => view.setInt16(i * 2, v, true));
+  out.set(names, 12);
+  let at = 12 + names.length + pad;
+  offsets.forEach((v, i) => view.setInt16(at + i * 2, v, true));
+  out.set(table, at + count * 2);
+  return out;
+}
+
 describe("terminfo integration", () => {
   async function withTerminfo() {
     let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_TC });
@@ -816,6 +837,81 @@ describe("terminfo integration", () => {
       let result = input.scan(str("\x1b[99~"));
       expect(result.events.length).toBe(1);
       expect(result.events[0]).toMatchObject({ type: "keydown", key: "F5" });
+    });
+
+    it("accepts a terminfo key sequence of exactly 16 bytes", async () => {
+      let seq = "\x1bO" + "z".repeat(13) + "Z";
+      let terminfo = await detectTerminal({
+        env: {},
+        entry: terminfoEntry({ 87: seq }),
+      });
+      let input = await createInput({ terminfo });
+      expect(input.scan(str(seq)).events).toEqual([
+        expect.objectContaining({ type: "keydown", key: "ArrowUp" }),
+      ]);
+    });
+
+    it("ignores terminfo key sequences longer than 16 bytes", async () => {
+      let seq = "\x1bO" + "z".repeat(14) + "Z";
+      let terminfo = await detectTerminal({
+        env: {},
+        entry: terminfoEntry({ 87: seq }),
+      });
+      let input = await createInput({ terminfo });
+      let events = input.scan(str(seq)).events;
+      expect(events.some((e) => "key" in e && e.key === "ArrowUp")).toBe(false);
+    });
+
+    it("keeps the default keys when every terminfo key is oversized", async () => {
+      let caps = [
+        59,
+        61,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        79,
+        81,
+        82,
+        83,
+        87,
+        148,
+        164,
+        216,
+        217,
+      ];
+      let strings: Record<number, string> = {};
+      caps.forEach((cap, i) => {
+        strings[cap] = "\x1bX" + String.fromCharCode(0x61 + i) +
+          "y".repeat(997);
+      });
+      let terminfo = await detectTerminal({
+        env: {},
+        entry: terminfoEntry(strings),
+      });
+      expect(terminfo.keys.byteLength).toBeGreaterThan(0);
+      let input = await createInput({ terminfo });
+      for (
+        let [seq, key] of [
+          ["\x1bOA", "ArrowUp"],
+          ["\x1bOP", "F1"],
+          ["\x1bOH", "Home"],
+          ["\x1bOF", "End"],
+          ["\x1b[3~", "Delete"],
+        ]
+      ) {
+        expect(input.scan(str(seq)).events).toEqual([
+          expect.objectContaining({ type: "keydown", key }),
+        ]);
+      }
     });
 
     it("fits a key table larger than the initial wasm memory", async () => {

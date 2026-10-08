@@ -28,6 +28,8 @@
 /* Longest capability query response we will buffer before giving up. */
 #define MAX_RESPONSE 1024
 #define MAX_CSI_PARAM 99999
+/* Longest terminfo key sequence loaded into the trie (input-spec 6.1). */
+#define MAX_TERMINFO_KEY 16
 
 #define TCAP_RGB_DENIED 1
 #define TCAP_TC_DENIED 2
@@ -1398,7 +1400,7 @@ struct InputState *input_init(void *mem, int esc_latency_ms,
       int n = 0;
       const char *seq =
           terminfo_str(terminfo, terminfo_len, key_caps[i].index, &n);
-      if (seq && n > 0)
+      if (seq && n > 0 && n <= MAX_TERMINFO_KEY)
         trie_add(st->trie, &st->trie_len, seq, n, key_caps[i].key, 0);
     }
   }
