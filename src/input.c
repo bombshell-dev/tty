@@ -1382,6 +1382,10 @@ struct InputState *input_init(void *mem, int esc_latency_ms,
   return st;
 }
 
+static int is_introducer(char c) {
+  return c == '[' || c == 'O' || c == ']' || c == 'P' || c == '_';
+}
+
 int input_scan(struct InputState *st, const char *buf, int len, double now) {
 
   /* append incoming bytes (may be partial if buffer is full) */
@@ -1410,6 +1414,22 @@ int input_scan(struct InputState *st, const char *buf, int len, double now) {
           continue;
         }
         /* pending — caller should retry after timeout */
+        return accepted;
+      }
+
+      /* ESC + lone introducer: Alt+key or the start of a sequence */
+      if (st->len == 2 && is_introducer(st->buf[1])) {
+        if (st->esc_time == 0)
+          st->esc_time = now;
+        if (now - st->esc_time >= (double)st->esc_latency_ms) {
+          struct InputEvent *ev = emit(st);
+          ev->type = EVENT_KEY;
+          ev->mod = MOD_ALT;
+          ev->ch = (uint8_t)st->buf[1];
+          shift(st, 2);
+          st->esc_time = 0;
+          continue;
+        }
         return accepted;
       }
 

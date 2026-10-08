@@ -375,6 +375,50 @@ describe("input", () => {
     });
   });
 
+  describe("ESC + introducer timeout", () => {
+    for (let introducer of ["[", "O", "]", "P", "_"]) {
+      it(`reports ESC ${introducer} as pending`, () => {
+        let result = input.scan(str(`\x1b${introducer}`));
+        expect(result.events).toEqual([]);
+        expect(result.pending?.delay).toBe(25);
+      });
+
+      it(`resolves ESC ${introducer} to Alt+${introducer} after the timeout`, async () => {
+        input.scan(str(`\x1b${introducer}`));
+        await new Promise((r) => setTimeout(r, 30));
+        let result = input.scan();
+        expect(result.events).toEqual([
+          expect.objectContaining({
+            type: "keydown",
+            key: introducer,
+            alt: true,
+          }),
+        ]);
+        expect(result.pending).toBeUndefined();
+      });
+    }
+
+    it("stays pending when the introducer arrives after a lone ESC", () => {
+      input.scan(bytes(0x1b));
+      let result = input.scan(str("P"));
+      expect(result.events).toEqual([]);
+      expect(result.pending?.delay).toBe(25);
+    });
+
+    it("parses the sequence when more bytes arrive before the timeout", () => {
+      input.scan(str("\x1b]"));
+      let result = input.scan(str("11;rgb:00/00/00\x07"));
+      expect(result.events).toEqual([
+        {
+          type: "capability",
+          key: "background-color",
+          value: { r: 0, g: 0, b: 0 },
+        },
+      ]);
+      expect(result.pending).toBeUndefined();
+    });
+  });
+
   describe("Alt combinations", () => {
     it("parses Alt+a as unrecognized ESC sequence", () => {
       let result = input.scan(bytes(0x1b, 0x61));
