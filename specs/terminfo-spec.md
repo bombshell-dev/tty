@@ -284,7 +284,11 @@ per field the reply carries. OSC 21 arriving alongside OSC 10/11/12 replies does
 not merge; each response yields its own event.
 
 **OSC 22.** An OSC 22 reply sets `key: "pointer-shape", value: true`. The shape
-name in the reply is discarded in v1; only protocol support is recorded.
+name in the reply is discarded in v1; only protocol support is recorded. The
+renderer emits pointer shapes only while `pointerShape` is `true` (Renderer
+Specification §7.9). Terminals that implement OSC 22 set but not its query never
+reply; a caller with outside knowledge supplies the evidence itself with
+`term.update([{ type: "capability", key: "pointer-shape", value: true }])`.
 
 **DA1.** The DA1 reply is recognized internally as the probe fence and MUST NOT
 surface as a `CapabilityEvent`.
@@ -422,8 +426,8 @@ and mouse events in arrival order. The host loop routes them to `term.update()`.
 
 A capability event can arrive after the renderer has already emitted frames.
 `term.update()` folds it into the runtime snapshot. Any renderer-side output
-invalidation or immediate bytes are defined by the focused feature specification
-that consumes that capability.
+invalidation or immediate bytes are defined by the renderer section that
+consumes that capability (Renderer Specification §7.8).
 
 ---
 

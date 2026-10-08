@@ -287,10 +287,10 @@ The render transaction produces ANSI bytes as a `Uint8Array`. These bytes:
 The output reflects the complete visual state of the frame. The caller SHOULD
 write the output to the terminal without modification.
 
-The output `Uint8Array` is a view over renderer-owned memory. It is valid until
-the next `render()` or `update()` call on the same Term instance, at which point
-the buffer may be reused or detached (§7.7). Callers who need to retain the
-output beyond that point MUST copy it.
+The output `Uint8Array` may be a view over renderer-owned memory. It is valid
+until the next `render()` or `update()` call on the same Term instance, at which
+point the buffer may be reused or detached (§7.7). Callers who need to retain
+the output beyond that point MUST copy it.
 
 ### 7.4 Lifecycle
 
@@ -449,9 +449,9 @@ be a no-op for that step.
 
 **Capability semantics.** A `CapabilityEvent` step folds the event's `key` and
 `value` into the Term's private `RuntimeCapabilities`. The foundation update
-transaction does not emit bytes or alter renderer output as a consequence of a
-capability event. A focused capability specification MUST define any output
-invalidation or immediate bytes required by its consumer.
+transaction emits bytes or alters renderer output as a consequence of a
+capability event only where a capability section of this specification says so
+(§7.9).
 
 **Return value.** `update()` returns a `Uint8Array` of bytes to write to the
 terminal immediately. An empty array is valid when the update changes no
@@ -469,16 +469,61 @@ is valid until the next `render()` **or** `update()` call).
 
 ### 7.8 Capability consumption
 
-The renderer may consume the read-only capability snapshot maintained by
-`Term.update()`, but this foundation specification does not define any
-capability-specific output. Protocols that change emitted bytes MUST add their
-own renderer section, capability evidence, invalidation rules, and tests in a
-focused feature specification.
+The renderer consumes the read-only capability snapshot maintained by
+`Term.update()`. A protocol that changes emitted bytes MUST define its gating
+capability, output, and invalidation rules in its own section of this
+specification. Pointer shape (§7.9) is the first.
 
-In particular, color encoding, synchronized-output wrapping, pointer-shape
-output, Kitty keyboard mode setup, and Kitty graphics emission are deferred to
-their respective follow-up PRs. The renderer continues to emit its existing
-hardcoded ANSI output until one of those specifications is adopted.
+Color encoding, synchronized-output wrapping, Kitty keyboard mode setup, and
+Kitty graphics emission are deferred to their respective follow-up PRs. The
+renderer continues to emit its existing hardcoded ANSI output until each is
+specified.
+
+### 7.9 Pointer shape
+
+An `open()` directive MAY declare a `pointerShape` property naming the mouse
+pointer shape to show while the pointer is over the element. Values are the
+kitty pointer shape names (the CSS `cursor` keywords): `default`, `none`,
+`context-menu`, `help`, `pointer`, `progress`, `wait`, `cell`, `crosshair`,
+`text`, `vertical-text`, `alias`, `copy`, `move`, `no-drop`, `not-allowed`,
+`grab`, `grabbing`, `e-resize`, `n-resize`, `ne-resize`, `nw-resize`,
+`s-resize`, `se-resize`, `sw-resize`, `w-resize`, `ew-resize`, `ns-resize`,
+`nesw-resize`, `nwse-resize`, `zoom-in`, `zoom-out`. Any other value MUST be
+treated as absent and MUST NOT reach the output. The property does not affect
+layout or cell output.
+
+The gate is `RuntimeCapabilities.pointerShape` (see
+[Terminfo Specification](terminfo-spec.md) §6.3). While it is `false`, the
+renderer MUST NOT read `pointerShape` properties and MUST NOT emit OSC 22.
+
+**Resolved shape.** While the capability is `true`, each render resolves one
+shape:
+
+- `default` when the render options carry no `pointer`.
+- Otherwise, the `pointerShape` of the last declaring element in hit-test order
+  (the order behind `pointerenter` events, §12.4), or `default` when none
+  declares one. Ancestors precede descendants, so the innermost element wins. A
+  floating element in `"capture"` mode hides the elements beneath it; one in
+  `"passthrough"` mode lets them decide.
+
+Elements inside a `snapshot()` participate as direct directives would.
+
+**Output.** The Term tracks the shape it last emitted, starting at `default`.
+When the resolved shape differs, the render MUST append `ESC ] 22 ; <shape> ST`
+to `output` after the frame's cell bytes and record the new shape. Otherwise it
+MUST NOT emit OSC 22.
+
+**Restore.** OSC 22 set cannot pop, so the Term restores by setting `default`:
+
+- A render that resolves `default` emits it per **Output** above.
+- An update step that changes `pointerShape` from `true` to `false` while the
+  emitted shape is not `default` MUST return `ESC ] 22 ; default ST` and record
+  `default`.
+- A resize step leaves the emitted shape unchanged.
+
+To restore before exit, the caller renders a frame without `pointer`, or passes
+`{ type: "capability", key: "pointer-shape", value: false }` to `update()`, and
+writes the result.
 
 ---
 
@@ -816,8 +861,9 @@ declaration is present, the cursor-positioning and cursor-visibility sequences
 specified in §7.6.
 
 Capability-specific output modes are not terminal-state management owned by the
-foundation renderer. A focused feature specification must define their state
-boundaries separately.
+foundation renderer. Each capability section of §7 defines its own state
+boundary. The mouse pointer shape (§7.9) is distinct from the cursor shape
+above, which remains caller-managed.
 
 ### 11.3 The renderer does not own application lifecycle
 
@@ -903,6 +949,8 @@ The `open()` constructor currently accepts the following property groups in its
   reference, attach target, structured attach points, pointer capture mode, clip
   target, z-index)
 - **`scroll`** — scroll container configuration
+- **`pointerShape`** — mouse pointer shape while hovered (§7.9); not transferred
+  to the WASM module
 
 The `floating` object shape is:
 
