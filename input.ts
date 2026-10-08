@@ -538,8 +538,11 @@ export async function createInput(options: InputOptions = {}): Promise<Input> {
         let view = new DataView(native.memory.buffer);
         for (let i = 0; i < count; i++) {
           let ptr = native.event(native.state, i);
-          if (ptr !== 0) {
-            events.push(mapEvent(readEvent(view, ptr), initialColors));
+          let event = ptr !== 0
+            ? mapEvent(readEvent(view, ptr), initialColors)
+            : undefined;
+          if (event) {
+            events.push(event);
           }
         }
 
@@ -691,7 +694,7 @@ function mapKeyEvent(native: NativeInputEvent): KeyEvent {
 function mapCapEvent(
   native: NativeInputEvent,
   initialColors: number,
-): CapabilityEvent {
+): CapabilityEvent | undefined {
   switch (native.key) {
     case CAP_FOREGROUND_COLOR:
       return {
@@ -740,14 +743,14 @@ function mapCapEvent(
         value: native.ch !== 0,
       };
     default:
-      return { type: "capability", key: "pointer-shape", value: false };
+      return undefined;
   }
 }
 
 function mapEvent(
   native: NativeInputEvent,
   initialColors: number,
-): InputEvent {
+): InputEvent | undefined {
   switch (native.type) {
     case EVENT_CAPABILITY: {
       return mapCapEvent(native, initialColors);
