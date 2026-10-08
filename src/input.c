@@ -820,25 +820,40 @@ static int payload_contains(const char *s, int len, const char *needle) {
   return 0;
 }
 
-/* Find a BEL or ST terminator from `start`. Returns the index one past
- * the terminator, 0 when more bytes are needed, or -1 when the
- * response exceeds MAX_RESPONSE. */
-static int find_st(struct InputState *st, int start) {
+#define ST_NEED_MORE 0
+#define ST_TOO_LONG -1
+#define ST_ENDED_EARLY -2
+
+static int ends_response(char c) {
+  uint8_t b = (uint8_t)c;
+  return (b < 0x20 && b != 0x07 && b != 0x1b) || b == 0x7f;
+}
+
+/* Find the BEL or ST terminator of a response payload starting at
+ * `start` (input-spec section 6.3). Returns the index one past the
+ * terminator, ST_NEED_MORE, ST_TOO_LONG past MAX_RESPONSE, or
+ * ST_ENDED_EARLY with *at set to the byte that cut the response off. */
+static int find_st(struct InputState *st, int start, int *at) {
   for (int i = start; i < st->len; i++) {
     char c = st->buf[i];
     if (c == '\x07')
       return i + 1;
     if (c == '\x1b') {
       if (i + 1 >= st->len)
-        return 0;
+        return ST_NEED_MORE;
       if (st->buf[i + 1] == '\\')
         return i + 2;
-      return -1;
+      *at = i;
+      return ST_ENDED_EARLY;
+    }
+    if (ends_response(c)) {
+      *at = i;
+      return ST_ENDED_EARLY;
     }
     if (i - start > MAX_RESPONSE)
-      return -1;
+      return ST_TOO_LONG;
   }
-  return 0;
+  return ST_NEED_MORE;
 }
 
 /* OSC 21 payload: ";"-separated key=value pairs. */
@@ -891,10 +906,15 @@ static int parse_osc_response(struct InputState *st) {
     return PARSE_ERR;
   i++;
 
-  int end = find_st(st, i);
-  if (end == 0)
+  int at = 0;
+  int end = find_st(st, i, &at);
+  if (end == ST_NEED_MORE)
     return PARSE_NEED_MORE;
-  if (end < 0)
+  if (end == ST_ENDED_EARLY) {
+    shift(st, at);
+    return PARSE_OK;
+  }
+  if (end == ST_TOO_LONG)
     return PARSE_ERR;
 
   int plen = end - i;
@@ -943,10 +963,15 @@ static int parse_dcs_response(struct InputState *st) {
   if ((ok != '0' && ok != '1') || st->buf[3] != '+' || st->buf[4] != 'r')
     return PARSE_ERR;
 
-  int end = find_st(st, 5);
-  if (end == 0)
+  int at = 0;
+  int end = find_st(st, 5, &at);
+  if (end == ST_NEED_MORE)
     return PARSE_NEED_MORE;
-  if (end < 0)
+  if (end == ST_ENDED_EARLY) {
+    shift(st, at);
+    return PARSE_OK;
+  }
+  if (end == ST_TOO_LONG)
     return PARSE_ERR;
 
   const char *payload = st->buf + 5;
@@ -987,10 +1012,15 @@ static int parse_apc_response(struct InputState *st) {
   if (st->buf[2] != 'G')
     return PARSE_ERR;
 
-  int end = find_st(st, 3);
-  if (end == 0)
+  int at = 0;
+  int end = find_st(st, 3, &at);
+  if (end == ST_NEED_MORE)
     return PARSE_NEED_MORE;
-  if (end < 0)
+  if (end == ST_ENDED_EARLY) {
+    shift(st, at);
+    return PARSE_OK;
+  }
+  if (end == ST_TOO_LONG)
     return PARSE_ERR;
 
   const char *payload = st->buf + 3;

@@ -1181,6 +1181,50 @@ describe("terminfo integration", () => {
       ]);
     });
 
+    it("ends a cut-off response at a control byte and keeps the typed keys", async () => {
+      let truncated = [
+        "\x1b]11;rgb:ff",
+        "\x1b]21;foreground=#ff",
+        "\x1b]22;def",
+        "\x1bP1+r5247",
+        "\x1b_Gi=31",
+      ];
+      let tails = ["\rab", "\nab", "\x7fab", "\x03", "\x1b[Aab", "\x1bxab"];
+      for (let response of truncated) {
+        for (let tail of tails) {
+          let reference = await createInput();
+          let expected = reference.scan(str(tail)).events;
+
+          let together = await createInput();
+          expect({
+            response,
+            tail,
+            events: together.scan(str(response + tail)).events,
+          })
+            .toEqual({ response, tail, events: expected });
+
+          let split = await createInput();
+          expect(split.scan(str(response)).events).toEqual([]);
+          expect({ response, tail, events: split.scan(str(tail)).events })
+            .toEqual({ response, tail, events: expected });
+        }
+      }
+    });
+
+    it("parses a complete response that follows a cut-off one", async () => {
+      let input = await createInput();
+      let result = input.scan(
+        str("\x1b]11;rgb:ff\x1b]10;rgb:00/00/00\x07"),
+      );
+      expect(result.events).toEqual([
+        {
+          type: "capability",
+          key: "foreground-color",
+          value: { r: 0, g: 0, b: 0 },
+        },
+      ]);
+    });
+
     it("recovers from oversized OSC, DCS, and APC responses", async () => {
       let filler = "x".repeat(2000);
       for (
