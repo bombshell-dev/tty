@@ -1058,6 +1058,35 @@ describe("terminfo integration", () => {
       return events;
     }
 
+    it("rejects malformed color payloads and preserves the following key", async () => {
+      for (
+        let payload of [
+          "\x1b]10;#fffjunk\x07",
+          "\x1b]11;rgb:ff/ff/ffzz\x1b\\",
+          "\x1b]12;rgb:ff/ff\x07",
+          "\x1b]11;rgba:ff/ff/ff/\x07",
+          "\x1b]21;foreground=#fffjunk\x1b\\",
+        ]
+      ) {
+        let input = await createInput();
+        let events = input.scan(str(payload + "a")).events;
+        expect(events).toEqual([
+          expect.objectContaining({ type: "keydown", key: "a" }),
+        ]);
+      }
+    });
+
+    it("accepts an rgba payload and ignores its alpha channel", async () => {
+      let input = await createInput();
+      expect(input.scan(str("\x1b]11;rgba:10/20/30/ff\x07")).events).toEqual([
+        {
+          type: "capability",
+          key: "background-color",
+          value: { r: 0x10, g: 0x20, b: 0x30 },
+        },
+      ]);
+    });
+
     it("recovers when an incomplete private CSI response fills the input buffer", async () => {
       let input = await createInput();
       let events = drain(input, str("\x1b[?" + ";".repeat(4093)));

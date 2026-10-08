@@ -756,7 +756,8 @@ static int color_channel(const char *s, int n, uint32_t *out) {
 static int parse_color_spec(const char *s, int len, uint32_t *out) {
   if (len >= 4 && s[0] == 'r' && s[1] == 'g' && s[2] == 'b') {
     int i = 3;
-    if (i < len && s[i] == 'a')
+    int alpha = i < len && s[i] == 'a';
+    if (alpha)
       i++;
     if (i >= len || s[i] != ':')
       return 0;
@@ -774,6 +775,18 @@ static int parse_color_spec(const char *s, int len, uint32_t *out) {
         i++;
       }
     }
+    if (alpha) {
+      if (i >= len || s[i] != '/')
+        return 0;
+      int start = ++i;
+      while (i < len && hexval(s[i]) >= 0)
+        i++;
+      uint32_t ignored;
+      if (!color_channel(s + start, i - start, &ignored))
+        return 0;
+    }
+    if (i != len)
+      return 0;
     *out = (ch[0] << 16) | (ch[1] << 8) | ch[2];
     return 1;
   }
@@ -781,7 +794,7 @@ static int parse_color_spec(const char *s, int len, uint32_t *out) {
     int n = 0;
     while (1 + n < len && hexval(s[1 + n]) >= 0)
       n++;
-    if (n % 3 != 0)
+    if (1 + n != len || n % 3 != 0)
       return 0;
     int w = n / 3;
     uint32_t ch[3];
