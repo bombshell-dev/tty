@@ -1137,6 +1137,23 @@ describe("terminfo integration", () => {
       ]);
     });
 
+    it("recovers from oversized OSC, DCS, and APC responses", async () => {
+      let filler = "x".repeat(2000);
+      for (
+        let response of [
+          `\x1b]11;${filler}\x07`,
+          `\x1bP1+r${filler}\x1b\\`,
+          `\x1b_G${filler}\x1b\\`,
+        ]
+      ) {
+        let input = await createInput();
+        let events = drain(input, str(response));
+        events.push(...drain(input, str("a")));
+        expect(events.filter((e) => e.type === "capability")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({ type: "keydown", key: "a" });
+      }
+    });
+
     it("recovers when an incomplete private CSI response fills the input buffer", async () => {
       let input = await createInput();
       let events = drain(input, str("\x1b[?" + ";".repeat(4093)));
