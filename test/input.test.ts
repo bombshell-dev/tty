@@ -996,6 +996,72 @@ describe("terminfo integration", () => {
       });
     });
 
+    it("surfaces a BEL-terminated OSC 22 pointer shape report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]22;pointer\x07"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "pointer-shape", value: true },
+      ]);
+    });
+
+    it("surfaces an OSC 22 empty-stack report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]22;0\x1b\\"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "pointer-shape", value: true },
+      ]);
+    });
+
+    it("buffers an OSC 22 report fed one byte at a time", async () => {
+      let { input } = await withTerminfo();
+      let reply = str("\x1b]22;default\x1b\\");
+      for (let i = 0; i < reply.length - 1; i++) {
+        expect(input.scan(reply.subarray(i, i + 1)).events).toEqual([]);
+      }
+      expect(input.scan(reply.subarray(reply.length - 1)).events).toEqual([
+        { type: "capability", key: "pointer-shape", value: true },
+      ]);
+    });
+
+    it("rejects an OSC 22 report whose ST is split from its ESC by a non-backslash", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]22;default\x1bx"));
+      expect(result.events.some((e) => e.type === "capability")).toBe(false);
+    });
+
+    it("bails on an OSC number longer than any it accepts without overflowing", async () => {
+      let { input } = await withTerminfo();
+      let digits = "9".repeat(64);
+      let result = input.scan(str(`\x1b]${digits};pointer\x07`));
+      expect(result.events.some((e) => e.type === "capability")).toBe(false);
+      expect(input.scan(str("\x1b]22;default\x1b\\")).events).toEqual([
+        { type: "capability", key: "pointer-shape", value: true },
+      ]);
+    });
+
+    it("does not read OSC 220 as OSC 22", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]220;pointer\x07"));
+      expect(result.events.some((e) => e.type === "capability")).toBe(false);
+    });
+
+    it("drops an OSC 22 report whose payload exceeds the response bound", async () => {
+      let { input } = await withTerminfo();
+      let events = input.scan(str(`\x1b]22;${"x".repeat(2048)}\x07`)).events;
+      expect(events.some((e) => e.type === "capability")).toBe(false);
+      events = input.scan(str("\x1b]22;default\x07")).events;
+      for (let i = 0; i < 32 && events.length > 0; i++) {
+        let last = events[events.length - 1];
+        if (last.type === "capability") break;
+        events = input.scan().events;
+      }
+      expect(events[events.length - 1]).toEqual({
+        type: "capability",
+        key: "pointer-shape",
+        value: true,
+      });
+    });
+
     it("surfaces truecolor colordepth from a valid XTGETTCAP reply", async () => {
       let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_16 });
       let input = await createInput({ terminfo });
