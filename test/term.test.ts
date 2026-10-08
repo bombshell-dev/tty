@@ -336,135 +336,76 @@ describe("term", () => {
   });
 
   describe("grapheme clusters", () => {
-    /* Helper: count occurrences of a substring in a string */
-    function countOf(haystack: string, needle: string): number {
-      let n = 0;
-      let pos = 0;
-      while ((pos = haystack.indexOf(needle, pos)) !== -1) {
-        n++;
-        pos += needle.length;
-      }
-      return n;
+    let border = {
+      color: rgba(255, 255, 255),
+      left: 1,
+      right: 1,
+      top: 1,
+      bottom: 1,
+    };
+
+    async function render(content: string): Promise<string> {
+      let t = await createTerm({ width: 12, height: 3 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+            border,
+          }),
+          text(content),
+          close(),
+        ]).output,
+      );
+      return trim(print(ansi, 12, 3));
     }
 
-    it("preserves kitty-graphics placeholder cluster (base + 2 combining marks)", async () => {
-      /* U+10EEEE = kitty placeholder; U+0305 = row-index diacritic;
-       * U+030D = col-index diacritic.  Both marks must appear in the emitted
-       * bytes immediately after the base codepoint. */
-      let term2 = await createTerm({ width: 40, height: 4 });
-      let out = decode(
-        term2
-          .render(
-            [
-              open("root", {
-                layout: { width: grow(), height: grow(), direction: "ttb" },
-              }),
-              text("\u{10EEEE}\u{0305}\u{030D}"),
-              close(),
-            ],
-            { mode: "line" },
-          )
-          .output,
-      );
-
-      expect(out).toContain("\u{10EEEE}\u{0305}\u{030D}");
-    });
-
     it("preserves combining accent (e + U+0301)", async () => {
-      let term2 = await createTerm({ width: 40, height: 4 });
-      let out = decode(
-        term2
-          .render(
-            [
-              open("root", {
-                layout: { width: grow(), height: grow(), direction: "ttb" },
-              }),
-              text("e\u{0301}"),
-              close(),
-            ],
-            { mode: "line" },
-          )
-          .output,
-      );
-
-      /* The combining mark must follow the base immediately in the output. */
-      expect(out).toContain("e\u{0301}");
+      expect(await render("cafe\u0301")).toEqual(`\
+┌──────────┐
+│cafe\u0301      │
+└──────────┘`);
     });
 
-    it("preserves ZWJ in output (ZWJ is per-cell combining; following emoji start new cells)", async () => {
-      /* 👨‍👩‍👧‍👦 = 👨 ZWJ 👩 ZWJ 👧 ZWJ 👦.
-       * ZWJ (U+200D, wcwidth 0) attaches to the preceding base emoji cell.
-       * The following emoji have positive wcwidth and start new cells, so the
-       * family sequence is split across cells in the cell-based model.  The
-       * invariant tested here: ZWJ bytes MUST NOT be dropped from the output. */
-      let term2 = await createTerm({ width: 40, height: 4 });
-      let out = decode(
-        term2
-          .render(
-            [
-              open("root", {
-                layout: { width: grow(), height: grow(), direction: "ttb" },
-              }),
-              text("👨\u{200D}👩\u{200D}👧\u{200D}👦"),
-              close(),
-            ],
-            { mode: "line" },
-          )
-          .output,
-      );
+    it("preserves kitty-graphics placeholder cluster (base + 2 combining marks)", async () => {
+      expect(await render("\u{10EEEE}\u0305\u030D")).toEqual(`\
+┌──────────┐
+│\u{10EEEE}\u0305\u030D         │
+└──────────┘`);
+    });
 
-      expect(countOf(out, "\u{200D}")).toBe(3);
-      expect(out).toContain("👨");
-      expect(out).toContain("👩");
+    it("preserves ZWJ (ZWJ is per-cell combining; following emoji start new cells)", async () => {
+      // The trailing half of each wide emoji is the blank column after it.
+      expect(await render("👨\u200D👩\u200D👧\u200D👦")).toEqual(`\
+┌──────────┐
+│👨\u200D 👩\u200D 👧\u200D 👦   │
+└──────────┘`);
     });
 
     it("truncates excess combining marks from the end (first 8 survive)", async () => {
-      /* A base char followed by 9 combining graves (U+0300).
-       * The 9th mark exceeds CELL_MAX_COMBINING=8 and is silently dropped;
-       * the first 8 must appear in the output. */
-      let term2 = await createTerm({ width: 40, height: 4 });
-      let grave = "\u{0300}";
-      let out = decode(
-        term2
-          .render(
-            [
-              open("root", {
-                layout: { width: grow(), height: grow(), direction: "ttb" },
-              }),
-              text("a" + grave.repeat(9)),
-              close(),
-            ],
-            { mode: "line" },
-          )
-          .output,
-      );
-
-      expect(countOf(out, grave)).toBe(8);
+      let grave = "\u0300";
+      expect(await render("a" + grave.repeat(9))).toEqual(`\
+┌──────────┐
+│a${grave.repeat(8)}         │
+└──────────┘`);
     });
 
     it("drops combining marks whose base cell is clipped", async () => {
-      let term2 = await createTerm({ width: 6, height: 1 });
-      let out = decode(
-        term2
-          .render(
-            [
-              open("root", {
-                layout: { width: grow(), height: grow(), direction: "ltr" },
-              }),
-              open("clip", {
-                layout: { width: fixed(2), height: fixed(1) },
-                clip: { horizontal: true, vertical: true },
-              }),
-              text("abe\u{0301}"),
-              close(),
-              close(),
-            ],
-            { mode: "line" },
-          )
-          .output,
+      let t = await createTerm({ width: 6, height: 1 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ltr" },
+          }),
+          open("clip", {
+            layout: { width: fixed(2), height: fixed(1) },
+            clip: { horizontal: true, vertical: true },
+          }),
+          text("abe\u0301"),
+          close(),
+          close(),
+        ]).output,
       );
-
-      expect(out).not.toContain("\u{0301}");
+      expect(print(ansi, 6, 1)).toEqual("ab    ");
     });
   });
 

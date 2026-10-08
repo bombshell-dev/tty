@@ -1,3 +1,5 @@
+const ZERO_WIDTH = /^[\p{Mn}\p{Me}\u200B-\u200F\uFE00-\uFE0F]$/u;
+
 /**
  * Interpret ANSI escape sequences into a plain text grid.
  * Handles CSI cursor positioning (row;colH), DECTCEM show/hide
@@ -7,6 +9,9 @@
  * cell is marked with U+0332 COMBINING LOW LINE appended to the base
  * character. The base char is preserved and the underline spans its
  * rendered width — including the full width of CJK/wide chars.
+ *
+ * Zero-width codepoints (combining marks, ZWJ, variation selectors)
+ * attach to the most recently written cell instead of advancing.
  */
 export function print(ansi: string, w: number, h: number): string {
   let grid: string[][] = [];
@@ -20,6 +25,7 @@ export function print(ansi: string, w: number, h: number): string {
   let x = 0;
   let y = 0;
   let i = 0;
+  let last: [number, number] | undefined;
   let cursorVisible = false;
 
   while (i < ansi.length) {
@@ -36,6 +42,7 @@ export function print(ansi: string, w: number, h: number): string {
       let cmd = ansi[i++];
 
       if (cmd === "H") {
+        last = undefined;
         // cursor position: row;col (1-indexed)
         let parts = params.split(";");
         y = (parseInt(parts[0]) || 1) - 1;
@@ -50,15 +57,23 @@ export function print(ansi: string, w: number, h: number): string {
       y++;
       x = 0;
       i++;
+      last = undefined;
     } else {
       // regular character — could be multi-byte UTF-8
       let cp = ansi.codePointAt(i)!;
       let ch = String.fromCodePoint(cp);
+      i += ch.length;
+      if (ZERO_WIDTH.test(ch)) {
+        if (last) grid[last[1]][last[0]] += ch;
+        continue;
+      }
       if (x >= 0 && x < w && y >= 0 && y < h) {
         grid[y][x] = ch;
+        last = [x, y];
+      } else {
+        last = undefined;
       }
       x++;
-      i += ch.length;
     }
   }
 
