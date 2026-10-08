@@ -29,6 +29,10 @@
 #define MAX_RESPONSE 1024
 #define MAX_CSI_PARAM 99999
 
+#define TCAP_RGB_DENIED 1
+#define TCAP_TC_DENIED 2
+#define TCAP_CONFIRMED 4
+
 /* ── State ────────────────────────────────────────────────────────── */
 
 struct InputState {
@@ -40,6 +44,7 @@ struct InputState {
   int count;
   int trie_len;
   int colors;
+  uint8_t tcap;
   Trie trie;
 };
 
@@ -914,8 +919,10 @@ static int parse_osc_response(struct InputState *st) {
 }
 
 /* XTGETTCAP reply: DCS 1 + r … ST (valid) or DCS 0 + r … ST (invalid).
- * We only query RGB (524742) and Tc (5463), so a valid reply naming
- * either confirms truecolor; an invalid reply denies it. */
+ * We only query RGB (524742) and Tc (5463). A valid reply naming either
+ * confirms truecolor. The static tier is emitted only once both are
+ * denied without a confirmation since the last DA1 fence; an invalid
+ * reply naming neither denies both. */
 static int parse_dcs_response(struct InputState *st) {
   if (st->len < 5)
     return PARSE_NEED_MORE;
@@ -931,19 +938,29 @@ static int parse_dcs_response(struct InputState *st) {
 
   const char *payload = st->buf + 5;
   int plen = end - 5 - (st->buf[end - 1] == '\x07' ? 1 : 2);
+  int rgb = payload_contains(payload, plen, "524742");
+  int tc = payload_contains(payload, plen, "5463");
   if (ok == '1') {
-    if (payload_contains(payload, plen, "524742") ||
-        payload_contains(payload, plen, "5463")) {
+    if (rgb || tc) {
+      st->tcap |= TCAP_CONFIRMED;
       struct InputEvent *ev = emit(st);
       ev->type = EVENT_CAPABILITY;
       ev->key = CAP_COLORDEPTH;
       ev->ch = COLORDEPTH_TRUECOLOR;
     }
-  } else {
-    struct InputEvent *ev = emit(st);
-    ev->type = EVENT_CAPABILITY;
-    ev->key = CAP_COLORDEPTH;
-    ev->ch = (st->colors <= 16) ? COLORDEPTH_16 : COLORDEPTH_256;
+  } else if (!(st->tcap & TCAP_CONFIRMED)) {
+    uint8_t before = st->tcap;
+    if (rgb || !tc)
+      st->tcap |= TCAP_RGB_DENIED;
+    if (tc || !rgb)
+      st->tcap |= TCAP_TC_DENIED;
+    uint8_t both = TCAP_RGB_DENIED | TCAP_TC_DENIED;
+    if ((st->tcap & both) == both && (before & both) != both) {
+      struct InputEvent *ev = emit(st);
+      ev->type = EVENT_CAPABILITY;
+      ev->key = CAP_COLORDEPTH;
+      ev->ch = (st->colors <= 16) ? COLORDEPTH_16 : COLORDEPTH_256;
+    }
   }
 
   shift(st, end);
@@ -1015,6 +1032,7 @@ static int parse_csi_private(struct InputState *st) {
         /* other modes: consumed silently */
       } else if (c == 'c' && intermediate == 0) {
         /* DA1 fence: consumed silently, MUST NOT surface as CapabilityEvent */
+        st->tcap = 0;
       } else {
         return PARSE_ERR;
       }

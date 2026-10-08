@@ -891,6 +891,60 @@ describe("terminfo integration", () => {
       });
     });
 
+    it("preserves truecolor when RGB succeeds and Tc fails, in either order", async () => {
+      let truecolor = {
+        type: "capability",
+        key: "colordepth",
+        value: "truecolor",
+      };
+      let rgbOk = "\x1bP1+r524742\x1b\\";
+      let tcDenied = "\x1bP0+r5463\x1b\\";
+
+      let { input: together } = await withTerminfo();
+      expect(together.scan(str(rgbOk + tcDenied)).events).toEqual([truecolor]);
+
+      let { input: reversed } = await withTerminfo();
+      expect(reversed.scan(str(tcDenied + rgbOk)).events).toEqual([truecolor]);
+
+      let { input: split } = await withTerminfo();
+      expect(split.scan(str(rgbOk)).events).toEqual([truecolor]);
+      expect(split.scan(str(tcDenied)).events).toEqual([]);
+
+      let { input: splitReversed } = await withTerminfo();
+      expect(splitReversed.scan(str(tcDenied)).events).toEqual([]);
+      expect(splitReversed.scan(str(rgbOk)).events).toEqual([truecolor]);
+    });
+
+    it("emits the static color tier only when both RGB and Tc are denied", async () => {
+      for (
+        let [entry, tier] of [[CLAYTERM_TC, "256"], [
+          CLAYTERM_16,
+          "16",
+        ]] as const
+      ) {
+        let terminfo = await detectTerminal({ env: {}, entry });
+        let input = await createInput({ terminfo });
+        expect(input.scan(str("\x1bP0+r524742\x1b\\")).events).toEqual([]);
+        expect(input.scan(str("\x1bP0+r5463\x1b\\")).events).toEqual([
+          { type: "capability", key: "colordepth", value: tier },
+        ]);
+      }
+    });
+
+    it("starts a fresh colordepth tally after the DA1 fence", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(
+        str(
+          "\x1bP1+r524742\x1b\\\x1b[?65;1c" +
+            "\x1bP0+r524742\x1b\\\x1bP0+r5463\x1b\\",
+        ),
+      );
+      expect(result.events).toEqual([
+        { type: "capability", key: "colordepth", value: "truecolor" },
+        { type: "capability", key: "colordepth", value: "256" },
+      ]);
+    });
+
     it("surfaces synchronized output from a DECRPM confirm report", async () => {
       let { input } = await withTerminfo();
       let result = input.scan(str("\x1b[?2026;2$y"));
