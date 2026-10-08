@@ -230,6 +230,14 @@ export async function createInputNative(
     input_delay(st: number): number;
   };
 
+  // Linear memory layout, each region 8-byte aligned:
+  //
+  //   [0, __heap_base)   wasm data and stack
+  //   keys               terminfo key table (keys.byteLength, may be empty)
+  //   InputState         parser state (input_size())
+  //   scan buffer        input_scan() transfer buffer (SCAN_BUFFER_SIZE)
+  //
+  // Memory is grown once to cover the end of the scan buffer.
   let keysLen = keys?.byteLength ?? 0;
 
   let top = align8(exports.__heap_base.value as number);
