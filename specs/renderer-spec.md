@@ -1139,6 +1139,14 @@ generated module and instantiated per Term or Input with fresh memory.
 renderer state struct and the transfer buffer are allocated in WASM linear
 memory. The specific layout is an implementation detail.
 
+**Capability state.** `RuntimeCapabilities` is currently held in TypeScript and
+folded by `update()`; the WASM renderer state carries no capability fields
+because no renderer output depends on them yet (§7.8). When a
+capability-consuming feature lands, the authoritative state is expected to move
+into WASM linear memory alongside the renderer state, so that `render()` reads
+it without per-frame transfer; `term.capabilities` remains a frozen snapshot
+decoded on access.
+
 **Layout engine.** The underlying layout engine is Clay, included as a
 dependency. Clay provides flexbox-like layout computation with support for
 fixed, grow, and fit sizing; padding; alignment; direction; gap; floating
