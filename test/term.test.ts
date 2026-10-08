@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-control-regex
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
+import type { InputEvent } from "../input.ts";
 import {
   close,
   fixed,
@@ -766,7 +767,7 @@ hi
     it("emits a complete redraw on the first render after update", () => {
       term.render(frame);
       expect(term.render(frame).output.length).toBe(0);
-      term.update({ width: 20, height: 5 });
+      term.update([{ type: "resize", width: 20, height: 5 }]);
       let out = decode(term.render(frame).output);
       expect(trim(print(out, 20, 5))).toContain("Hi");
       expect(out.length).toBeGreaterThan(0);
@@ -774,23 +775,26 @@ hi
 
     it("is a no-op when dimensions are unchanged", () => {
       term.render(frame);
-      term.update({ width: 40, height: 10 });
+      term.update([{ type: "resize", width: 40, height: 10 }]);
       expect(term.render(frame).output.length).toBe(0);
     });
 
     it("throws on non-positive or non-integer dimensions", () => {
-      expect(() => term.update({ width: 0, height: 10 })).toThrow(RangeError);
-      expect(() => term.update({ width: 40, height: -1 })).toThrow(RangeError);
-      expect(() => term.update({ width: 40.5, height: 10 })).toThrow(
-        RangeError,
-      );
+      expect(() => term.update([{ type: "resize", width: 0, height: 10 }]))
+        .toThrow(RangeError);
+      expect(() => term.update([{ type: "resize", width: 40, height: -1 }]))
+        .toThrow(RangeError);
+      expect(() => term.update([{ type: "resize", width: 40.5, height: 10 }]))
+        .toThrow(
+          RangeError,
+        );
     });
 
     it("accepts an update array, last resize wins, non-resize updates applied", () => {
       term.update([
-        { width: 30, height: 8 },
+        { type: "resize", width: 30, height: 8 },
         { type: "capability", key: "sync-output", value: false },
-        { width: 12, height: 4 },
+        { type: "resize", width: 12, height: 4 },
       ]);
       let result = term.render(frame);
       expect(result.info.get("root")?.bounds).toEqual({
@@ -806,6 +810,13 @@ hi
       term.update([{ type: "capability", key: "sync-output", value: false }]);
       expect(term.render(frame).output.length).toBe(0);
       term.update([]);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it('resizes only on events tagged type: "resize"', () => {
+      term.render(frame);
+      let untagged = { width: 12, height: 4 } as unknown as InputEvent;
+      term.update([untagged]);
       expect(term.render(frame).output.length).toBe(0);
     });
 
@@ -826,14 +837,14 @@ hi
       let first = term.render(frame, { pointer });
       expect(first.events).toContainEqual({ type: "pointerenter", id: "root" });
       expect(term.render(frame, { pointer }).events).toEqual([]);
-      term.update({ width: 20, height: 5 });
+      term.update([{ type: "resize", width: 20, height: 5 }]);
       let after = term.render(frame, { pointer });
       expect(after.events).toContainEqual({ type: "pointerenter", id: "root" });
     });
 
     it("resizes in place and lays out at the new dimensions", () => {
       term.render(frame);
-      term.update({ width: 12, height: 4 });
+      term.update([{ type: "resize", width: 12, height: 4 }]);
       let result = term.render(frame);
       expect(result.info.get("root")?.bounds).toEqual({
         x: 0,
@@ -855,7 +866,7 @@ hi
 
     it("survives downsize then upsize past the original size", () => {
       term.render(frame);
-      term.update({ width: 10, height: 3 });
+      term.update([{ type: "resize", width: 10, height: 3 }]);
       let small = term.render(frame);
       expect(small.info.get("root")?.bounds).toEqual({
         x: 0,
@@ -863,7 +874,7 @@ hi
         width: 10,
         height: 3,
       });
-      term.update({ width: 120, height: 40 });
+      term.update([{ type: "resize", width: 120, height: 40 }]);
       let large = term.render(frame);
       expect(large.info.get("root")?.bounds).toEqual({
         x: 0,

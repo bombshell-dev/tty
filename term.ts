@@ -1,6 +1,6 @@
 import { type Op, pack } from "./ops.ts";
 import { type BoundingBox, createTermNative } from "./term-native.ts";
-import type { CapabilityEvent, ColorDepth, InputEvent } from "./input.ts";
+import type { InputEvent } from "./input.ts";
 import type { Capabilities, Rgb, TerminalInfo } from "./terminfo.ts";
 
 export type { BoundingBox };
@@ -33,54 +33,49 @@ export interface RuntimeCapabilities extends Capabilities {
 }
 
 /**
- * One change accepted by term.update(). Either a structural resize or a
- * CapabilityEvent routed from scan(). Non-capability InputEvents are silently
- * ignored, so the full events array from scan() can be passed without filtering.
- */
-export type Update = { width: number; height: number } | InputEvent;
-
-/**
- * Apply one Update to the current RuntimeCapabilities and return the next
+ * Fold one InputEvent into the current RuntimeCapabilities and return the next
  * snapshot plus any bytes to write now. Pure: performs no IO, no WASM calls.
  */
 function applyUpdate(
   current: RuntimeCapabilities,
-  change: Update,
+  event: InputEvent,
 ): { readonly next: RuntimeCapabilities; readonly bytes: Uint8Array } {
-  if ("width" in change) {
+  if (event.type !== "capability") {
     return { next: current, bytes: new Uint8Array(0) };
   }
-  if ((change as { type?: string }).type !== "capability") {
-    return { next: current, bytes: new Uint8Array(0) };
-  }
-  let cap = change as CapabilityEvent;
   let next: RuntimeCapabilities;
-  switch (cap.key) {
+  switch (event.key) {
     case "foreground-color":
-      next = { ...current, theme: { ...current.theme, foreground: cap.value } };
+      next = {
+        ...current,
+        theme: { ...current.theme, foreground: event.value },
+      };
       break;
     case "background-color":
-      next = { ...current, theme: { ...current.theme, background: cap.value } };
+      next = {
+        ...current,
+        theme: { ...current.theme, background: event.value },
+      };
       break;
     case "cursor-color":
-      next = { ...current, theme: { ...current.theme, cursor: cap.value } };
+      next = { ...current, theme: { ...current.theme, cursor: event.value } };
       break;
     case "colordepth": {
-      let trueColor = (cap.value as ColorDepth) === "truecolor";
+      let trueColor = event.value === "truecolor";
       next = { ...current, trueColor };
       break;
     }
     case "sync-output":
-      next = { ...current, syncOutput: cap.value as boolean };
+      next = { ...current, syncOutput: event.value };
       break;
     case "kitty-keyboard":
-      next = { ...current, kittyKeyboard: cap.value as boolean };
+      next = { ...current, kittyKeyboard: event.value };
       break;
     case "kitty-graphics":
-      next = { ...current, kittyGraphics: cap.value as boolean };
+      next = { ...current, kittyGraphics: event.value };
       break;
     case "pointer-shape":
-      next = { ...current, pointerShape: cap.value as boolean };
+      next = { ...current, pointerShape: event.value };
       break;
     default:
       next = current;
@@ -154,13 +149,13 @@ export interface Term {
   render(ops: Op[], options?: RenderOptions): RenderResult;
 
   /**
-   * Apply one change or a batch of changes. Returns bytes to write now.
-   * An empty array is valid when no immediate output is needed (TINV-5).
+   * Fold InputEvents in order. Returns bytes to write now. An empty array is
+   * valid when no immediate output is needed (TINV-5).
    *
-   * Route CapabilityEvents from scan() here. For resize, pass
-   * { width, height }.
+   * Pass the events array from scan() directly. For an out-of-band resize,
+   * pass [{ type: "resize", width, height }].
    */
-  update(change: Update | readonly Update[]): Uint8Array;
+  update(events: readonly InputEvent[]): Uint8Array;
 
   /** Frozen snapshot of the current merged capability state. */
   readonly capabilities: RuntimeCapabilities;
@@ -288,14 +283,13 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       return { output, events, info, errors, animating };
     },
 
-    update(change: Update | readonly Update[]): Uint8Array {
-      let changes = Array.isArray(change) ? change : [change];
+    update(events: readonly InputEvent[]): Uint8Array {
       let out: Uint8Array[] = [];
 
-      for (let c of changes as Update[]) {
+      for (let c of events) {
         let { next, bytes } = applyUpdate(currentCaps, c);
 
-        if ("width" in c) {
+        if (c.type === "resize") {
           let w = c.width;
           let h = c.height;
           if (
@@ -313,9 +307,6 @@ export async function createTerm(options: TermOptions): Promise<Term> {
             lastRenderAt = undefined;
             wasAnimating = false;
           }
-        } else {
-          // Capability events update the foundation snapshot. Feature PRs own
-          // any renderer-side output or invalidation for those capabilities.
         }
 
         currentCaps = next;
