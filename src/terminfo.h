@@ -1,9 +1,10 @@
-/* terminfo.h — shared terminal capability layer
+/* terminfo.h — terminal capability layer
  *
  * Implements the capability struct and terminfo binary parsing defined
- * by specs/terminfo-spec.md. The renderer reads the struct; the input
- * parser writes probe responses into it; this module owns the baseline
- * and the parse path.
+ * by specs/terminfo-spec.md. detectTerminal() uses the struct to resolve
+ * static capabilities; the renderer and the input parser share no
+ * memory through it (terminfo-spec 4.2, TINV-6). This module owns the
+ * baseline and the parse path.
  */
 
 #ifndef TERMINFO_H
@@ -29,8 +30,7 @@
 #define TERMINFO_THEME_CURSOR (1u << 14)
 
 /* Probe-fence marker: set in `confirmed` (never in `flags`) when a DA1
- * device attributes report is recognized. The queryTermInfo probe
- * window uses it to detect completion. */
+ * device attributes report is recognized. */
 #define TERMINFO_DA1 (1u << 31)
 
 struct TermInfo {

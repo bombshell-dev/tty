@@ -1,4 +1,4 @@
-/* terminfo.c — shared terminal capability layer */
+/* terminfo.c — terminal capability layer */
 
 #include "terminfo.h"
 

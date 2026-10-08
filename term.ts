@@ -9,9 +9,9 @@ export interface TermOptions {
   height: number;
   width: number;
   /**
-   * Terminal info from detectTerminal(). Initializes the renderer with
-   * its static capabilities and seeds the private TermInfo
-   * struct. When omitted, the renderer uses the 256-color baseline.
+   * Terminal info from detectTerminal(). Seeds term.capabilities from
+   * terminfo.capabilities. When omitted, the renderer uses the 256-color
+   * baseline.
    */
   terminfo?: TerminalInfo;
 }
