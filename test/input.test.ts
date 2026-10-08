@@ -774,6 +774,19 @@ describe("terminfo integration", () => {
       expect(result.events[0]).toMatchObject({ type: "keydown", key: "F5" });
     });
 
+    it("fits a key table larger than the initial wasm memory", async () => {
+      let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_TC });
+      let keys = new Uint8Array(300_000);
+      keys.set(terminfo.keys);
+      let input = await createInput({ terminfo: { ...terminfo, keys } });
+      let result = input.scan(str("\x1bOZ"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "keydown",
+        key: "ArrowUp",
+      });
+    });
+
     it("keeps the xterm defaults registered", async () => {
       let { input } = await withTerminfo();
       let result = input.scan(str("\x1bOA"));

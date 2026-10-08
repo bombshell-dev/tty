@@ -185,6 +185,14 @@ export interface InputNative {
   delay(st: number): number;
 }
 
+// Must match SCAN_BUFFER_SIZE in input.c — the maximum bytes input_scan()
+// can accept in a single call.
+export const SCAN_BUFFER_SIZE = 4096;
+
+function align8(n: number): number {
+  return (n + 7) & ~7;
+}
+
 import { compiled } from "./wasm.ts";
 
 export async function createInputNative(
@@ -222,31 +230,31 @@ export async function createInputNative(
     input_delay(st: number): number;
   };
 
-  let heap = exports.__heap_base.value as number;
-  let size = exports.input_size();
+  let keysLen = keys?.byteLength ?? 0;
 
-  let keysPtr = 0;
-  let keysLen = 0;
-  let top = (heap + 7) & ~7;
-  if (keys && keys.byteLength > 0) {
-    top = (top + 7) & ~7;
-    keysPtr = top;
-    keysLen = keys.byteLength;
-    top += (keysLen + 7) & ~7;
-    let pages = Math.ceil(top / 65536);
-    let current = memory.buffer.byteLength / 65536;
-    if (pages > current) memory.grow(pages - current);
+  let top = align8(exports.__heap_base.value as number);
+  let keysPtr = keysLen > 0 ? top : 0;
+  top = align8(top + keysLen);
+  let statePtr = top;
+  top = align8(top + exports.input_size());
+  let buffer = top;
+  top += SCAN_BUFFER_SIZE;
+
+  let pages = Math.ceil(top / 65536);
+  let current = memory.buffer.byteLength / 65536;
+  if (pages > current) memory.grow(pages - current);
+
+  if (keys && keysLen > 0) {
     new Uint8Array(memory.buffer).set(keys, keysPtr);
   }
 
   let state = exports.input_init(
-    top,
+    statePtr,
     escLatency,
     keysPtr,
     keysLen,
     initialColors ?? 256,
   );
-  let buffer = (top + size + 7) & ~7;
 
   return {
     memory,
@@ -258,7 +266,3 @@ export async function createInputNative(
     delay: exports.input_delay,
   };
 }
-
-// Must match SCAN_BUFFER_SIZE in input.c — the maximum bytes input_scan()
-// can accept in a single call.
-export const SCAN_BUFFER_SIZE = 4096;
