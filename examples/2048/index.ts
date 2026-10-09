@@ -41,6 +41,7 @@ import {
 } from "../../settings.ts";
 import { useInput } from "../use-input.ts";
 import { useStdin } from "../use-stdin.ts";
+import { optInPointerShapes } from "../pointer-shape-opt-in.ts";
 import {
   clearFlags,
   cloneGame,
@@ -304,6 +305,8 @@ await main(function* () {
   yield* ensure(() => {
     Deno.stdout.writeSync(tty.revert);
   });
+
+  optInPointerShapes(term);
 
   // The native term has fixed-size buffers, and the input parser never emits
   // resize events, so we bridge SIGWINCH into the event stream ourselves. The

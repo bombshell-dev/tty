@@ -21,6 +21,7 @@ import {
 } from "../../settings.ts";
 import { useInput } from "../use-input.ts";
 import { useStdin } from "../use-stdin.ts";
+import { optInPointerShapes } from "../pointer-shape-opt-in.ts";
 
 const bg = rgba(20, 20, 30);
 const inputBg = rgba(35, 35, 50);
@@ -49,6 +50,8 @@ await main(function* () {
   // term.update() in the loop below, which is what switches on features like
   // pointer shapes (renderer-spec §7.9) once the terminal confirms support.
   writeStdout(info.probe);
+
+  optInPointerShapes(term);
 
   let value = "";
   let caret = 0;

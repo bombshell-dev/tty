@@ -17,6 +17,17 @@ Build the generated WebAssembly bundle before running the examples:
 make
 ```
 
+## Pointer shapes
+
+The keyboard, 2048, and text-input demos change the mouse pointer over their
+interactive elements (OSC 22, renderer-spec §7.9). Terminals that answer the OSC
+22 probe — kitty does — switch this on automatically. Ghostty can set shapes but
+never answers the query, so assert support by hand with:
+
+```sh
+TTY_POINTER_SHAPES=1 deno run examples/keyboard/index.ts
+```
+
 ## Keyboard
 
 Path: `examples/keyboard/index.ts`
