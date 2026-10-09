@@ -507,6 +507,7 @@ shape:
   `"passthrough"` mode lets them decide.
 
 Elements inside a `snapshot()` participate as direct directives would.
+Resolution and output are identical in line mode (§8.2.2).
 
 **Output.** The Term tracks the shape it last emitted, starting at `default`.
 When the resolved shape differs, the render MUST append `ESC ] 22 ; <shape> ST`
