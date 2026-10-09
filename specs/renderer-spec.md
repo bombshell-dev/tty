@@ -478,12 +478,9 @@ focused feature specification.
 In particular, synchronized-output wrapping, pointer-shape output, Kitty
 keyboard mode setup, and Kitty graphics emission are deferred to their
 respective follow-up PRs. The renderer continues to emit its existing hardcoded
-ANSI output until one of those specifications is adopted. Color encoding is the
-exception: it is specified in the
-[Color Encoding Specification](color-encoding-spec.md), which the renderer
-follows once adopted.
-
-Color compositing (§7.9) is the first adopted consumer: it reads
+ANSI output until one of those specifications is adopted. Color encoding follows
+the [Color Encoding Specification](color-encoding-spec.md). Color compositing
+(§7.9) is the first adopted consumer of the theme fields: it reads
 `theme.foreground` and `theme.background`.
 
 ### 7.9 Color compositing
@@ -499,7 +496,8 @@ out = round((src × α + dst × (255 − α)) / 255)
 
 Compositing operates on 24-bit RGB. It happens before color encoding: when an
 output color encoding narrower than truecolor is in effect, the renderer narrows
-the composited result.
+the composited result ([Color Encoding Specification](color-encoding-spec.md)
+§6).
 
 **Backgrounds.** For each cell covered by a background (`open({ bg })`,
 `text({ bg })`, or a border side's `bg`), the destination is that cell's current
