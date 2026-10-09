@@ -5,8 +5,9 @@
  *   hovering it asks the terminal to show that exact cursor. Support comes
  *   from the probe (kitty) or the known-support table (ghostty, foot,
  *   xterm ≥ 367); the status line shows whether it is currently on.
- * - The bevel is drawn with half blocks (see `view.ts`): `▀` shades the top
- *   edge, `▄` the bottom edge, and hovering presses the tile in.
+ * - Tiles are border-only rounded boxes in Bombshell brand hues (from
+ *   bomb.sh); hovering lights the tile's ring and name, so the hover state
+ *   reads even in terminals without OSC 22.
  * - Curated to 16 shapes so the grid fits an 80×24 terminal.
  *
  * Run: `deno run examples/cursor/index.ts` (or with node).
