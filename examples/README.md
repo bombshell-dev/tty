@@ -43,12 +43,11 @@ node examples/cursor/index.ts
 
 What it shows:
 
-- a catalog of 16 pointer shapes, one tile per shape declaring its
-  `pointerShape` (renderer-spec §7.9) — hovering a tile shows that exact cursor
-  in terminals that support OSC 22
-- a 3D-ish bevel drawn with half blocks: `▀` shades the top edge, `▄` the bottom
-  edge, and hovering presses the tile in, so the hover state reads even in
-  terminals without OSC 22
+- a catalog of 16 pointer shapes, one border-only rounded tile per shape
+  declaring its `pointerShape` (renderer-spec §7.9) — hovering a tile shows that
+  exact cursor in terminals that support OSC 22
+- tiles in Bombshell brand hues (from bomb.sh); hovering lights the tile's ring
+  and name, so the hover state reads even in terminals without OSC 22
 - a status line showing the hovered shape and whether pointer shapes are
   currently on (probe reply or known-support table)
 - a final frame on exit that restores the default pointer (§7.9 restore)
