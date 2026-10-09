@@ -480,6 +480,44 @@ output, Kitty keyboard mode setup, and Kitty graphics emission are deferred to
 their respective follow-up PRs. The renderer continues to emit its existing
 hardcoded ANSI output until one of those specifications is adopted.
 
+### 7.9 Synchronized output (DEC mode 2026)
+
+When the `syncOutput` runtime capability is true, each full-screen frame
+(§8.2.1) is wrapped in Synchronized Output mode 2026 — Begin Synchronized
+Update (`CSI ? 2026 h`) before the frame's first emitted byte and End
+Synchronized Update (`CSI ? 2026 l`) after its last. The terminal buffers
+everything between the pair and presents it as one atomic repaint, so a frame
+never tears mid-update.
+
+**Capability evidence.** `syncOutput` originates exclusively from the
+`sync-output` `CapabilityEvent` (input-spec §5), emitted when the input parser
+reads a DECRPM 2026 reply to the probe (`CSI ? 2026 $ p`). Reply values 1, 2,
+and 3 (set, reset, permanently set) report support; 0 and 4 report none. The
+static `Capabilities` never seed this field: it is false until a probe reply
+is folded in through `update()`.
+
+**Invalidation and timing.** The renderer reads the capability snapshot at
+each render transaction, so a capability flip takes effect on the next
+rendered frame. No invalidation signal exists, and none is required: a flip
+between frames changes only whether the next frame is wrapped.
+
+**Normative rules:**
+
+- When `syncOutput` is false, the renderer MUST NOT emit `?2026h` or `?2026l`.
+- When `syncOutput` is true, the renderer MUST wrap each full-screen frame in
+  the BSU/ESU pair. Line mode (§8.2.2) is never wrapped: inline output may be
+  interleaved with foreign content, and an unterminated synchronized block
+  would suppress it.
+- A full-screen render whose diff produces no cell changes and no caret
+  transition MUST emit zero bytes, even when `syncOutput` is true. The
+  renderer decides after the diff, so no-op frames carry neither the wrap
+  prefix nor the suffix.
+- Terminals that receive the sequences without supporting the mode ignore it
+  by design; the probe still refines behavior for terminals that report mode
+  0 or 4.
+
+This section discharges the synchronized-output deferral recorded in §7.8.
+
 ---
 
 ## 8. Public Rendering API

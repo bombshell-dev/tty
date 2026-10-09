@@ -87,6 +87,9 @@ struct Clayterm {
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
   int animating_count;
+  /* wrap each full-screen frame in BSU/ESU (DEC mode 2026); driven by the
+   * RuntimeCapabilities.syncOutput capability, passed per render call */
+  int sync;
   /* Caret state for hardware-cursor management. The renderer records the
    * first text node carrying a caret declaration per frame, precomputes the
    * caret's byte offset into that node's content, then places the cell as
@@ -115,6 +118,12 @@ struct Clayterm {
 /* 128 bytes per cell: ~84 bytes worst-case for CUP + SGR sequences, plus up
  * to 4 (base SMP char) + 8×4 (combining marks) = 36 bytes of cluster text. */
 #define OUT_BYTES_PER_CELL 128
+
+/* Fixed per-frame slack on top of the per-cell budget, for output that wraps
+ * the whole frame rather than scaling with cell count — the BSU/ESU
+ * synchronized-output pair. Keeps the wrap from being dropped on tiny grids
+ * where the per-cell budget alone is tight. */
+#define OUT_FRAME_OVERHEAD 32
 
 /* ── Cell buffer ops ──────────────────────────────────────────────── */
 
@@ -261,6 +270,18 @@ static void present_cups(struct Clayterm *ct, int row) {
   ct->lastx = -1;
   ct->lasty = -1;
 
+  /* Synchronized Output (DEC mode 2026): the terminal buffers everything
+   * between BSU and ESU and presents it in one atomic repaint, so a frame
+   * never tears mid-update. Unsupported terminals ignore the private mode;
+   * whether we emit the wrap at all is decided by the sync-output
+   * capability, threaded through reduce() each frame. */
+  int start = ct->out.length;
+  if (ct->sync)
+    buf_str(&ct->out, "\x1b[?2026h");
+  /* Body start: the no-op check below compares against this so the BSU
+   * itself never counts as frame content. */
+  int body = ct->out.length;
+
   for (int y = 0; y < ct->h; y++) {
     for (int x = 0; x < ct->w;) {
       Cell *back = cell_at(ct, ct->back, x, y);
@@ -310,6 +331,14 @@ static void present_cups(struct Clayterm *ct, int row) {
     buf_str(&ct->out, "\x1b[?25l");
   }
   ct->had_caret_last_frame = ct->has_caret;
+
+  if (ct->out.length == body) {
+    /* Nothing was emitted — no cell changes and no caret transition.
+     * Rewind the BSU so a no-op frame still produces zero bytes. */
+    ct->out.length = start;
+  } else if (ct->sync) {
+    buf_str(&ct->out, "\x1b[?2026l"); /* ESU: end synchronized update */
+  }
 }
 
 /**
@@ -624,7 +653,7 @@ int clayterm_size(int w, int h) {
   set_clay_capacity(w, h);
   int cell_count = w * h;
   int cell_bytes = cell_count * (int)sizeof(Cell);
-  int out_bytes = cell_count * OUT_BYTES_PER_CELL;
+  int out_bytes = cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD;
   int clay_bytes = (int)Clay_MinMemorySize();
   return align8((int)sizeof(struct Clayterm)) + align8(cell_bytes) /* front */
          + align8(cell_bytes)                                      /* back */
@@ -686,7 +715,7 @@ struct Clayterm *init(void *mem, int w, int h) {
   struct Clayterm *ct = (struct Clayterm *)mem;
   int cell_count = w * h;
   int cell_bytes = align8(cell_count * (int)sizeof(Cell));
-  int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL);
+  int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD);
   char *base = (char *)mem + align8((int)sizeof(struct Clayterm));
 
   char *clay_mem = base + cell_bytes * 2 + out_bytes;
@@ -701,7 +730,8 @@ struct Clayterm *init(void *mem, int w, int h) {
       .h = h,
       .front = (Cell *)base,
       .back = (Cell *)(base + cell_bytes),
-      .out = {base + cell_bytes * 2, 0, cell_count * OUT_BYTES_PER_CELL},
+      .out = {base + cell_bytes * 2, 0,
+              cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD},
       .lastfg = 0xffffffff,
       .lastbg = 0xffffffff,
       .lastx = -1,
@@ -717,9 +747,10 @@ struct Clayterm *init(void *mem, int w, int h) {
 }
 
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
-            float deltaTime) {
+            float deltaTime, int sync) {
   int i = 0;
   ct_active_context = ct;
+  ct->sync = sync;
   ct->error_count = 0;
   ct->animating_count = 0;
   ct->caret_text_chars = NULL;

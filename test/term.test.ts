@@ -885,4 +885,57 @@ hi
       expect(trim(print(decode(large.output), 120, 40))).toContain("Hi");
     });
   });
+
+  describe("synchronized output", () => {
+    let frame: Op[] = [
+      open("root", { layout: { width: grow(), height: grow() } }),
+      text("Hi"),
+      close(),
+    ];
+
+    let syncOn = {
+      type: "capability",
+      key: "sync-output",
+      value: true,
+    } as const;
+    let syncOff = {
+      type: "capability",
+      key: "sync-output",
+      value: false,
+    } as const;
+
+    it("does not wrap frames by default", () => {
+      let out = decode(term.render(frame).output);
+      expect(out).not.toContain("\x1b[?2026");
+    });
+
+    it("wraps full-screen frames when the capability is on", () => {
+      term.update([syncOn]);
+      let out = decode(term.render(frame).output);
+      expect(out.startsWith("\x1b[?2026h")).toBe(true);
+      expect(out.endsWith("\x1b[?2026l")).toBe(true);
+    });
+
+    it("emits zero bytes for a no-op frame even when wrapped", () => {
+      term.update([syncOn]);
+      term.render(frame);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it("stops wrapping after the capability turns off", () => {
+      term.update([syncOn]);
+      term.render(frame);
+      term.update([syncOff]);
+      let out = decode(term.render(frame).output);
+      expect(out).not.toContain("\x1b[?2026");
+    });
+
+    it("never wraps line mode output", () => {
+      term.update([syncOn]);
+      let out = decode(
+        term.render(frame, { mode: "line", row: 1 }).output,
+      );
+      expect(out).not.toContain("\x1b[?2026");
+    });
+  });
 });

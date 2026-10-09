@@ -42,6 +42,7 @@ export interface Native {
     mode: number,
     row: number,
     deltaTime: number,
+    sync: number,
   ): void;
   output(ct: number): number;
   length(ct: number): number;
@@ -99,6 +100,7 @@ export async function createTermNative(
       mode: number,
       row: number,
       deltaTime: number,
+      sync: number,
     ): void;
     output(ct: number): number;
     length(ct: number): number;

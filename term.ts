@@ -212,7 +212,15 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         dt = now - lastRenderAt;
       }
       lastRenderAt = now;
-      native.reduce(native.statePtr, native.opsBuf, len, mode, row, dt);
+      native.reduce(
+        native.statePtr,
+        native.opsBuf,
+        len,
+        mode,
+        row,
+        dt,
+        currentCaps.syncOutput ? 1 : 0,
+      );
 
       if (options?.pointer) {
         let { x, y, down } = options.pointer;
