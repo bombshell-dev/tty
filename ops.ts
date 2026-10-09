@@ -84,7 +84,9 @@ function sideFg(side: BorderSide | undefined, shared: number): number {
   let color = typeof side === "object" && side.color !== undefined
     ? side.color
     : shared;
-  return color & 0x00FFFFFF;
+  // 0xAARRGGBB with true alpha; the fg is always explicit so no
+  // default flag is needed (the shared color is required).
+  return color;
 }
 
 function sideBg(
@@ -92,8 +94,10 @@ function sideBg(
   shared: number | undefined,
 ): number {
   let bg = typeof side === "object" && side.bg !== undefined ? side.bg : shared;
-  // ATTR_DEFAULT sentinel (bit 31 set) means "keep the existing cell bg"
-  return bg === undefined ? 0x80000000 : bg & 0x00FFFFFF;
+  // Alpha 0 (the word 0 when omitted) means "keep the existing cell
+  // bg" — per §7.9 a background with alpha 0 leaves the cell
+  // unchanged, which is exactly what the omitted-bg sentinel did.
+  return bg ?? 0;
 }
 
 function packString(
@@ -291,26 +295,35 @@ export function pack(
       case OP_TEXT: {
         view.setUint32(o, OP_TEXT, true);
         o += 4;
-        // No explicit color: leave the terminal default foreground by writing
-        // 0 and setting ATTR_DEFAULT (0x80 in the attrs byte). The C path ORs
-        // it into fg and emit_attr skips the foreground SGR (mirrors unset bg).
+        // Color word: 0xAARRGGBB with true alpha. The word 0 means the
+        // terminal default foreground; alpha 0 on an explicit color is
+        // fully transparent (§7.9 transparent numbers).
         let textDefault = op.color === undefined;
         view.setUint32(o, op.color ?? 0, true);
         o += 4;
 
-        // No explicit bg: leave the terminal default bg by writing
-        // 0 and setting ATTR_DEFAULT (0x80 in the attrs byte). The C path ORs
-        // it into bg and emit_attr skips the background SGR
-        let bg = op.bg === undefined ? 0x80000000 : op.bg & 0x00FFFFFF;
-        view.setUint32(o, bg, true);
+        // Background word: 0xAARRGGBB with true alpha. Alpha 0 (the
+        // word 0, also used when bg is omitted) means the terminal
+        // default background; per §7.9 alpha 0 leaves the cell
+        // unchanged, which is exactly what omitting bg did.
+        view.setUint32(o, op.bg ?? 0, true);
+        o += 4;
+
+        // Attrs word: bits 0-6 carry SGR attribute flags, bit 7 marks
+        // the terminal-default foreground. A separate word so both the
+        // attrs and the color's true alpha survive the transfer.
+        view.setUint32(
+          o,
+          (op.attrs ?? 0) | (textDefault ? 0x80 : 0),
+          true,
+        );
         o += 4;
 
         view.setUint32(
           o,
           (op.fontSize ?? 1) |
             ((op.fontId ?? 0) << 8) |
-            ((op.wrap ?? 0) << 16) |
-            (((op.attrs ?? 0) | (textDefault ? 0x80 : 0)) << 24),
+            ((op.wrap ?? 0) << 16),
           true,
         );
         o += 4;
@@ -538,7 +551,7 @@ function packSize(ops: Op[]): number {
         break;
       }
       case OP_TEXT: {
-        n += 4 + 4 + 4 + 4 + 4; // opcode + color + bg + cfg + caret
+        n += 4 + 4 + 4 + 4 + 4 + 4; // opcode + color + bg + attrs + cfg + caret
         n += 4 + Math.ceil(encoder.encode(op.content).length / 4) * 4; // string
         break;
       }

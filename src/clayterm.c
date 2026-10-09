@@ -561,12 +561,26 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
                         Clay_RenderCommand *cmd) {
 
   Clay_TextRenderData *t = &cmd->renderData.text;
-  uint32_t bg = (uint32_t)(uintptr_t)cmd->userData;
+  /* userData points at the text op's [bg, attrs] words in the command
+   * buffer, which remains valid for the whole render pass (see the
+   * OP_TEXT decode in reduce()). */
+  const uint32_t *s = (const uint32_t *)cmd->userData;
+  if (s == NULL) {
+    __builtin_trap();
+  }
+  /* Alpha 0 encodes the terminal default bg (§7.9); anything else is
+   * an explicit bg. The alpha byte is dropped here until compositing
+   * (§7.9) consumes it. */
+  uint32_t bg_word = s[0];
+  uint32_t bg = (bg_word >> 24) ? (bg_word & 0x00FFFFFF) : ATTR_DEFAULT;
   uint32_t fg = color(t->textColor);
 
-  /* text attrs are packed into the alpha channel by reduce() */
-  uint32_t attrs = ((uint32_t)(uint8_t)t->textColor.a) << 24;
-  fg |= attrs;
+  /* attrs ride the word after bg: bits 0-6 are SGR attribute flags,
+   * bit 7 marks the terminal-default foreground. */
+  uint32_t attrs_byte = s[1];
+  fg |= (attrs_byte & 0x7f) << 24;
+  if (attrs_byte & 0x80)
+    fg |= ATTR_DEFAULT;
 
   const char *slice = t->stringContents.chars;
   int slice_len = t->stringContents.length;
@@ -644,25 +658,30 @@ static void render_border(struct Clayterm *ct, int x0, int y0, int x1, int y1,
                           Clay_RenderCommand *cmd) {
   Clay_BorderRenderData *b = &cmd->renderData.border;
   /* Must match border packing in ops.ts.
-   * userData points at eight required words in the command buffer: resolved
-   * fg/bg pairs in top, right, bottom, left order. Fallback resolution
-   * (shared color/bg vs side overrides) happens on the TypeScript side; this
-   * renderer consumes explicit values only. The command buffer outlives the
-   * render pass within reduce(). Missing userData is a wire-format violation.
+   * userData points at eight required words in the command buffer: per
+   * side (top, right, bottom, left order) a fg word (0xAARRGGBB with
+   * true alpha — the fg is always explicit) and a bg word (0xAARRGGBB;
+   * alpha 0 encodes the terminal default). Fallback resolution (shared
+   * color/bg vs side overrides) happens on the TypeScript side; this
+   * renderer consumes explicit values only. The command buffer outlives
+   * the render pass within reduce(). Missing userData is a wire-format
+   * violation.
    */
   const uint32_t *s = (const uint32_t *)cmd->userData;
   if (s == NULL) {
     __builtin_trap();
   }
 
-  uint32_t top_fg = s[0];
-  uint32_t top_bg = s[1];
-  uint32_t right_fg = s[2];
-  uint32_t right_bg = s[3];
-  uint32_t bot_fg = s[4];
-  uint32_t bot_bg = s[5];
-  uint32_t left_fg = s[6];
-  uint32_t left_bg = s[7];
+  /* Slice behavior-preserving: the fg alpha byte is dropped here until
+   * compositing (§7.9) consumes it; alpha 0 bg maps to the default. */
+  uint32_t top_fg = s[0] & 0x00FFFFFF;
+  uint32_t top_bg = (s[1] >> 24) ? (s[1] & 0x00FFFFFF) : ATTR_DEFAULT;
+  uint32_t right_fg = s[2] & 0x00FFFFFF;
+  uint32_t right_bg = (s[3] >> 24) ? (s[3] & 0x00FFFFFF) : ATTR_DEFAULT;
+  uint32_t bot_fg = s[4] & 0x00FFFFFF;
+  uint32_t bot_bg = (s[5] >> 24) ? (s[5] & 0x00FFFFFF) : ATTR_DEFAULT;
+  uint32_t left_fg = s[6] & 0x00FFFFFF;
+  uint32_t left_bg = (s[7] >> 24) ? (s[7] & 0x00FFFFFF) : ATTR_DEFAULT;
   int top = b->width.top > 0;
   int bot = b->width.bottom > 0;
   int left = b->width.left > 0;
@@ -1024,7 +1043,11 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
 
     case OP_TEXT: {
       uint32_t col = rd(buf, len, &i);
-      uint32_t bg = rd(buf, len, &i);
+      /* The [bg, attrs] window starts here; render_text reads both
+       * words through userData. */
+      int bg_index = i;
+      rd(buf, len, &i); /* bg word: 0xAARRGGBB, alpha 0 = default */
+      uint32_t attrs = rd(buf, len, &i);
       uint32_t cfg = rd(buf, len, &i);
       uint32_t caret = rd(buf, len, &i);
       uint32_t str_len = rd(buf, len, &i);
@@ -1059,13 +1082,13 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       Clay_String text = {.length = (int32_t)str_len, .chars = str_chars};
 
       Clay_TextElementConfig config = {0};
-      config.userData = (void *)(uintptr_t)bg;
+      /* render_text reads the [bg, attrs] window from the command
+       * buffer through this pointer. */
+      config.userData = (void *)&buf[bg_index];
       config.textColor = unpack_color(col);
       config.fontSize = cfg & 0xff;
       config.fontId = (cfg >> 8) & 0xff;
       config.wrapMode = (cfg >> 16) & 0xff;
-      /* attrs byte -> alpha channel for render_text to extract */
-      config.textColor.a = (float)((cfg >> 24) & 0xff);
 
       Clay__OpenTextElement(text, config);
       break;
