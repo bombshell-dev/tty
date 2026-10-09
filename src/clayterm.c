@@ -84,7 +84,8 @@ struct Clayterm {
    * changes, which force a complete redraw (color-encoding-spec CI-5). */
   int tier;
   int last_tier;
-  /* clip region (active top mirrored here so setcell stays unchanged) */
+  /* clip region (active top mirrored here so writable_cell stays
+   * unchanged) */
   int clipx, clipy, clipw, cliph;
   int clipping;
   /* clip stack: nesting pushes intersected rects, leaving pops to restore */
@@ -136,24 +137,85 @@ static Cell *cell_at(struct Clayterm *ct, Cell *buf, int x, int y) {
   return &buf[y * ct->w + x];
 }
 
-static int setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
-                   uint32_t bg) {
+/* Resolve a stored channel color to its concrete destination: the
+ * terminal default (renderer-spec §7.9) when the channel is at default,
+ * else the stored 24-bit value. */
+static uint32_t channel_dst(const struct Clayterm *ct, uint32_t color,
+                            int is_fg) {
+  if (color & ATTR_DEFAULT)
+    return is_fg ? ct->default_fg : ct->default_bg;
+  return color & 0x00FFFFFF;
+}
+
+/* §7.9 source-over composite of src over dst per channel, α in 0–255:
+ * out = round((src × α + dst × (255 − α)) / 255). */
+static uint32_t composite(uint32_t src, uint32_t dst, int alpha) {
+  if (alpha <= 0)
+    return dst;
+  if (alpha >= 255)
+    return src;
+  int ia = 255 - alpha;
+  int r = ((int)((src >> 16) & 0xff) * alpha + (int)((dst >> 16) & 0xff) * ia +
+           127) /
+          255;
+  int g =
+      ((int)((src >> 8) & 0xff) * alpha + (int)((dst >> 8) & 0xff) * ia + 127) /
+      255;
+  int b = ((int)(src & 0xff) * alpha + (int)(dst & 0xff) * ia + 127) / 255;
+  return (uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b;
+}
+
+/* The writable cell at (x, y), honoring bounds and the active clip, or
+ * NULL when the cell is not writable. */
+static Cell *writable_cell(struct Clayterm *ct, int x, int y) {
   if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
-    return 0;
+    return NULL;
   if (ct->clipping) {
     if (x < ct->clipx || x >= ct->clipx + ct->clipw)
-      return 0;
+      return NULL;
     if (y < ct->clipy || y >= ct->clipy + ct->cliph)
-      return 0;
+      return NULL;
   }
-  Cell *c = cell_at(ct, ct->back, x, y);
+  return cell_at(ct, ct->back, x, y);
+}
+
+/* Write a glyph with §7.9 compositing. fg and bg carry alpha in the high
+ * byte; alpha 0 leaves that channel untouched (an explicit transparent
+ * color composites to the destination — the §7.9 raw-number rule). The
+ * background composites first, then the foreground against the
+ * background result ("after any background from the same directive has
+ * been applied"). fg_attrs are the glyph's SGR attribute flags plus,
+ * when set, the default-foreground flag; they apply regardless of the
+ * color's alpha. The glyph replaces, never blends. Returns 1 when a
+ * cell was written. */
+static int composite_cell(struct Clayterm *ct, int x, int y, uint32_t ch,
+                          uint32_t fg, uint32_t bg, uint32_t fg_attrs) {
+  Cell *c = writable_cell(ct, x, y);
+  if (c == NULL)
+    return 0;
+
+  int bg_alpha = (int)((bg >> 24) & 0xff);
+  uint32_t bg_result;
+  if (bg_alpha > 0) {
+    bg_result = composite(bg & 0x00FFFFFF, channel_dst(ct, c->bg, 0), bg_alpha);
+    c->bg = bg_result;
+  } else {
+    bg_result = channel_dst(ct, c->bg, 0);
+  }
+
   c->ch = ch;
-  c->fg = fg;
-  if (!(bg & ATTR_DEFAULT)) {
-    c->bg = bg;
-  }
   for (int i = 0; i < CELL_MAX_COMBINING; i++)
     c->combining[i] = 0;
+
+  int fg_alpha = (int)((fg >> 24) & 0xff);
+  uint32_t fg_color;
+  if (fg_alpha > 0) {
+    fg_color = composite(fg & 0x00FFFFFF, bg_result, fg_alpha);
+  } else {
+    /* α = 0: the color is untouched — a default fg stays default. */
+    fg_color = c->fg & ATTR_DEFAULT ? ATTR_DEFAULT : c->fg & 0x00FFFFFF;
+  }
+  c->fg = fg_color | (fg_attrs << 24);
   return 1;
 }
 
@@ -532,10 +594,36 @@ static uint32_t color(Clay_Color c) {
 
 static void render_rect(struct Clayterm *ct, int x0, int y0, int x1, int y1,
                         Clay_RectangleRenderData *r) {
-  uint32_t bg = color(r->backgroundColor);
-  for (int y = y0; y < y1; y++)
-    for (int x = x0; x < x1; x++)
-      setcell(ct, x, y, ' ', ATTR_DEFAULT, bg);
+  /* Clay only emits rectangle commands for backgrounds with alpha > 0
+   * (clay.h), so α = 0 never reaches here. */
+  uint32_t src = color(r->backgroundColor);
+  int alpha = (int)r->backgroundColor.a;
+  for (int y = y0; y < y1; y++) {
+    for (int x = x0; x < x1; x++) {
+      Cell *c = writable_cell(ct, x, y);
+      if (c == NULL)
+        continue;
+      if (alpha <= 0)
+        continue; /* α = 0 leaves the cell unchanged (§7.9) */
+      if (alpha >= 255) {
+        /* α = 255 replaces the background and erases the glyph. */
+        c->ch = ' ';
+        for (int i = 0; i < CELL_MAX_COMBINING; i++)
+          c->combining[i] = 0;
+        c->fg = ATTR_DEFAULT;
+        c->bg = src;
+      } else {
+        /* 0 < α < 255 tints the background, keeps the glyph and its
+         * attributes, and composites the glyph's foreground toward the
+         * background color with the same α (§7.9 backgrounds). The
+         * tint makes the foreground explicit, so the default flag
+         * drops while the SGR attribute bits stay. */
+        c->bg = composite(src, channel_dst(ct, c->bg, 0), alpha);
+        c->fg = composite(src, channel_dst(ct, c->fg, 1), alpha) |
+                (c->fg & 0x7f000000);
+      }
+    }
+  }
 }
 
 /* Return the byte length of the first `cps` code points of `start`,
@@ -573,19 +661,14 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
   if (s == NULL) {
     __builtin_trap();
   }
-  /* Alpha 0 encodes the terminal default bg (§7.9); anything else is
-   * an explicit bg. The alpha byte is dropped here until compositing
-   * (§7.9) consumes it. */
+  /* fg and bg words carry alpha in the high byte (§7.9); alpha 0 leaves
+   * that channel untouched. An absent color packs fg = 0, so the glyph
+   * keeps the cell's foreground at its default-resolved value while the
+   * attrs (including the default-foreground flag) still apply. */
+  uint32_t fg_word =
+      ((uint32_t)(uint8_t)t->textColor.a) << 24 | color(t->textColor);
   uint32_t bg_word = s[0];
-  uint32_t bg = (bg_word >> 24) ? (bg_word & 0x00FFFFFF) : ATTR_DEFAULT;
-  uint32_t fg = color(t->textColor);
-
-  /* attrs ride the word after bg: bits 0-6 are SGR attribute flags,
-   * bit 7 marks the terminal-default foreground. */
   uint32_t attrs_byte = s[1];
-  fg |= (attrs_byte & 0x7f) << 24;
-  if (attrs_byte & 0x80)
-    fg |= ATTR_DEFAULT;
 
   const char *slice = t->stringContents.chars;
   int slice_len = t->stringContents.length;
@@ -638,7 +721,8 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
     if (cw < 0)
       cw = 1;
     if (cw > 0) {
-      last_x = setcell(ct, x, y0, cp, fg, bg) ? x : -1;
+      last_x =
+          composite_cell(ct, x, y0, cp, fg_word, bg_word, attrs_byte) ? x : -1;
       x += cw;
     } else if (last_x >= 0) {
       /* combining mark: attach to the preceding base cell */
@@ -677,16 +761,15 @@ static void render_border(struct Clayterm *ct, int x0, int y0, int x1, int y1,
     __builtin_trap();
   }
 
-  /* Slice behavior-preserving: the fg alpha byte is dropped here until
-   * compositing (§7.9) consumes it; alpha 0 bg maps to the default. */
-  uint32_t top_fg = s[0] & 0x00FFFFFF;
-  uint32_t top_bg = (s[1] >> 24) ? (s[1] & 0x00FFFFFF) : ATTR_DEFAULT;
-  uint32_t right_fg = s[2] & 0x00FFFFFF;
-  uint32_t right_bg = (s[3] >> 24) ? (s[3] & 0x00FFFFFF) : ATTR_DEFAULT;
-  uint32_t bot_fg = s[4] & 0x00FFFFFF;
-  uint32_t bot_bg = (s[5] >> 24) ? (s[5] & 0x00FFFFFF) : ATTR_DEFAULT;
-  uint32_t left_fg = s[6] & 0x00FFFFFF;
-  uint32_t left_bg = (s[7] >> 24) ? (s[7] & 0x00FFFFFF) : ATTR_DEFAULT;
+  /* Words stay raw: composite_cell consumes the alpha bytes. */
+  uint32_t top_fg = s[0];
+  uint32_t top_bg = s[1];
+  uint32_t right_fg = s[2];
+  uint32_t right_bg = s[3];
+  uint32_t bot_fg = s[4];
+  uint32_t bot_bg = s[5];
+  uint32_t left_fg = s[6];
+  uint32_t left_bg = s[7];
   int top = b->width.top > 0;
   int bot = b->width.bottom > 0;
   int left = b->width.left > 0;
@@ -702,29 +785,29 @@ static void render_border(struct Clayterm *ct, int x0, int y0, int x1, int y1,
   uint32_t br = b->cornerRadius.bottomRight > 0 ? 0x256f : 0x2518;
 
   if (top && left)
-    setcell(ct, x0, y0, tl, top_fg, top_bg);
+    composite_cell(ct, x0, y0, tl, top_fg, top_bg, 0);
   if (top && right)
-    setcell(ct, x1 - 1, y0, tr, top_fg, top_bg);
+    composite_cell(ct, x1 - 1, y0, tr, top_fg, top_bg, 0);
   if (bot && left)
-    setcell(ct, x0, y1 - 1, bl, bot_fg, bot_bg);
+    composite_cell(ct, x0, y1 - 1, bl, bot_fg, bot_bg, 0);
   if (bot && right)
-    setcell(ct, x1 - 1, y1 - 1, br, bot_fg, bot_bg);
+    composite_cell(ct, x1 - 1, y1 - 1, br, bot_fg, bot_bg, 0);
 
   /* horizontal edges */
   if (top)
     for (int x = x0 + left; x < x1 - right; x++)
-      setcell(ct, x, y0, 0x2500, top_fg, top_bg);
+      composite_cell(ct, x, y0, 0x2500, top_fg, top_bg, 0);
   if (bot)
     for (int x = x0 + left; x < x1 - right; x++)
-      setcell(ct, x, y1 - 1, 0x2500, bot_fg, bot_bg);
+      composite_cell(ct, x, y1 - 1, 0x2500, bot_fg, bot_bg, 0);
 
   /* vertical edges — excluding joined corner cells owned by top/bottom */
   if (left)
     for (int y = y0 + top; y < y1 - bot; y++)
-      setcell(ct, x0, y, 0x2502, left_fg, left_bg);
+      composite_cell(ct, x0, y, 0x2502, left_fg, left_bg, 0);
   if (right)
     for (int y = y0 + top; y < y1 - bot; y++)
-      setcell(ct, x1 - 1, y, 0x2502, right_fg, right_bg);
+      composite_cell(ct, x1 - 1, y, 0x2502, right_fg, right_bg, 0);
 }
 
 /* ── Command buffer helpers ───────────────────────────────────────── */
