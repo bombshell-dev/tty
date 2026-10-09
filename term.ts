@@ -2,6 +2,11 @@ import { type Op, pack } from "./ops.ts";
 import { type BoundingBox, createTermNative } from "./term-native.ts";
 import type { InputEvent } from "./input.ts";
 import type { Capabilities, Rgb, TerminalInfo } from "./terminfo.ts";
+import {
+  osc22,
+  type PointerShape,
+  resolvePointerShape,
+} from "./pointer-shape.ts";
 
 export type { BoundingBox };
 
@@ -163,6 +168,7 @@ export interface Term {
 
 export async function createTerm(options: TermOptions): Promise<Term> {
   let { width, height, terminfo } = options;
+  let emittedShape: PointerShape = "default";
 
   let native = await createTermNative(
     width,
@@ -225,9 +231,22 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         native.length(native.statePtr),
       );
 
-      let current = new Set(
-        options?.pointer ? native.getPointerOverIds() : [],
-      );
+      let overIds = options?.pointer ? native.getPointerOverIds() : [];
+      let current = new Set(overIds);
+
+      if (currentCaps.pointerShape) {
+        let shape: PointerShape = overIds.length > 0
+          ? resolvePointerShape(ops, overIds)
+          : "default";
+        if (shape !== emittedShape) {
+          emittedShape = shape;
+          let seq = osc22(shape);
+          let joined = new Uint8Array(output.length + seq.length);
+          joined.set(output);
+          joined.set(seq, output.length);
+          output = joined;
+        }
+      }
       let down = options?.pointer?.down ?? false;
       let events: PointerEvent[] = [];
 
@@ -307,6 +326,14 @@ export async function createTerm(options: TermOptions): Promise<Term> {
             lastRenderAt = undefined;
             wasAnimating = false;
           }
+        }
+
+        if (
+          currentCaps.pointerShape && !next.pointerShape &&
+          emittedShape !== "default"
+        ) {
+          emittedShape = "default";
+          out.push(osc22("default"));
         }
 
         currentCaps = next;

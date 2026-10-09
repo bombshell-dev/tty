@@ -33,6 +33,20 @@ describe("validate", () => {
     ])).toBe(true);
   });
 
+  it("accepts a pointer shape", () => {
+    expect(validate([open("x", { pointerShape: "pointer" }), close()])).toBe(
+      true,
+    );
+  });
+
+  it("rejects a pointer shape outside the vocabulary", () => {
+    expect(validate([
+      // deno-lint-ignore no-explicit-any
+      open("x", { pointerShape: "hand" as any }),
+      close(),
+    ])).toBe(false);
+  });
+
   it("rejects ops with wrong directive", () => {
     expect(validate([{ directive: 0xff }])).toBe(false);
   });
