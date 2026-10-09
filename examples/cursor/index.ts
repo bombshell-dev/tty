@@ -9,9 +9,9 @@
  *   bomb.sh); hovering lights the tile's ring and name, so the hover state
  *   reads even in terminals without OSC 22.
  * - The grab tile is double-wide: holding the pointer down on it shows
- *   grabbing, releasing returns to grab — real drag semantics, tracked
- *   through the renderer's hit-test (pointerenter/pointerleave) plus the
- *   parser's mousedown/mouseup.
+ *   grabbing anywhere on screen while held (a capture-mode drag shield —
+ *   userland drag persistence, no spec support needed), releasing returns
+ *   to grab.
  * - Curated to the 9 shapes confirmed working in ghostty 1.3.1; ghostty
  *   drops help, progress, wait, move, zoom-in, zoom-out, and none.
  *
@@ -40,7 +40,7 @@ import {
 import { useInput } from "../use-input.ts";
 import { useStdin } from "../use-stdin.ts";
 import { optInPointerShapes } from "../pointer-shape-opt-in.ts";
-import { type Ctx, frame } from "./view.ts";
+import { type Ctx, frame, withDragShield } from "./view.ts";
 
 await main(function* () {
   let { columns, rows } = terminalSize();
@@ -131,7 +131,10 @@ await main(function* () {
 
     ctx.capsOn = term.capabilities.pointerShape;
 
-    let { output, events } = term.render(frame(ctx), { pointer: ctx.pointer });
+    let { output, events } = term.render(
+      withDragShield(frame(ctx), columns, rows, ctx.grabbing),
+      { pointer: ctx.pointer },
+    );
     for (let e of events) {
       yield* pointerEvents.send(e);
     }
