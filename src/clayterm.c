@@ -35,6 +35,10 @@ struct Clayterm *ct_active_context = NULL;
 #define OP_TEXT 0x03
 #define OP_CLOSE_ELEMENT 0x04
 #define OP_END_LAYOUT 0x05
+/* OP_IMG (0x06): the void image directive (Graphics Specification §6.1).
+ * Decoded into a balanced open/close pair at walk time; pixel tiers attach
+ * the op's wire address as customData for the render-command walk. */
+#define OP_IMG 0x06
 
 #define PROP_LAYOUT 0x01
 #define PROP_BG_COLOR 0x02
@@ -55,6 +59,11 @@ struct Clayterm *ct_active_context = NULL;
  * Mirrored by ERROR_TYPES in term.ts. */
 #define CLAYTERM_ERR_CLIP_DEPTH_EXCEEDED 9
 #define CLAYTERM_ERR_COMBINING_MARKS_EXCEEDED 10
+#define CLAYTERM_ERR_IMAGE_NOT_FOUND 11
+#define CLAYTERM_ERR_IMAGE_PLACEMENTS_EXCEEDED 12
+#define CLAYTERM_ERR_IMAGE_PLACEMENT_COLLISION 13
+
+#define MAX_ERROR_MESSAGE 96
 
 #define CLAYTERM_STR_(x) #x
 #define CLAYTERM_STR(x) CLAYTERM_STR_(x)
@@ -86,7 +95,15 @@ struct Clayterm {
   /* error collection */
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
+  /* dynamic message pool for image errors (each message bounds to
+   * MAX_ERROR_MESSAGE bytes; Graphics Specification §13) */
+  char msg_pool[MAX_ERRORS * MAX_ERROR_MESSAGE];
+  int msg_used;
   int animating_count;
+  /* graphics substrate (Graphics Specification): the pixel-surface
+   * registry, tier engine, and placements record live in their own
+   * dimension-independent carve — set by init(), survives resize (§5.1) */
+  struct Graphics *gfx;
   /* Caret state for hardware-cursor management. The renderer records the
    * first text node carrying a caret declaration per frame, precomputes the
    * caret's byte offset into that node's content, then places the cell as
@@ -600,6 +617,227 @@ static Clay_SizingAxis decode_axis(uint32_t *buf, int len, int *i) {
   return axis;
 }
 
+/* ── Image element (Graphics Specification §6.1) ──────────────────── */
+
+/* OP_IMG wire layout (packed by ops.ts):
+ *   [opcode][id_len][id bytes padded][image u32, 0 = omitted]
+ *   [variant u8 | bg_flag u8 | pad u16][width axis 3 words]
+ *   [height axis 3 words][alt_len][alt bytes padded][bg u32 when bg_flag] */
+struct ImgOp {
+  char *id_chars;
+  uint32_t id_len;
+  uint32_t image_id;
+  uint8_t variant;
+  uint8_t bg_flag;
+  uint32_t bg;
+  char *alt_chars;
+  uint32_t alt_len;
+  Clay_SizingAxis waxis;
+  Clay_SizingAxis haxis;
+};
+
+static void decode_img_op(uint32_t *buf, int len, int *i, struct ImgOp *o) {
+  uint32_t id_len = rd(buf, len, i);
+  int id_words = (id_len + 3) / 4;
+  o->id_chars = (char *)&buf[*i];
+  o->id_len = id_len;
+  *i += id_words;
+
+  o->image_id = rd(buf, len, i);
+  uint32_t cfg = rd(buf, len, i);
+  o->variant = cfg & 0xff;
+  o->bg_flag = (cfg >> 8) & 0xff;
+
+  o->waxis = decode_axis(buf, len, i);
+  o->haxis = decode_axis(buf, len, i);
+
+  uint32_t alt_len = rd(buf, len, i);
+  int alt_words = (alt_len + 3) / 4;
+  o->alt_chars = (char *)&buf[*i];
+  o->alt_len = alt_len;
+  *i += alt_words;
+
+  o->bg = o->bg_flag ? rd(buf, len, i) : 0;
+}
+
+/* Dynamic image error messages land in the carve's message pool (§13).
+ * Hand-rolled formatting: no stdio in freestanding wasm. */
+static int img_msg_copy(char *dst, int *n, const char *s) {
+  while (*s != 0 && *n < MAX_ERROR_MESSAGE - 1) {
+    dst[(*n)++] = *s++;
+  }
+  return *n;
+}
+
+static void report_img_error(struct Clayterm *ct, int code, struct ImgOp *o) {
+  if (ct->error_count >= MAX_ERRORS) {
+    return;
+  }
+  if (ct->msg_used + MAX_ERROR_MESSAGE > (int)sizeof(ct->msg_pool)) {
+    return;
+  }
+  char *msg = ct->msg_pool + ct->msg_used;
+  ct->msg_used += MAX_ERROR_MESSAGE;
+  int n = 0;
+  n += img_msg_copy(msg + n, &n, "image element '");
+  uint32_t id_show = o->id_len;
+  for (uint32_t k = 0; k < id_show && n < MAX_ERROR_MESSAGE - 1; k++) {
+    msg[n++] = o->id_chars[k];
+  }
+  n += img_msg_copy(msg + n, &n, "'");
+  if (code == CLAYTERM_ERR_IMAGE_NOT_FOUND) {
+    n += img_msg_copy(msg + n, &n, " references unknown registry id ");
+    /* decimal registry id */
+    char dec[10];
+    int m = 0;
+    uint32_t v = o->image_id;
+    do {
+      dec[m++] = (char)('0' + (v % 10));
+      v /= 10;
+    } while (v > 0);
+    for (int k = m - 1; k >= 0 && n < MAX_ERROR_MESSAGE - 1; k--) {
+      msg[n++] = dec[k];
+    }
+  } else if (code == CLAYTERM_ERR_IMAGE_PLACEMENTS_EXCEEDED) {
+    n += img_msg_copy(msg + n, &n, " exceeds placement table capacity");
+  } else {
+    n += img_msg_copy(msg + n, &n, " placement id collision");
+  }
+  ct->errors[ct->error_count++] = (Clay_ErrorData){
+      .errorType = (Clay_ErrorType)code,
+      .errorText = {.isStaticallyAllocated = false, .length = n, .chars = msg},
+      .userData = ct,
+  };
+}
+
+/* Expand the img directive into its Clay element (§15 transfer note):
+ * a balanced open/close pair; the alt tier adds a wrapped text child, the
+ * pixel tiers attach the op's wire address as customData for the
+ * render-command walk. Tier resolution reads only inputs stable within a
+ * frame (variant, omission, registry liveness, evidence, line mode); the
+ * demotions that need layout/clip state happen later and are
+ * footprint-preserving (§8.5), so the sizing decided here stays valid. */
+static void decode_img_element(struct Clayterm *ct, uint32_t *buf, int len,
+                               int *i, int op_start, int mode) {
+  struct ImgOp o;
+  decode_img_op(buf, len, i, &o);
+
+  struct ImageEntry *entry =
+      o.image_id != 0 ? graphics_entry(ct->gfx, o.image_id) : NULL;
+  uint8_t tier = graphics_resolve_tier(ct, o.image_id, o.variant, mode);
+  if (o.image_id != 0 && (entry == NULL || !entry->live)) {
+    report_img_error(ct, CLAYTERM_ERR_IMAGE_NOT_FOUND, &o);
+    tier = IMG_TIER_ALT;
+  }
+
+  Clay_String str = {.length = (int32_t)o.id_len, .chars = o.id_chars};
+  Clay_ElementId eid = Clay__HashString(str, 0);
+  Clay__OpenElementWithId(eid);
+
+  Clay_ElementDeclaration decl = {0};
+  decl.layout.sizing.width = o.waxis;
+  decl.layout.sizing.height = o.haxis;
+  if (tier != IMG_TIER_ALT && entry != NULL) {
+    /* fit() resolves to the intrinsic cell size under the half-row pixel
+     * convention (§8.3): W columns × ceil(H/2) rows */
+    if (o.waxis.type == CLAY__SIZING_TYPE_FIT) {
+      decl.layout.sizing.width.type = CLAY__SIZING_TYPE_FIXED;
+      decl.layout.sizing.width.size.minMax.min = (float)entry->width;
+      decl.layout.sizing.width.size.minMax.max = (float)entry->width;
+    }
+    if (o.haxis.type == CLAY__SIZING_TYPE_FIT) {
+      float rows = (float)((entry->height + 1) / 2);
+      decl.layout.sizing.height.type = CLAY__SIZING_TYPE_FIXED;
+      decl.layout.sizing.height.size.minMax.min = rows;
+      decl.layout.sizing.height.size.minMax.max = rows;
+    }
+  }
+  if (o.bg_flag != 0) {
+    /* cells cannot be transparent: the declared bg's RGB paints, alpha is
+     * dropped at the cell (the value space is open({bg})'s rgba()) */
+    decl.backgroundColor = unpack_color(o.bg);
+    decl.backgroundColor.a = 255;
+  }
+  if (tier == IMG_TIER_ALT) {
+    /* the box clips its own alt-text child at the box height (§9.4) */
+    decl.clip.vertical = 1;
+  } else {
+    decl.custom.customData = (void *)&buf[op_start];
+  }
+  Clay__ConfigureOpenElement(decl);
+
+  if (tier == IMG_TIER_ALT) {
+    Clay_String alt = {.length = (int32_t)o.alt_len, .chars = o.alt_chars};
+    Clay_TextElementConfig config = {0};
+    config.wrapMode = CLAY_TEXT_WRAP_WORDS;
+    Clay__OpenTextElement(alt, config);
+  }
+  Clay__CloseElement();
+}
+
+/* The render-command walk's img handler: demotions first (containment
+ * §8.5, collision §9.2.1, overlap §10.3, capacity §5.4 — every one
+ * footprint-preserving), then kitty record / ascii art. `op_start` is the
+ * opcode word's index in buf (the customData payload). */
+static void render_custom_img(struct Clayterm *ct, uint32_t *buf, int len,
+                              int op_start, int x0, int y0, int x1, int y1,
+                              int mode) {
+  uint32_t *op = buf + op_start;
+  struct ImgOp o;
+  int oi = 1; /* skip the opcode word */
+  decode_img_op(op, len - op_start, &oi, &o);
+
+  struct ImageEntry *entry =
+      o.image_id != 0 ? graphics_entry(ct->gfx, o.image_id) : NULL;
+  uint8_t tier = graphics_resolve_tier(ct, o.image_id, o.variant, mode);
+  if (entry == NULL || !entry->live) {
+    return; /* alt tier never reaches CUSTOM (no custom config) */
+  }
+
+  struct ImagePlacement fp = graphics_contain_fit(x0, y0, x1 - x0, y1 - y0,
+                                                  entry->width, entry->height);
+  if (fp.w <= 0 || fp.h <= 0) {
+    return; /* empty footprint paints nothing (§8.2) */
+  }
+
+  if (tier == IMG_TIER_KITTY) {
+    /* containment gate (§8.5): the terminal cannot clip a placement */
+    if (ct->clipping) {
+      int inside = fp.x >= ct->clipx && fp.y >= ct->clipy &&
+                   fp.x + fp.w <= ct->clipx + ct->clipw &&
+                   fp.y + fp.h <= ct->clipy + ct->cliph;
+      if (!inside) {
+        tier = IMG_TIER_ASCII;
+      }
+    }
+    uint32_t pid = 0;
+    if (tier == IMG_TIER_KITTY) {
+      pid = graphics_placement_id(o.id_chars, o.id_len, o.image_id);
+      if (graphics_placement_collision(ct, pid)) {
+        report_img_error(ct, CLAYTERM_ERR_IMAGE_PLACEMENT_COLLISION, &o);
+        tier = IMG_TIER_ASCII;
+      }
+    }
+    if (tier == IMG_TIER_KITTY) {
+      struct ImagePlacement *p =
+          graphics_add_placement(ct, o.image_id, pid, entry->data_version);
+      if (p == NULL) {
+        report_img_error(ct, CLAYTERM_ERR_IMAGE_PLACEMENTS_EXCEEDED, &o);
+        tier = IMG_TIER_ASCII;
+      } else {
+        p->x = fp.x;
+        p->y = fp.y;
+        p->w = fp.w;
+        p->h = fp.h;
+        p->blank_bg = o.bg_flag ? (o.bg & COLOR_MASK) : ATTR_DEFAULT;
+      }
+    }
+  }
+  if (tier == IMG_TIER_ASCII) {
+    graphics_paint_ascii(ct, entry, &fp);
+  }
+}
+
 /* ── Public API ───────────────────────────────────────────────────── */
 
 static int align64(int n) { return (n + 63) & ~63; }
@@ -625,11 +863,14 @@ int clayterm_size(int w, int h) {
   int cell_count = w * h;
   int cell_bytes = cell_count * (int)sizeof(Cell);
   int out_bytes = cell_count * OUT_BYTES_PER_CELL;
+  int msg_bytes = MAX_ERRORS * MAX_ERROR_MESSAGE;
   int clay_bytes = (int)Clay_MinMemorySize();
   return align8((int)sizeof(struct Clayterm)) + align8(cell_bytes) /* front */
          + align8(cell_bytes)                                      /* back */
-         + align8(out_bytes)    /* output buffer */
-         + align64(clay_bytes); /* Clay arena */
+         + align8(out_bytes)   /* output buffer */
+         + align8(msg_bytes)   /* dynamic error messages */
+         + align64(clay_bytes) /* Clay arena */
+      ;
 }
 
 static void clay_error(Clay_ErrorData err) {
@@ -681,15 +922,17 @@ int error_message_ptr(struct Clayterm *ct, int index) {
   return (int)ct->errors[index].errorText.chars;
 }
 
-struct Clayterm *init(void *mem, int w, int h) {
+struct Clayterm *init(void *mem, int w, int h, struct Graphics *gfx) {
   set_clay_capacity(w, h);
   struct Clayterm *ct = (struct Clayterm *)mem;
   int cell_count = w * h;
   int cell_bytes = align8(cell_count * (int)sizeof(Cell));
   int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL);
+  int msg_bytes = align8(MAX_ERRORS * MAX_ERROR_MESSAGE);
   char *base = (char *)mem + align8((int)sizeof(struct Clayterm));
 
-  char *clay_mem = base + cell_bytes * 2 + out_bytes;
+  char *msg_mem = base + cell_bytes * 2 + out_bytes;
+  char *clay_mem = msg_mem + msg_bytes;
   int clay_bytes = align64((int)Clay_MinMemorySize());
   Clay_Arena arena =
       Clay_CreateArenaWithCapacityAndMemory(clay_bytes, clay_mem);
@@ -706,6 +949,7 @@ struct Clayterm *init(void *mem, int w, int h) {
       .lastbg = 0xffffffff,
       .lastx = -1,
       .lasty = -1,
+      .gfx = gfx,
   };
 
   // initialize back buffer with spaces and default fg/bg
@@ -721,7 +965,10 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   int i = 0;
   ct_active_context = ct;
   ct->error_count = 0;
+  ct->msg_used = 0;
   ct->animating_count = 0;
+  ct->gfx->emitted_placements = 0;
+  graphics_frame_begin(ct->gfx);
   ct->caret_text_chars = NULL;
   ct->caret_text_length = 0;
   ct->caret_offset_bytes = 0;
@@ -737,6 +984,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
 
   while (i < len) {
     uint32_t op = rd(buf, len, &i);
+    int op_start = i - 1;
 
     switch (op) {
     case OP_OPEN_ELEMENT: {
@@ -908,6 +1156,10 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       Clay__CloseElement();
       break;
 
+    case OP_IMG:
+      decode_img_element(ct, buf, len, &i, op_start, mode);
+      break;
+
     default:
       break;
     }
@@ -946,6 +1198,16 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
     case CLAY_RENDER_COMMAND_TYPE_BORDER:
       render_border(ct, x0, y0, x1, y1, cmd);
       break;
+    case CLAY_RENDER_COMMAND_TYPE_CUSTOM: {
+      /* the img element's custom command (Graphics Specification): demote
+       * if needed, then record the kitty placement or paint ascii art */
+      if (cmd->renderData.custom.customData != NULL) {
+        int op_start =
+            (int)((uint32_t *)cmd->renderData.custom.customData - buf);
+        render_custom_img(ct, buf, len, op_start, x0, y0, x1, y1, mode);
+      }
+      break;
+    }
     case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: {
       /* intersect the child box with the current active rect (if any) */
       int nx0 = x0, ny0 = y0, nx1 = x1, ny1 = y1;
@@ -1024,10 +1286,33 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
     }
   }
 
+  /* Graphics §9.2.6 frame ordering, around the cell-write phase:
+   * coverage pass → stale deletions + transmissions → cell writes →
+   * placements → cursor restore. Line mode (mode == 1) caps the ladder at
+   * ascii (§12), so it records no placements and emits no APC bytes: the
+   * stale/transmission phases are skipped and the placements tables are
+   * left untouched so the next cursor-update render can reconcile. */
+  graphics_cover(ct);
+  if (mode == 0) {
+    graphics_emit_before_cells(ct);
+  }
+
   if (mode == 1) {
     present_lines(ct);
   } else {
     present_cups(ct, row);
+    graphics_emit_placements(ct, row);
+    graphics_frame_end(ct->gfx);
+    if (ct->gfx->emitted_placements) {
+      /* A2 carve-out: restore the post-frame cursor state §7.6 defines
+       * (the placement CUPs moved the cursor after the cell writes) */
+      if (ct->has_caret) {
+        emit_cursor(ct, ct->caret_x, ct->caret_y, row);
+        buf_str(&ct->out, "\x1b[?25h");
+      } else if (ct->lastx >= 0 && ct->lasty >= 0) {
+        emit_cursor(ct, ct->lastx + 1, ct->lasty, row);
+      }
+    }
   }
 
   ct_active_context = NULL;

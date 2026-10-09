@@ -1027,7 +1027,16 @@ static int parse_apc_response(struct InputState *st) {
 
   const char *payload = st->buf + 3;
   int plen = end - 3 - (st->buf[end - 1] == '\x07' ? 1 : 2);
-  emit_cap_bool(st, CAP_KITTY_GRAPHICS, payload_contains(payload, plen, ";OK"));
+  /* The reply's payload is the response shape `i=<id>;OK` or
+   * `i=<id>;ENOTSUPPORTED…` — it never carries an `a=` action key. Frames
+   * that do are commands (ours, quiet q=2, or another client's), not
+   * responses: the renderer's own emissions must not surface as events
+   * (Graphics Specification INV-I5: the input stream stays clean). */
+  int is_command = plen >= 2 && payload[0] == 'a' && payload[1] == '=';
+  if (!is_command) {
+    emit_cap_bool(st, CAP_KITTY_GRAPHICS,
+                  payload_contains(payload, plen, ";OK"));
+  }
 
   shift(st, end);
   return PARSE_OK;

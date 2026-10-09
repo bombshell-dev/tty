@@ -1,5 +1,9 @@
 import { f32, offsets, struct } from "./typedef.ts";
 
+/* Graphics Specification §5.3: the image pixel pool's normative default.
+ * Exposed as the createTerm `imagePoolBytes` option by term.ts. */
+export const DEFAULT_IMAGE_POOL_BYTES = 4194304;
+
 export interface BoundingBox {
   x: number;
   y: number;
@@ -45,6 +49,16 @@ export interface Native {
   ): void;
   output(ct: number): number;
   length(ct: number): number;
+  /** The graphics carve's base (Graphics Specification §5.1); the pool and
+   * registry live here. Exposed for surface-address math (PR: zero-copy
+   * canvas views). */
+  readonly gfxPtr: number;
+  /** Graphics substrate surface (native; the public surface lives on Term). */
+  imageBegin(ct: number, id: number, w: number, h: number): number;
+  imageCommit(ct: number, id: number): number;
+  imageRemove(ct: number, id: number): number;
+  graphicsCapability(ct: number, kitty: number): number;
+  graphicsResizePrepare(ct: number): number;
   setPointer(x: number, y: number, down: boolean): void;
   getPointerOverIds(): string[];
   getElementBounds(id: string): BoundingBox | undefined;
@@ -59,6 +73,7 @@ import { compiled } from "./wasm.ts";
 export async function createTermNative(
   w: number,
   h: number,
+  imagePoolBytes?: number,
 ): Promise<Native> {
   let memory = new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
@@ -91,7 +106,7 @@ export async function createTermNative(
   let ct = exports as unknown as {
     __heap_base: WebAssembly.Global;
     clayterm_size(w: number, h: number): number;
-    init(mem: number, w: number, h: number): number;
+    init(mem: number, w: number, h: number, gfx: number): number;
     reduce(
       ct: number,
       buf: number,
@@ -102,6 +117,13 @@ export async function createTermNative(
     ): void;
     output(ct: number): number;
     length(ct: number): number;
+    graphics_size(poolBytes: number): number;
+    graphics_init(mem: number, poolBytes: number): number;
+    image_begin(ct: number, id: number, w: number, h: number): number;
+    image_commit(ct: number, id: number): number;
+    image_remove(ct: number, id: number): number;
+    graphics_capability(ct: number, kitty: number): number;
+    graphics_resize_prepare(ct: number): number;
     Clay_SetPointerState(vec: number, down: number): void;
     pointer_over_count(): number;
     pointer_over_id_string_length(index: number): number;
@@ -122,22 +144,32 @@ export async function createTermNative(
 
   let statePtr!: number;
   let opsBuf = 0;
+  let gfxPtr = 0;
+  let gfxBytes = 0;
 
-  // Renderer state and the fixed transfer buffer share linear memory as
-  // [heap: state][opsBuf]; opsBuf moves when the state size changes. Memory is
-  // grown to fit but never reclaimed, so a downsize keeps the high-water mark
-  // (renderer-spec 7.7).
+  // Linear memory layout: [heap: gfx carve][clayterm carve][opsBuf].
+  // The gfx carve (Graphics Specification §5.1) is dimension-independent:
+  // allocated once and never re-initialized, so the image registry, pixel
+  // pool, and placements tables survive resize unchanged (§10.5). The
+  // clayterm carve and opsBuf move on resize exactly as before
+  // (renderer-spec 7.7): memory is grown to fit but never reclaimed.
   function layout(lw: number, lh: number): void {
     let heap = ct.__heap_base.value as number;
+    if (gfxPtr === 0) {
+      gfxBytes = ct.graphics_size(imagePoolBytes ?? DEFAULT_IMAGE_POOL_BYTES);
+      gfxPtr = heap;
+      ct.graphics_init(gfxPtr, imagePoolBytes ?? DEFAULT_IMAGE_POOL_BYTES);
+    }
     let size = ct.clayterm_size(lw, lh);
-    let needed = heap + size + transferBytes;
+    let clayBase = gfxPtr + gfxBytes;
+    let needed = clayBase + size + transferBytes;
     let pages = Math.ceil(needed / WASM_PAGE_BYTES);
     let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
     if (pages > current) {
       memory.grow(pages - current);
     }
-    statePtr = ct.init(heap, lw, lh);
-    opsBuf = (heap + size + 3) & ~3;
+    statePtr = ct.init(clayBase, lw, lh, gfxPtr);
+    opsBuf = (clayBase + size + 3) & ~3;
   }
   layout(w, h);
 
@@ -145,6 +177,9 @@ export async function createTermNative(
     memory,
     get statePtr() {
       return statePtr;
+    },
+    get gfxPtr() {
+      return gfxPtr;
     },
     get opsBuf() {
       return opsBuf;
@@ -155,6 +190,11 @@ export async function createTermNative(
     reduce: ct.reduce,
     output: ct.output,
     length: ct.length,
+    imageBegin: ct.image_begin,
+    imageCommit: ct.image_commit,
+    imageRemove: ct.image_remove,
+    graphicsCapability: ct.graphics_capability,
+    graphicsResizePrepare: ct.graphics_resize_prepare,
     animating: ct.animating,
     setPointer(x: number, y: number, down: boolean) {
       let view = new DataView(memory.buffer);

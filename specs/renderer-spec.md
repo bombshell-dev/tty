@@ -906,7 +906,8 @@ This encoding has been extended incrementally (floating, clip, and scroll groups
 were added after the initial protocol) but has never been restructured. It is
 likely to remain stable in structure while continuing to grow. However, specific
 opcode values, mask definitions, and field layouts are implementation details
-and are not locked down by this specification.
+and are not locked down by this specification. The image element added one more
+opcode on the same extension pattern (Graphics Specification §6.1).
 
 ### 12.2 Directive property groups
 
@@ -984,6 +985,9 @@ input or lets it pass through, `clipTo` controls inherited clipping, and
 The `text()` constructor accepts: `color`, `bg`, `fontSize`, `letterSpacing`,
 `lineHeight`, and attribute flags (`bold`, `italic`, `underline`,
 `strikethrough`).
+
+The `img()` constructor accepts `image` (a pixel-surface registry id), `alt`,
+`width`/`height` sizing axes, `variant`, and `bg` (Graphics Specification §6.1).
 
 These property groups represent the current implementation surface. New groups
 and fields have been added incrementally and more may follow.
@@ -1113,6 +1117,12 @@ the most recent `render()` call. Each error is a `ClayError` object with:
     single cell than the cell can store. The excess marks are truncated (see
     §13, Cell representation). Reported at most once per frame, on the first
     truncation. The `message` SHOULD identify the per-cell limit.
+  - `"IMAGE_NOT_FOUND"` — An `img` directive referenced a registry id that is
+    not live; the element rendered at the alt tier (Graphics Specification §13).
+  - `"IMAGE_PLACEMENTS_EXCEEDED"` — More kitty placements were required in one
+    frame than the placements record holds (Graphics Specification §5.4, §13).
+  - `"IMAGE_PLACEMENT_COLLISION"` — Two elements in one frame derived the same
+    placement id (Graphics Specification §9.2.1, §13).
 - `message`: a human-readable string describing the error in detail.
 
 Errors are collected per-render; each call to `render()` returns only the errors
