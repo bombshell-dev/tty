@@ -486,11 +486,13 @@ function createTerm(options: {
   width: number;
   height: number;
   terminfo?: TerminalInfo;
+  imagePoolBytes?: number;
 }): Promise<Term>;
 ```
 
-When `terminfo` is provided, the renderer initializes its private
-`RuntimeCapabilities` from `terminfo.capabilities` and `RuntimeCapabilities`
+The optional `imagePoolBytes` sizes the Term's carved image pixel pool
+([Graphics Specification](graphics-spec.md) §5.3; default 4 MiB).
+
 dynamic fields at their baseline values. When omitted, the renderer uses the
 §7.1 baseline for all fields.
 
