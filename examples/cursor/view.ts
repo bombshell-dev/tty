@@ -109,7 +109,7 @@ export function frame(ctx: Ctx): Op[] {
 
   ops.push(
     open("header", { layout: { height: fixed(1) } }),
-    text("cursor shapes — hover a tile", { color: heading }),
+    text("cursor shape - hover a tile", { color: heading }),
     close(),
   );
 
