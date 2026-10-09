@@ -170,16 +170,27 @@ export function frame(ctx: Ctx): Op[] {
         direction: "ltr",
       },
     }),
-    text(`${PKG} `, { color: heading }),
   );
-  // Brightness wave: the ▪ spacers breathe on a phase-offset sine, so a
-  // ripple of light travels the bar (~4s per square cycle, ~4s to cross it).
-  let fill = Math.max(0, BAR_W - PKG.length - DEMO.length - 2);
-  for (let i = 0; i < fill; i++) {
-    let wave = 0.5 + 0.5 * Math.sin(ctx.now / 650 - i * 0.19);
-    ops.push(text("▪", { color: shade(dim, 0.85 + wave * 0.65) }));
+  // Brightness wave across the whole bar: every non-space cell — brand
+  // text and ▪ spacers alike — shades on a phase-offset sine, one cycle
+  // across the bar, so a ripple of light travels it (~4s). Text cells get a
+  // dim-biased range (near-white can only dim; the peak is the static look).
+  let cells = `${PKG} ` +
+    "▪".repeat(Math.max(0, BAR_W - PKG.length - DEMO.length - 2)) +
+    ` ${DEMO}`;
+  for (let i = 0; i < cells.length; i++) {
+    let ch = cells[i];
+    if (ch === " ") {
+      ops.push(text(" ", { color: dim }));
+      continue;
+    }
+    let wave = 0.5 + 0.5 * Math.sin(ctx.now / 650 - i * (2 * Math.PI / BAR_W));
+    let color = ch === "▪"
+      ? shade(dim, 0.85 + wave * 0.65)
+      : shade(heading, 0.82 + wave * 0.18);
+    ops.push(text(ch, { color }));
   }
-  ops.push(text(` ${DEMO}`, { color: heading }), close());
+  ops.push(close());
 
   // Pack tiles into rows of COLS units; the toggle tile spans two.
   let rows: Tile[][] = [];
@@ -246,8 +257,14 @@ export function frame(ctx: Ctx): Op[] {
   );
 
   ops.push(
-    open("hint", { layout: { height: fixed(1) } }),
-    text("esc quits", { color: dim }),
+    open("hint", {
+      layout: {
+        width: fixed(BAR_W),
+        height: fixed(1),
+        padding: { top: 1 },
+      },
+    }),
+    text("[esc]", { color: dim }),
     close(),
   );
 
