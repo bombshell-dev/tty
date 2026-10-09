@@ -30,6 +30,10 @@ const dim = rgba(137, 142, 156);
 
 const TILE_W = 17;
 const COLS = 3;
+// Matches the 3×3 grid width so the status line's left edge is stable: the
+// hovered name changes length, and a fit-sized line would re-center and
+// jitter under the root's alignX.
+const STATUS_W = COLS * TILE_W + (COLS - 1);
 
 // Shapes confirmed working in set-supporting terminals (verified against
 // ghostty 1.3.1: it draws these and drops help/progress/wait/move/
@@ -122,9 +126,15 @@ export function frame(ctx: Ctx): Op[] {
   let status = hoveredTile ? `hover: ${hoveredTile.name}` : "hover: —";
   let statusColor = hoveredTile ? hoveredTile.hue : dim;
   ops.push(
-    open("status", { layout: { height: fixed(1), padding: { top: 1 } } }),
+    open("status", {
+      layout: {
+        width: fixed(STATUS_W),
+        height: fixed(1),
+        padding: { top: 1 },
+      },
+    }),
     text(
-      `${status} · pointer shapes: ${ctx.capsOn ? "on" : "off"} · ctrl+c quits`,
+      `${status} · pointer shapes: ${ctx.capsOn ? "on" : "off"} · esc quits`,
       { color: statusColor },
     ),
     close(),
