@@ -29,7 +29,6 @@ export interface RuntimeCapabilities extends Capabilities {
   readonly syncOutput: boolean;
   readonly kittyKeyboard: boolean;
   readonly kittyGraphics: boolean;
-  readonly pointerShape: boolean;
   readonly theme: {
     readonly foreground?: Rgb;
     readonly background?: Rgb;
@@ -94,7 +93,6 @@ function runtimeFromStatic(caps: Capabilities): RuntimeCapabilities {
     syncOutput: false,
     kittyKeyboard: false,
     kittyGraphics: false,
-    pointerShape: false,
     theme: Object.freeze({}),
   });
 }
@@ -185,6 +183,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       xenl: true,
       altScreen: true,
       styledUnderline: false,
+      pointerShape: false,
     },
   );
 

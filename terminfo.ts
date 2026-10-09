@@ -43,6 +43,7 @@ export interface Capabilities {
   readonly xenl: boolean;
   readonly altScreen: boolean;
   readonly styledUnderline: boolean;
+  readonly pointerShape: boolean;
 }
 
 /** Opaque type alias for the raw terminfo key-sequence bytes. */
@@ -90,6 +91,40 @@ const PROBE = encoder.encode(
 );
 
 const WASM_PAGE_BYTES = 65536;
+
+/**
+ * The known OSC 22 pointer-shape support table (terminfo-spec §6.1): terminals
+ * that implement OSC 22 pointer shape setting but never answer its support
+ * query, identified by environment evidence. Entries require primary evidence
+ * from the terminal's own documentation. Each entry records the version that
+ * introduced support; a stale entry degrades to the same silent swallowing the
+ * capability gate already produces, never to garbage.
+ */
+function knownPointerShape(
+  env: Record<string, string | undefined>,
+): boolean {
+  // ghostty: OSC 22 since 1.0.0 (ghostty.org/docs/vt/osc/22); set only —
+  // the reference documents no query form.
+  if (env.TERM === "xterm-ghostty" || env.TERM_PROGRAM === "ghostty") {
+    return true;
+  }
+  // kitty: full kitty pointer-shapes protocol since 0.31.0, including the
+  // query (sw.kovidgoyal.net/kitty/pointer-shapes/). Seeded here so
+  // term.capabilities is correct before the probe reply arrives.
+  if (env.TERM === "xterm-kitty" || env.KITTY_WINDOW_ID !== undefined) {
+    return true;
+  }
+  // foot: OSC 22 sets the xcursor pointer (foot-ctlseqs(7)); no query form.
+  if (env.TERM?.startsWith("foot")) {
+    return true;
+  }
+  // xterm: OSC 22 since patch 367 (ctlseqs); XTERM_VERSION is `xterm(N)`.
+  let patch = env.XTERM_VERSION?.match(/xterm\((\d+)\)/);
+  if (patch && Number(patch[1]) >= 367) {
+    return true;
+  }
+  return false;
+}
 
 function rgbOf(packed: number): Rgb {
   return {
@@ -179,6 +214,7 @@ export async function detectTerminal(
     xenl: !!(flags & FLAG_EAT_NEWLINE_GLITCH),
     altScreen: !!(flags & FLAG_ALTSCREEN),
     styledUnderline: !!(flags & FLAG_STYLED_UNDERLINE),
+    pointerShape: knownPointerShape(env),
   });
 
   return Object.freeze<TerminalInfo>({

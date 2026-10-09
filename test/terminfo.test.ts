@@ -23,7 +23,53 @@ const BASELINE = {
   xenl: true,
   altScreen: true,
   styledUnderline: false,
+  pointerShape: false,
 };
+
+describe("known OSC 22 pointer shape support (terminfo-spec §6.1)", () => {
+  it("grants for ghostty by TERM and by TERM_PROGRAM", async () => {
+    let byTerm = await detectTerminal({ env: { TERM: "xterm-ghostty" } });
+    expect(byTerm.capabilities.pointerShape).toBe(true);
+    let byProgram = await detectTerminal({ env: { TERM_PROGRAM: "ghostty" } });
+    expect(byProgram.capabilities.pointerShape).toBe(true);
+  });
+
+  it("grants for kitty by TERM and by KITTY_WINDOW_ID", async () => {
+    let byTerm = await detectTerminal({ env: { TERM: "xterm-kitty" } });
+    expect(byTerm.capabilities.pointerShape).toBe(true);
+    let byWindow = await detectTerminal({ env: { KITTY_WINDOW_ID: "1" } });
+    expect(byWindow.capabilities.pointerShape).toBe(true);
+  });
+
+  it("grants for foot by TERM prefix", async () => {
+    let d = await detectTerminal({ env: { TERM: "foot" } });
+    expect(d.capabilities.pointerShape).toBe(true);
+  });
+
+  it("grants for xterm at the version floor and above", async () => {
+    let old = await detectTerminal({ env: { XTERM_VERSION: "xterm(366)" } });
+    expect(old.capabilities.pointerShape).toBe(false);
+    let floor = await detectTerminal({ env: { XTERM_VERSION: "xterm(367)" } });
+    expect(floor.capabilities.pointerShape).toBe(true);
+    let newer = await detectTerminal({ env: { XTERM_VERSION: "xterm(388)" } });
+    expect(newer.capabilities.pointerShape).toBe(true);
+  });
+
+  it("does not grant for terminals that rewrite their identity", async () => {
+    for (
+      let TERM of [
+        "tmux-256color",
+        "screen-256color",
+        "xterm-256color",
+      ]
+    ) {
+      let d = await detectTerminal({ env: { TERM } });
+      expect(d.capabilities.pointerShape).toBe(false);
+    }
+    let vscode = await detectTerminal({ env: { TERM_PROGRAM: "vscode" } });
+    expect(vscode.capabilities.pointerShape).toBe(false);
+  });
+});
 
 describe("baseline", () => {
   it("initializes to the baseline with no evidence", async () => {

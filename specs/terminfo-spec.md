@@ -180,6 +180,7 @@ interface Capabilities {
   readonly xenl: boolean;
   readonly altScreen: boolean;
   readonly styledUnderline: boolean;
+  readonly pointerShape: boolean;
 }
 ```
 
@@ -192,10 +193,35 @@ interface Capabilities {
 | `xenl`            | `xenl` boolean cap                                                  |
 | `altScreen`       | `smcup` string present                                              |
 | `styledUnderline` | `Su` boolean or `Smulx` string                                      |
+| `pointerShape`    | known OSC 22 support table (below); probe overrides                 |
 
 Key sequences (`key_*` capabilities) are not stored here. The input parser reads
 them directly from the raw terminfo bytes in `TerminalInfo.keys` at
 initialization time.
+
+**Known OSC 22 support.** Some terminals implement OSC 22 pointer shape setting
+but never answer its support query (Renderer Specification §7.9); silence must
+not count as denial, so `detectTerminal()` seeds `pointerShape: true` when the
+environment identifies a terminal in this table. Entries require primary
+evidence from the terminal's own documentation or specification.
+
+| Terminal | Environment evidence                           | Version floor | Evidence                   |
+| -------- | ---------------------------------------------- | ------------- | -------------------------- |
+| ghostty  | `TERM=xterm-ghostty` or `TERM_PROGRAM=ghostty` | 1.0.0         | ghostty.org/docs/vt/osc/22 |
+| kitty    | `TERM=xterm-kitty` or `KITTY_WINDOW_ID` set    | 0.31.0        | kitty pointer-shapes spec  |
+| foot     | `TERM` starting with `foot`                    | 1.12.0        | foot-ctlseqs(7)            |
+| xterm    | `XTERM_VERSION` parses as patch ≥ 367          | 367           | xterm ctlseqs (OSC 22)     |
+
+The table names terminals by what they _emit_, not by what they parse: an
+implementation that accepts only a non-CSS vocabulary (e.g. Windows cursor
+names) MUST NOT be listed, since the renderer emits the kitty CSS names
+exclusively (§6.3). This is static evidence with known failure modes: nested
+contexts that inherit the environment unchanged (for example Emacs `term-mode`
+running inside a listed terminal) are granted by association and will garble
+OSC 22. Terminals that rewrite `TERM` (tmux, Zellij) or `TERM_PROGRAM` (IDE
+terminals) are naturally excluded; ssh forwards are true positives because the
+bytes still reach the real terminal. Stale entries degrade to the same silent
+swallowing the gate was built to avoid.
 
 ### 6.2 `ColorDepth`
 
@@ -287,7 +313,8 @@ not merge; each response yields its own event.
 name in the reply is discarded in v1; only protocol support is recorded. The
 renderer emits pointer shapes only while `pointerShape` is `true` (Renderer
 Specification §7.9). Terminals that implement OSC 22 set but not its query never
-reply; a caller with outside knowledge supplies the evidence itself with
+reply; `detectTerminal()` supplies that evidence itself from the known-support
+table (§6.1), and a caller may still override it with
 `term.update([{ type: "capability", key: "pointer-shape", value: true }])`.
 
 **DA1.** The DA1 reply is recognized internally as the probe fence and MUST NOT
@@ -300,7 +327,6 @@ interface RuntimeCapabilities extends Capabilities {
   readonly syncOutput: boolean;
   readonly kittyKeyboard: boolean;
   readonly kittyGraphics: boolean;
-  readonly pointerShape: boolean;
   readonly theme: {
     readonly foreground?: Rgb;
     readonly background?: Rgb;
@@ -310,7 +336,9 @@ interface RuntimeCapabilities extends Capabilities {
 ```
 
 `RuntimeCapabilities` is the renderer's current merged view: the static
-`Capabilities` fields plus all `CapabilityEvent` values folded in so far. The
+`Capabilities` fields (including `pointerShape`, which starts from the
+known-support table and is raised by a probe reply or a `pointer-shape`
+CapabilityEvent) plus all other `CapabilityEvent` values folded in so far. The
 `trueColor` field reflects the latest evidence at any precedence level; a
 `colordepth` probe event overrides the static value. `RuntimeCapabilities` is
 exposed as `term.capabilities` and is a frozen snapshot at the moment of access.
@@ -335,6 +363,7 @@ With no terminfo bytes, no environment evidence, and no probe responses,
 | `xenl`            | `true`  |
 | `altScreen`       | `true`  |
 | `styledUnderline` | `false` |
+| `pointerShape`    | `false` |
 
 Truecolor is not assumed at baseline. Per TINV-3, it requires positive evidence.
 
