@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-control-regex
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
+import type { InputEvent } from "../input.ts";
 import {
   close,
   fixed,
@@ -12,6 +13,7 @@ import {
   text,
 } from "../ops.ts";
 import { print } from "./print.ts";
+import { trueColorDetect } from "./caps.ts";
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const trim = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n");
@@ -53,8 +55,8 @@ describe("term", () => {
       ]).output,
     );
 
-    // the SGR active when "h" is emitted should include the
-    // parent's red background (48;2;255;0;0), not terminal default
+    // The SGR active when "h" is emitted should include the parent's red
+    // background, not the terminal default.
     let before = ansi.slice(0, ansi.indexOf("h"));
     expect(before).toContain("\x1b[48;2;255;0;0");
   });
@@ -737,6 +739,22 @@ hi
     });
   });
 
+  describe("capabilities", () => {
+    it("starts from the 256-color baseline without terminfo", () => {
+      expect(term.capabilities.colors).toBe(256);
+      expect(term.capabilities.trueColor).toBe(false);
+    });
+
+    it("seeds static capabilities from terminfo", async () => {
+      let terminfo = await trueColorDetect();
+      let seeded = await createTerm({ width: 40, height: 10, terminfo });
+      expect(seeded.capabilities.trueColor).toBe(true);
+      for (let [key, value] of Object.entries(terminfo.capabilities)) {
+        expect(seeded.capabilities).toHaveProperty(key, value);
+      }
+    });
+  });
+
   describe("update", () => {
     let frame: Op[] = [
       open("root", {
@@ -749,7 +767,7 @@ hi
     it("emits a complete redraw on the first render after update", () => {
       term.render(frame);
       expect(term.render(frame).output.length).toBe(0);
-      term.update({ width: 20, height: 5 });
+      term.update([{ type: "resize", width: 20, height: 5 }]);
       let out = decode(term.render(frame).output);
       expect(trim(print(out, 20, 5))).toContain("Hi");
       expect(out.length).toBeGreaterThan(0);
@@ -757,27 +775,27 @@ hi
 
     it("is a no-op when dimensions are unchanged", () => {
       term.render(frame);
-      term.update({ width: 40, height: 10 });
+      term.update([{ type: "resize", width: 40, height: 10 }]);
       expect(term.render(frame).output.length).toBe(0);
     });
 
     it("throws on non-positive or non-integer dimensions", () => {
-      expect(() => term.update({ width: 0, height: 10 })).toThrow(RangeError);
-      expect(() => term.update({ width: 40, height: -1 })).toThrow(RangeError);
-      expect(() => term.update({ width: 40.5, height: 10 })).toThrow(
-        RangeError,
-      );
+      expect(() => term.update([{ type: "resize", width: 0, height: 10 }]))
+        .toThrow(RangeError);
+      expect(() => term.update([{ type: "resize", width: 40, height: -1 }]))
+        .toThrow(RangeError);
+      expect(() => term.update([{ type: "resize", width: 40.5, height: 10 }]))
+        .toThrow(
+          RangeError,
+        );
     });
 
-    it("accepts an event array, last resize wins, non-resize ignored", () => {
-      term.update({
-        events: [
-          { type: "key" },
-          { type: "resize", width: 30, height: 8 },
-          { type: "paste" },
-          { type: "resize", width: 12, height: 4 },
-        ],
-      });
+    it("accepts an update array, last resize wins, non-resize updates applied", () => {
+      term.update([
+        { type: "resize", width: 30, height: 8 },
+        { type: "capability", key: "sync-output", value: false },
+        { type: "resize", width: 12, height: 4 },
+      ]);
       let result = term.render(frame);
       expect(result.info.get("root")?.bounds).toEqual({
         x: 0,
@@ -787,11 +805,30 @@ hi
       });
     });
 
-    it("treats an event array with no resize events as a no-op", () => {
+    it("treats an update array with no resize as a no-op for layout", () => {
       term.render(frame);
-      term.update({ events: [{ type: "key" }, { type: "paste" }] });
+      term.update([{ type: "capability", key: "sync-output", value: false }]);
       expect(term.render(frame).output.length).toBe(0);
-      term.update({ events: [] });
+      term.update([]);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it('resizes only on events tagged type: "resize"', () => {
+      term.render(frame);
+      let untagged = { width: 12, height: 4 } as unknown as InputEvent;
+      term.update([untagged]);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it("ignores input events that are neither resize nor capability", () => {
+      term.render(frame);
+      let before = term.capabilities;
+      let out = term.update([
+        { type: "keydown", key: "a", code: "a", text: "a" },
+        { type: "mousemove", button: "left", x: 1, y: 1 },
+      ]);
+      expect(out).toEqual(new Uint8Array(0));
+      expect(term.capabilities).toEqual(before);
       expect(term.render(frame).output.length).toBe(0);
     });
 
@@ -800,14 +837,14 @@ hi
       let first = term.render(frame, { pointer });
       expect(first.events).toContainEqual({ type: "pointerenter", id: "root" });
       expect(term.render(frame, { pointer }).events).toEqual([]);
-      term.update({ width: 20, height: 5 });
+      term.update([{ type: "resize", width: 20, height: 5 }]);
       let after = term.render(frame, { pointer });
       expect(after.events).toContainEqual({ type: "pointerenter", id: "root" });
     });
 
     it("resizes in place and lays out at the new dimensions", () => {
       term.render(frame);
-      term.update({ width: 12, height: 4 });
+      term.update([{ type: "resize", width: 12, height: 4 }]);
       let result = term.render(frame);
       expect(result.info.get("root")?.bounds).toEqual({
         x: 0,
@@ -829,7 +866,7 @@ hi
 
     it("survives downsize then upsize past the original size", () => {
       term.render(frame);
-      term.update({ width: 10, height: 3 });
+      term.update([{ type: "resize", width: 10, height: 3 }]);
       let small = term.render(frame);
       expect(small.info.get("root")?.bounds).toEqual({
         x: 0,
@@ -837,7 +874,7 @@ hi
         width: 10,
         height: 3,
       });
-      term.update({ width: 120, height: 40 });
+      term.update([{ type: "resize", width: 120, height: 40 }]);
       let large = term.render(frame);
       expect(large.info.get("root")?.bounds).toEqual({
         x: 0,

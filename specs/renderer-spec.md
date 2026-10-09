@@ -418,22 +418,22 @@ The update transaction changes a Term instance's dimensions or capability state
 in place. Like the render transaction (§7.2), it is synchronous: it MUST NOT
 yield, suspend, or require callbacks during execution.
 
-**Inputs.** The update transaction accepts one `Update` or an ordered array of
-`Update` values. `Update` is a discriminated union:
+**Inputs.** The update transaction accepts an ordered array of `InputEvent`
+values (see [Input Specification](input-spec.md) §5), discriminated by `type`:
 
-- `{ width: number; height: number }` — a resize to the given character-cell
-  dimensions. Both MUST be positive integers; the transaction MUST throw
-  otherwise.
+- A `ResizeEvent` (`{ type: "resize"; width: number; height: number }`) — a
+  resize to the given character-cell dimensions. Both MUST be positive integers;
+  the transaction MUST throw otherwise.
 - A `CapabilityEvent` (see [Terminfo Specification](terminfo-spec.md) §6.3) — a
   capability value delivered by the input parser from a probe response.
-- Any other `InputEvent` (see [Input Specification](input-spec.md) §5) — a no-op
-  step. It changes no state and contributes no bytes.
+- Any other `InputEvent` — a no-op step. It changes no state and contributes no
+  bytes.
 
-When a batch is provided, the Term folds each `Update` in order. The returned
-bytes are the concatenation of each fold's output.
+The Term folds each event in array order. The returned bytes are the
+concatenation of each fold's output. An empty array is a no-op.
 
-A resize `Update` whose target dimensions equal the Term's current dimensions
-MUST be a no-op for that step.
+A resize event whose target dimensions equal the Term's current dimensions MUST
+be a no-op for that step.
 
 **Resize semantics.** A non-no-op resize step:
 
@@ -672,39 +672,34 @@ wherever the directive model expects a color.
 ### 8.6 Term update
 
 ```
-term.update(change: Update | readonly Update[]): Uint8Array
-
-type Update =
-  | { width: number; height: number }
-  | InputEvent
+term.update(events: readonly InputEvent[]): Uint8Array
 ```
 
 Performs an update transaction as defined in §7.7. `update()` is the universal
 sink for both resize and capability change.
 
-**`Update` shapes.** A resize step is `{ width, height }`. A capability step is
-any `CapabilityEvent` value (see [Terminfo Specification](terminfo-spec.md)
-§6.3). The two shapes are structurally distinct and MUST NOT be combined in a
-single object. Every other `InputEvent` is accepted and ignored, so the full
-`events` array from `input.scan()` can be passed without filtering. Pass an
-array to apply multiple updates in one call; they are folded in order.
+**Events.** A resize step is a `ResizeEvent`
+(`{ type: "resize", width, height }`). A capability step is any
+`CapabilityEvent` value (see [Terminfo Specification](terminfo-spec.md) §6.3).
+Every other `InputEvent` is accepted and ignored, so the full `events` array
+from `input.scan()` can be passed without filtering. Events are folded in array
+order.
 
 **Return value.** `update()` always returns a `Uint8Array`. Write it to the
 terminal immediately when non-empty. Do not wait for the next `render()`. An
 empty array means the update changed no rendered state.
 
-**Resize shape.** The `{ width, height }` shape is defined structurally by this
-specification. It is intentionally assignable from the input specification's
-`ResizeEvent`, so events from `input.scan()` pass through directly:
+**Host usage.** Events from `input.scan()` pass through directly. Resizes
+observed outside the input stream (e.g. `SIGWINCH`) are passed as a constructed
+`ResizeEvent`:
 
 ```
 const { events } = input.scan(bytes);
-for (const event of events) {
-  if (event.type === "resize" || event.type === "capability") {
-    const out = term.update(event);
-    if (out.length) stdout.write(out);
-  }
-}
+const out = term.update(events);
+if (out.length) stdout.write(out);
+
+// on SIGWINCH
+term.update([{ type: "resize", width: cols(), height: rows() }]);
 ```
 
 A resize to the Term's current dimensions is a no-op for that step.
@@ -1143,6 +1138,14 @@ generated module and instantiated per Term or Input with fresh memory.
 **Memory layout.** WASM linear memory is initialized with 256 pages (16MB). The
 renderer state struct and the transfer buffer are allocated in WASM linear
 memory. The specific layout is an implementation detail.
+
+**Capability state.** `RuntimeCapabilities` is currently held in TypeScript and
+folded by `update()`; the WASM renderer state carries no capability fields
+because no renderer output depends on them yet (§7.8). When a
+capability-consuming feature lands, the authoritative state is expected to move
+into WASM linear memory alongside the renderer state, so that `render()` reads
+it without per-frame transfer; `term.capabilities` remains a frozen snapshot
+decoded on access.
 
 **Layout engine.** The underlying layout engine is Clay, included as a
 dependency. Clay provides flexbox-like layout computation with support for
