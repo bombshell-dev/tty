@@ -47,8 +47,9 @@ What it shows:
   border-only rounded tiles in Bombshell brand hues, declaring their
   `pointerShape` (renderer-spec §7.9); hovering a tile shows that exact cursor
   in terminals that support OSC 22
-- the grab tile is double-wide: holding the pointer down on it shows grabbing,
-  releasing returns to grab (cursor and label), staying orange throughout
+- the grab tile is double-wide: holding the pointer down shows grabbing anywhere
+  on screen while held — a capture-mode drag shield (userland drag persistence,
+  matching CSS drag behavior); releasing returns to grab
 - hover feedback lights the tile's ring and name, so the hover state reads even
   in terminals without OSC 22
 - a muted status line whose hover label takes the hovered tile's hue, with a

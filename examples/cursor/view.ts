@@ -6,8 +6,10 @@
  * border-only rounded boxes — no painted fills — with the Bombshell brand
  * hues from bomb.sh. Hovering lights the tile's ring and name in its hue,
  * so the hover state reads even in terminals without OSC 22. The grab tile
- * is double-wide and shows grabbing while the pointer is held down on it,
- * returning to grab on release, staying orange throughout.
+ * is double-wide and shows grabbing while the pointer is held down on it —
+ * a capture-mode drag shield keeps the grabbing cursor anywhere on screen
+ * until release, matching CSS drag behavior — returning to grab on release,
+ * staying orange throughout.
  */
 
 import { close, fixed, grow, type Op, open, rgba, text } from "../../mod.ts";
@@ -61,6 +63,38 @@ const TILES = [
 ] as const;
 
 type Tile = (typeof TILES)[number];
+
+/**
+ * A capture-mode floating overlay that declares `grabbing` across the
+ * viewport — the userland drag-persistence pattern. While held, the shield
+ * wins the hit test everywhere (tiles beneath stop being hovered, like CSS
+ * freezing :hover during a drag), so the grabbing cursor persists anywhere
+ * until the button is released. No spec support needed.
+ */
+export function withDragShield(
+  ops: Op[],
+  cols: number,
+  rows: number,
+  held: boolean,
+): Op[] {
+  if (!held) return ops;
+  let out = ops.slice();
+  out.splice(
+    -1,
+    0,
+    open("drag-shield", {
+      layout: { width: fixed(cols), height: fixed(rows) },
+      floating: {
+        attachTo: "root",
+        attachPoints: { element: "left-top", parent: "left-top" },
+        pointerCaptureMode: "capture",
+      },
+      pointerShape: "grabbing",
+    }),
+    close(),
+  );
+  return out;
+}
 
 function tile(ops: Op[], t: Tile, ctx: Ctx): void {
   let id = `shape:${t.shape}`;
@@ -142,14 +176,18 @@ export function frame(ctx: Ctx): Op[] {
   // Status: a muted bar whose hover label takes the hovered tile's hue, with
   // a grow spacer pinning the feature indicator to the right edge so both
   // ends stay put as the hovered name changes length.
-  let hoveredTile = TILES.find((t) => ctx.entered.has(`shape:${t.shape}`));
   let hoveredShape: string | undefined;
   let hoveredHue = dim;
-  if (hoveredTile) {
-    hoveredShape = "toggle" in hoveredTile && ctx.grabbing
-      ? hoveredTile.toggle
-      : hoveredTile.shape;
-    hoveredHue = hoveredTile.hue;
+  if (ctx.grabbing) {
+    // While held, the drag shield is the hovered element.
+    hoveredShape = "grabbing";
+    hoveredHue = BRAND.orange;
+  } else {
+    let hoveredTile = TILES.find((t) => ctx.entered.has(`shape:${t.shape}`));
+    if (hoveredTile) {
+      hoveredShape = hoveredTile.shape;
+      hoveredHue = hoveredTile.hue;
+    }
   }
   let indicator = ctx.capsOn ? "●" : "■";
   let indicatorColor = ctx.capsOn ? BRAND.green : BRAND.red;
