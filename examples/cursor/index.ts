@@ -8,6 +8,8 @@
  * - Tiles are border-only rounded boxes in Bombshell brand hues (from
  *   bomb.sh); hovering lights the tile's ring and name, so the hover state
  *   reads even in terminals without OSC 22.
+ * - The grab tile is double-wide: clicking toggles it between grab and
+ *   grabbing (cursor and label), staying orange.
  * - Curated to the 9 shapes confirmed working in ghostty 1.3.1; ghostty
  *   drops help, progress, wait, move, zoom-in, zoom-out, and none.
  *
@@ -64,7 +66,12 @@ await main(function* () {
 
   let entered = new Set<string>();
   let pointer = undefined as Ctx["pointer"];
-  let ctx: Ctx = { entered, pointer, capsOn: term.capabilities.pointerShape };
+  let ctx: Ctx = {
+    entered,
+    pointer,
+    capsOn: term.capabilities.pointerShape,
+    grabbing: false,
+  };
 
   let pointerEvents = createChannel<PointerEvent, void>();
 
@@ -73,7 +80,12 @@ await main(function* () {
     // default and emits the OSC 22 reset if a shape was showing (§7.9).
     writeStdout(
       term.render(
-        frame({ entered: new Set(), pointer: undefined, capsOn: false }),
+        frame({
+          entered: new Set(),
+          pointer: undefined,
+          capsOn: false,
+          grabbing: false,
+        }),
       ).output,
     );
     setRawMode(false);
@@ -98,6 +110,9 @@ await main(function* () {
     }
     if (event.type === "pointerleave") {
       ctx.entered.delete(event.id);
+    }
+    if (event.type === "pointerclick" && event.id === "shape:grab") {
+      ctx.grabbing = !ctx.grabbing;
     }
     if ("x" in event) {
       ctx.pointer = {

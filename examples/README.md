@@ -43,14 +43,16 @@ node examples/cursor/index.ts
 
 What it shows:
 
-- a catalog of 9 pointer shapes — the subset confirmed working in ghostty — one
-  border-only rounded tile per shape declaring its `pointerShape` (renderer-spec
-  §7.9); hovering a tile shows that exact cursor in terminals that support OSC
-  22
-- tiles in Bombshell brand hues (from bomb.sh); hovering lights the tile's ring
-  and name, so the hover state reads even in terminals without OSC 22
-- a status line showing the hovered shape and whether pointer shapes are
-  currently on (probe reply or known-support table)
+- a catalog of 9 pointer shapes — the subset confirmed working in ghostty — as
+  border-only rounded tiles in Bombshell brand hues, declaring their
+  `pointerShape` (renderer-spec §7.9); hovering a tile shows that exact cursor
+  in terminals that support OSC 22
+- the grab tile is double-wide: clicking toggles it between grab and grabbing
+  (cursor and label), staying orange
+- hover feedback lights the tile's ring and name, so the hover state reads even
+  in terminals without OSC 22
+- a muted status line whose hover label takes the hovered tile's hue, with a
+  feature indicator (green ● supported, red ■ not) pinned to the right edge
 - a final frame on exit that restores the default pointer (§7.9 restore)
 
 ## Keyboard
