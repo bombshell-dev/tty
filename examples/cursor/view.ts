@@ -10,18 +10,18 @@
 
 import { close, fixed, grow, type Op, open, rgba, text } from "../../mod.ts";
 
-// Brand hues from bomb.sh: --c-pink, --c-cyan, --c-green, --c-yellow,
+// Brand hues from bomb.sh's CSS: --c-pink, --c-cyan, --c-green, --c-yellow,
 // --c-purple, --c-orange, --c-blue, --c-red.
-const BRAND = [
-  rgba(255, 53, 206),
-  rgba(0, 227, 245),
-  rgba(0, 239, 89),
-  rgba(255, 226, 33),
-  rgba(135, 26, 255),
-  rgba(255, 145, 42),
-  rgba(0, 87, 246),
-  rgba(255, 64, 75),
-];
+const BRAND = {
+  pink: rgba(255, 53, 206),
+  cyan: rgba(0, 227, 245),
+  green: rgba(0, 239, 89),
+  yellow: rgba(255, 226, 33),
+  purple: rgba(135, 26, 255),
+  orange: rgba(255, 145, 42),
+  blue: rgba(0, 87, 246),
+  red: rgba(255, 64, 75),
+};
 // Brand grays: --c-gray-60, --c-gray-20, --c-gray-30, --c-gray-50.
 const borderIdle = rgba(108, 110, 122);
 const heading = rgba(244, 245, 249);
@@ -57,7 +57,23 @@ export interface Ctx {
   capsOn: boolean;
 }
 
-const TILES = SHAPES.map((name, i) => ({ name, hue: BRAND[i % BRAND.length] }));
+// Per-shape hues: the grab family reads as a set (open hand orange, closed
+// hand yellow, forbidden red), the resizers pair in pink, and the first row
+// keeps its brand-cycle colors. The Record over SHAPES makes a missing
+// shape a type error.
+const HUES: Record<(typeof SHAPES)[number], number> = {
+  default: BRAND.pink,
+  pointer: BRAND.cyan,
+  text: BRAND.green,
+  crosshair: BRAND.yellow,
+  grab: BRAND.orange,
+  grabbing: BRAND.yellow,
+  "not-allowed": BRAND.red,
+  "ew-resize": BRAND.pink,
+  "ns-resize": BRAND.pink,
+};
+
+const TILES = SHAPES.map((name) => ({ name, hue: HUES[name] }));
 
 function tile(ops: Op[], t: (typeof TILES)[number], ctx: Ctx): void {
   let hovered = ctx.entered.has(`shape:${t.name}`);
