@@ -107,6 +107,11 @@ export function button(
       // below the button) when focus changes. Focus/hover feedback is instant
       // instead, which is crisp and correct. Revisit once transitions support
       // color-only animation without the position-interaction coupling.
+      // OSC 22 pointer shape: clickable buttons show the hand; a disabled
+      // button shows not-allowed, mirroring CSS `cursor` conventions. Only
+      // emitted when the terminal confirmed OSC 22 support (renderer-spec
+      // §7.9); otherwise this property is ignored.
+      pointerShape: state.disabled ? "not-allowed" : "pointer",
     }),
     text(label, { color: fg }),
     close(),

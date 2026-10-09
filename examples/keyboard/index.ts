@@ -14,6 +14,7 @@ import {
 import {
   close,
   createTerm,
+  detectTerminal,
   fixed,
   grow,
   type InputEvent,
@@ -73,15 +74,25 @@ const logEntries: { key: string; name: keyof EventFilter }[] = [
 await main(function* () {
   let { columns, rows } = terminalSize();
 
+  let info = yield* until(detectTerminal());
+
   setRawMode(true);
 
   let stdin = yield* useStdin();
-  let input = useInput(stdin);
+  let input = useInput(stdin, { terminfo: info });
 
-  let term = yield* until(createTerm({ width: columns, height: rows }));
+  let term = yield* until(
+    createTerm({ width: columns, height: rows, terminfo: info }),
+  );
 
   let tty = settings(alternateBuffer(), cursor(false));
   writeStdout(tty.apply);
+
+  // Ask the terminal about itself (OSC color queries, XTGETTCAP, DECRPM, DA1).
+  // Responses arrive on the input stream as CapabilityEvents and are routed to
+  // term.update() in the loop below, which is what switches on features like
+  // pointer shapes (renderer-spec §7.9) once the terminal confirms support.
+  writeStdout(info.probe);
 
   let modality = recognizer();
   let context = modality.next().value;
@@ -107,6 +118,9 @@ await main(function* () {
   for (let event of yield* each(merge(input, pointer.events))) {
     if (event.type === "keydown" && event.ctrl && event.key === "c") {
       break;
+    }
+    if (event.type === "capability") {
+      writeStdout(term.update([event]));
     }
     if (event.type === "pointerenter") {
       context.entered.add(event.id);
@@ -232,6 +246,7 @@ function key(ops: Op[], k: KeyDef, ctx: AppContext): void {
       border: hover
         ? { color: highlight, left: 1, right: 1, top: 1, bottom: 1 }
         : undefined,
+      pointerShape: "pointer",
     }),
     text(k.label, { color: hover ? highlight : label }),
     close(),
