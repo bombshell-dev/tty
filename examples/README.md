@@ -59,7 +59,8 @@ state. Clay drives the hit testing; no manual coordinate math required.
 
 ## Transitions
 
-Paths: `examples/transitions/sidebar.ts` and `examples/transitions/notecards.ts`
+Paths: `examples/transitions/sidebar.ts`, `examples/transitions/notecards.ts`,
+and `examples/transitions/subcell.ts`
 
 Run them with:
 
@@ -67,6 +68,8 @@ Run them with:
 deno run examples/transitions/sidebar.ts
 # or
 deno run examples/transitions/notecards.ts
+# or
+deno run examples/transitions/subcell.ts
 ```
 
 What they show:
