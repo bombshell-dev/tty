@@ -753,23 +753,16 @@ static void decode_img_element(struct Clayterm *ct, uint32_t *buf, int len,
     }
   }
   if (o.bg_flag != 0) {
+    /* cells cannot be transparent: the declared bg's RGB paints, alpha is
+     * dropped at the cell (the value space is open({bg})'s rgba()) */
     decl.backgroundColor = unpack_color(o.bg);
+    decl.backgroundColor.a = 255;
   }
   if (tier == IMG_TIER_ALT) {
     /* the box clips its own alt-text child at the box height (§9.4) */
     decl.clip.vertical = 1;
   } else {
     decl.custom.customData = (void *)&buf[op_start];
-    if (ct->error_count < MAX_ERRORS) {
-      static const char pm[] = "decode-custom";
-      ct->errors[ct->error_count++] = (Clay_ErrorData){
-          .errorType = CLAYTERM_ERR_IMAGE_PLACEMENT_COLLISION,
-          .errorText = {.isStaticallyAllocated = true,
-                        .length = (int32_t)(sizeof(pm) - 1),
-                        .chars = pm},
-          .userData = ct,
-      };
-    }
   }
   Clay__ConfigureOpenElement(decl);
 
