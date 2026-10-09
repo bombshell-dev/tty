@@ -25,16 +25,32 @@ const CLAY_DEFAULT_MAX_ELEMENT_COUNT = 8192;
 // and snapshot payload bytes live in TEXT_TRANSFER_BUFFER_BYTES.
 const MAX_FIXED_ELEMENT_WIRE_BYTES = 116;
 
+/** Color capability evidence the renderer consumes for emission
+ * (color-encoding-spec §4.2). */
+export interface ColorCaps {
+  colors: number;
+  trueColor: boolean;
+}
+
 export interface Native {
   memory: WebAssembly.Memory;
   statePtr: number;
   opsBuf: number;
+  /** The color capability evidence currently held by the renderer. */
+  readonly caps: ColorCaps;
   /**
    * Re-initialize renderer state for new dimensions in place
    * (renderer-spec 7.7). Reuses this instance and memory; statePtr and
    * opsBuf may change. Growing memory detaches prior buffer views.
    */
   update(w: number, h: number): void;
+  /**
+   * Push color capability evidence into the renderer. Called by the
+   * host after update() folds capability events that change either
+   * value (color-encoding-spec §4.2); re-pushed internally after any
+   * re-init so the values survive resize updates.
+   */
+  setCapabilities(colors: number, trueColor: boolean): void;
   reduce(
     ct: number,
     buf: number,
@@ -59,6 +75,7 @@ import { compiled } from "./wasm.ts";
 export async function createTermNative(
   w: number,
   h: number,
+  caps: ColorCaps,
 ): Promise<Native> {
   let memory = new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
@@ -102,6 +119,7 @@ export async function createTermNative(
     ): void;
     output(ct: number): number;
     length(ct: number): number;
+    set_capabilities(ct: number, colors: number, truecolor: number): void;
     Clay_SetPointerState(vec: number, down: number): void;
     pointer_over_count(): number;
     pointer_over_id_string_length(index: number): number;
@@ -123,6 +141,19 @@ export async function createTermNative(
   let statePtr!: number;
   let opsBuf = 0;
 
+  // Current color capability evidence. init() zeroes instance state, so
+  // the values are re-pushed after every (re)init — this is what makes
+  // the evidence survive resize updates (color-encoding-spec §4.2).
+  let currentCaps: ColorCaps = caps;
+
+  function pushCaps(): void {
+    ct.set_capabilities(
+      statePtr,
+      currentCaps.colors,
+      currentCaps.trueColor ? 1 : 0,
+    );
+  }
+
   // Renderer state and the fixed transfer buffer share linear memory as
   // [heap: state][opsBuf]; opsBuf moves when the state size changes. Memory is
   // grown to fit but never reclaimed, so a downsize keeps the high-water mark
@@ -138,6 +169,7 @@ export async function createTermNative(
     }
     statePtr = ct.init(heap, lw, lh);
     opsBuf = (heap + size + 3) & ~3;
+    pushCaps();
   }
   layout(w, h);
 
@@ -149,8 +181,15 @@ export async function createTermNative(
     get opsBuf() {
       return opsBuf;
     },
+    get caps(): ColorCaps {
+      return currentCaps;
+    },
     update(uw: number, uh: number): void {
       layout(uw, uh);
+    },
+    setCapabilities(colors: number, trueColor: boolean): void {
+      currentCaps = { colors, trueColor };
+      pushCaps();
     },
     reduce: ct.reduce,
     output: ct.output,

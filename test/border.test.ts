@@ -8,6 +8,7 @@ import {
   text,
 } from "../ops.ts";
 import { createTerm } from "../term.ts";
+import { TRUECOLOR_INFO } from "./caps.ts";
 import { describe, expect, it } from "./suite.ts";
 import { print } from "./print.ts";
 
@@ -116,7 +117,11 @@ type OpenProps = Omit<OpenElement, "directive" | "id">;
  * mode and parses the full-frame output into cells. Box corners are at
  * (0,0), (7,0), (0,3), (7,3). */
 async function renderBox(props: OpenProps): Promise<ParsedCell[]> {
-  let term = await createTerm({ width: 12, height: 5 });
+  let term = await createTerm({
+    width: 12,
+    height: 5,
+    terminfo: TRUECOLOR_INFO,
+  });
   let ansi = decode(
     term.render([
       open("box", {
@@ -265,7 +270,11 @@ describe("structured sides", () => {
   });
 
   it("does not retain a prior frame's side bg", async () => {
-    let term = await createTerm({ width: 12, height: 5 });
+    let term = await createTerm({
+      width: 12,
+      height: 5,
+      terminfo: TRUECOLOR_INFO,
+    });
     let frame = (bg?: number) => [
       open("box", {
         layout: { width: fixed(8), height: fixed(4) },
@@ -451,8 +460,16 @@ describe("directive model", () => {
 
 describe("instances", () => {
   it("does not share side attributes between Term instances", async () => {
-    let a = await createTerm({ width: 12, height: 5 });
-    let b = await createTerm({ width: 12, height: 5 });
+    let a = await createTerm({
+      width: 12,
+      height: 5,
+      terminfo: TRUECOLOR_INFO,
+    });
+    let b = await createTerm({
+      width: 12,
+      height: 5,
+      terminfo: TRUECOLOR_INFO,
+    });
 
     let frame = (top: number, bottom: number) => [
       open("box", {
@@ -491,7 +508,11 @@ const trim = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n");
 
 describe("box model", () => {
   it("full border with no padding reserves space: children visible, box is 3 rows", async () => {
-    let term = await createTerm({ width: 20, height: 10 });
+    let term = await createTerm({
+      width: 20,
+      height: 10,
+      terminfo: TRUECOLOR_INFO,
+    });
     let result = term.render([
       open("root", {
         layout: { width: grow(), height: grow(), direction: "ttb" },
@@ -510,7 +531,11 @@ describe("box model", () => {
   });
 
   it("partial borders (top+left) reserve only their sides", async () => {
-    let term = await createTerm({ width: 20, height: 10 });
+    let term = await createTerm({
+      width: 20,
+      height: 10,
+      terminfo: TRUECOLOR_INFO,
+    });
     let result = term.render([
       open("root", {
         layout: { width: grow(), height: grow(), direction: "ttb" },
@@ -530,7 +555,11 @@ describe("box model", () => {
   });
 
   it("padding is additive: border=1 alone gives height 3; border=1 plus padding=1 gives height 5", async () => {
-    let nopad = await createTerm({ width: 20, height: 10 });
+    let nopad = await createTerm({
+      width: 20,
+      height: 10,
+      terminfo: TRUECOLOR_INFO,
+    });
     let r1 = nopad.render([
       open("root", {
         layout: { width: grow(), height: grow(), direction: "ttb" },
@@ -544,7 +573,11 @@ describe("box model", () => {
       close(),
     ]);
 
-    let withpad = await createTerm({ width: 20, height: 10 });
+    let withpad = await createTerm({
+      width: 20,
+      height: 10,
+      terminfo: TRUECOLOR_INFO,
+    });
     let r2 = withpad.render([
       open("root", {
         layout: { width: grow(), height: grow(), direction: "ttb" },
@@ -569,7 +602,11 @@ describe("box model", () => {
   });
 
   it("explicit padding > border width adds breathing room inside the border", async () => {
-    let term = await createTerm({ width: 20, height: 10 });
+    let term = await createTerm({
+      width: 20,
+      height: 10,
+      terminfo: TRUECOLOR_INFO,
+    });
     let result = term.render([
       open("root", {
         layout: { width: grow(), height: grow(), direction: "ttb" },
@@ -593,7 +630,11 @@ describe("box model", () => {
   });
 
   it("nested two-tone bevel lays out without manual padding compensation", async () => {
-    let term = await createTerm({ width: 20, height: 10 });
+    let term = await createTerm({
+      width: 20,
+      height: 10,
+      terminfo: TRUECOLOR_INFO,
+    });
     let result = term.render([
       open("root", {
         layout: { width: grow(), height: grow(), direction: "ttb" },
@@ -619,7 +660,11 @@ describe("box model", () => {
   });
 
   it("visual: full border renders border glyphs around content", async () => {
-    let term = await createTerm({ width: 20, height: 10 });
+    let term = await createTerm({
+      width: 20,
+      height: 10,
+      terminfo: TRUECOLOR_INFO,
+    });
     let out = trim(
       print(
         decode(

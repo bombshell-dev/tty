@@ -70,6 +70,15 @@ struct Clayterm {
   Buffer out;
   uint32_t lastfg, lastbg;
   int lastx, lasty;
+  /* Color capability evidence pushed by the host (color-encoding-spec
+   * §4.2). Authoritative for emission; the host re-pushes after any
+   * re-init, so the values survive resize updates. */
+  uint32_t colors; /* max_colors evidence; §7.1 baseline is 256 */
+  int truecolor;   /* positive truecolor evidence */
+  /* Emission tier, resolved once per reduce. last_tier detects tier
+   * changes, which force a complete redraw (color-encoding-spec CI-5). */
+  int tier;
+  int last_tier;
   /* clip region (active top mirrored here so setcell stays unchanged) */
   int clipx, clipy, clipw, cliph;
   int clipping;
@@ -179,7 +188,168 @@ static void append_combining(struct Clayterm *ct, int x, int y, uint32_t cp) {
   report_combining_exceeded(ct);
 }
 
+/* ── Color tiers and downmapping ──────────────────────────────────── */
+
+/* Emission tiers (color-encoding-spec §6.1). */
+#define TIER_TRUECOLOR 0
+#define TIER_256 1
+#define TIER_16 2
+
+/* Nominal 16-color palette (color-encoding-spec §6.3.1): the renderer's
+ * canonical model of what each 4-bit index means for downmapping. Pure
+ * primaries for 0-7, pastel brights for 8-15. Not a claim about any
+ * terminal's actual palette. */
+static const uint32_t NOMINAL_PALETTE[16] = {
+    0x000000, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff,
+    0x00ffff, 0xc0c0c0, 0x808080, 0xff5555, 0x55ff55, 0xffff55,
+    0x5555ff, 0xff55ff, 0x55ffff, 0xffffff,
+};
+
+/* 6x6x6 color cube channel values (indices 16-231). */
+static const int CUBE_STEPS[6] = {0, 95, 135, 175, 215, 255};
+
+/* Resolve the emission tier from the capability evidence pushed by the
+ * host (color-encoding-spec §6.1). The colors <= 16 boundary matches the
+ * colordepth denial mapping in terminfo-spec §6.3. */
+static int resolve_tier(const struct Clayterm *ct) {
+  if (ct->truecolor)
+    return TIER_TRUECOLOR;
+  if (ct->colors <= 16)
+    return TIER_16;
+  return TIER_256;
+}
+
+/* Nearest nominal palette entry by squared Euclidean distance; ties
+ * resolve to the lowest index (color-encoding-spec §6.3.2). */
+static int map_16(uint32_t rgb) {
+  int r = (rgb >> 16) & 0xff;
+  int g = (rgb >> 8) & 0xff;
+  int b = rgb & 0xff;
+  int best = 0;
+  int best_dist = -1;
+  for (int i = 0; i < 16; i++) {
+    uint32_t c = NOMINAL_PALETTE[i];
+    int dr = r - (int)((c >> 16) & 0xff);
+    int dg = g - (int)((c >> 8) & 0xff);
+    int db = b - (int)(c & 0xff);
+    int dist = dr * dr + dg * dg + db * db;
+    if (best_dist < 0 || dist < best_dist) {
+      best_dist = dist;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/* The cube step for an exact cube value, or -1 when the value is not a
+ * cube channel value. */
+static int cube_exact(int v) {
+  for (int i = 0; i < 6; i++) {
+    if (CUBE_STEPS[i] == v)
+      return i;
+  }
+  return -1;
+}
+
+/* Nearest cube step for an arbitrary channel value; ties resolve to the
+ * smaller value (color-encoding-spec §6.3.3 rule 4). */
+static int cube_step(int v) {
+  int best = 0;
+  int best_dist = -1;
+  for (int i = 0; i < 6; i++) {
+    int d = v - CUBE_STEPS[i];
+    if (d < 0)
+      d = -d;
+    if (best_dist < 0 || d < best_dist) {
+      best_dist = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/* Downmap a 24-bit RGB value to a 256-palette index. Ordered rules;
+ * the first match wins (color-encoding-spec §6.3.3). Rules 1-3 make
+ * every 256-palette entry resolve to an index of the identical color
+ * (CI-4; the nominal index wins where the palettes overlap). */
+static int map_256(uint32_t rgb) {
+  int r = (rgb >> 16) & 0xff;
+  int g = (rgb >> 8) & 0xff;
+  int b = rgb & 0xff;
+
+  /* 1. exact nominal match: standard colors keep their 4-bit indices */
+  for (int i = 0; i < 16; i++) {
+    if (NOMINAL_PALETTE[i] == rgb)
+      return i;
+  }
+
+  /* 2. exact cube match */
+  int cr = cube_exact(r);
+  int cg = cube_exact(g);
+  int cb = cube_exact(b);
+  if (cr >= 0 && cg >= 0 && cb >= 0)
+    return 16 + 36 * cr + 6 * cg + cb;
+
+  /* 3. grayscale: nearest of the ramp extended by both endpoints.
+   * Candidates run in ascending index order (16, 231, 232..255), so a
+   * strict comparison resolves ties to the lowest index. */
+  if (r == g && g == b) {
+    int best = 16;
+    int best_dist = r; /* value 0 at index 16 */
+    int d = 255 - r;   /* value 255 at index 231 */
+    if (d < best_dist) {
+      best = 231;
+      best_dist = d;
+    }
+    for (int i = 0; i < 24; i++) {
+      int val = 8 + 10 * i;
+      d = r - val;
+      if (d < 0)
+        d = -d;
+      if (d < best_dist) {
+        best = 232 + i;
+        best_dist = d;
+      }
+    }
+    return best;
+  }
+
+  /* 4. nearest cube value per channel */
+  return 16 + 36 * cube_step(r) + 6 * cube_step(g) + cube_step(b);
+}
+
 /* ── Escape sequence generation ───────────────────────────────────── */
+
+/* Emit the SGR color sequence for one packed RGB value under the active
+ * tier (color-encoding-spec §6.2). `is_fg` selects the foreground
+ * (38, 3x/9x) or background (48, 4x/10x) code family. */
+static void emit_sgr_color(struct Clayterm *ct, uint32_t rgb, int is_fg) {
+  switch (ct->tier) {
+  case TIER_16: {
+    int idx = map_16(rgb);
+    int base = is_fg ? 30 : 40;
+    if (idx >= 8)
+      base += 60; /* aixterm bright codes: 90-97 / 100-107 */
+    buf_str(&ct->out, "\x1b[");
+    buf_num(&ct->out, base + (idx & 7));
+    buf_put(&ct->out, "m", 1);
+    break;
+  }
+  case TIER_256:
+    buf_str(&ct->out, is_fg ? "\x1b[38;5;" : "\x1b[48;5;");
+    buf_num(&ct->out, map_256(rgb));
+    buf_put(&ct->out, "m", 1);
+    break;
+  default: /* TIER_TRUECOLOR */
+    buf_str(&ct->out, is_fg ? "\x1b[38;2;" : "\x1b[48;2;");
+    buf_num(&ct->out, (rgb >> 16) & 0xff);
+    buf_put(&ct->out, ";", 1);
+    buf_num(&ct->out, (rgb >> 8) & 0xff);
+    buf_put(&ct->out, ";", 1);
+    buf_num(&ct->out, rgb & 0xff);
+    buf_put(&ct->out, "m", 1);
+  }
+}
 
 static void emit_attr(struct Clayterm *ct, uint32_t fg, uint32_t bg) {
   if (fg == ct->lastfg && bg == ct->lastbg)
@@ -204,27 +374,13 @@ static void emit_attr(struct Clayterm *ct, uint32_t fg, uint32_t bg) {
   if (fg & ATTR_STRIKEOUT)
     buf_str(&ct->out, "\x1b[9m");
 
-  /* foreground truecolor */
-  if (!(fg & ATTR_DEFAULT)) {
-    buf_str(&ct->out, "\x1b[38;2;");
-    buf_num(&ct->out, (fg >> 16) & 0xff);
-    buf_put(&ct->out, ";", 1);
-    buf_num(&ct->out, (fg >> 8) & 0xff);
-    buf_put(&ct->out, ";", 1);
-    buf_num(&ct->out, fg & 0xff);
-    buf_put(&ct->out, "m", 1);
-  }
+  /* foreground */
+  if (!(fg & ATTR_DEFAULT))
+    emit_sgr_color(ct, fg & COLOR_MASK, 1);
 
-  /* background truecolor */
-  if (!(bg & ATTR_DEFAULT)) {
-    buf_str(&ct->out, "\x1b[48;2;");
-    buf_num(&ct->out, (bg >> 16) & 0xff);
-    buf_put(&ct->out, ";", 1);
-    buf_num(&ct->out, (bg >> 8) & 0xff);
-    buf_put(&ct->out, ";", 1);
-    buf_num(&ct->out, bg & 0xff);
-    buf_put(&ct->out, "m", 1);
-  }
+  /* background */
+  if (!(bg & ATTR_DEFAULT))
+    emit_sgr_color(ct, bg & COLOR_MASK, 0);
 
   ct->lastfg = fg;
   ct->lastbg = bg;
@@ -681,6 +837,15 @@ int error_message_ptr(struct Clayterm *ct, int index) {
   return (int)ct->errors[index].errorText.chars;
 }
 
+/* Push host-held color capability evidence into the instance
+ * (color-encoding-spec §4.2). Called once after init and after update()
+ * folds capability events that change either value; re-pushed by the
+ * host after any re-init so the values survive resize updates. */
+void set_capabilities(struct Clayterm *ct, uint32_t colors, int truecolor) {
+  ct->colors = colors;
+  ct->truecolor = truecolor ? 1 : 0;
+}
+
 struct Clayterm *init(void *mem, int w, int h) {
   set_clay_capacity(w, h);
   struct Clayterm *ct = (struct Clayterm *)mem;
@@ -706,6 +871,8 @@ struct Clayterm *init(void *mem, int w, int h) {
       .lastbg = 0xffffffff,
       .lastx = -1,
       .lasty = -1,
+      .colors = 256, /* §7.1 baseline until the host pushes evidence */
+      .last_tier = -1,
   };
 
   // initialize back buffer with spaces and default fg/bg
@@ -1022,6 +1189,17 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
        * cursor for this frame. */
       ct->has_caret = 0;
     }
+  }
+
+  /* Resolve the emission tier for this frame and force a complete
+   * redraw when it changed (color-encoding-spec CI-5): diff state is
+   * cell-based, so unchanged cells would otherwise keep bytes from the
+   * previous encoding on screen. Zeroing the front buffer makes every
+   * cell diff as changed. */
+  ct->tier = resolve_tier(ct);
+  if (ct->tier != ct->last_tier) {
+    cells_fill(ct->front, ct->w, ct->h, 0, 0, 0);
+    ct->last_tier = ct->tier;
   }
 
   if (mode == 1) {

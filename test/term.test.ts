@@ -13,7 +13,7 @@ import {
   text,
 } from "../ops.ts";
 import { print } from "./print.ts";
-import { trueColorDetect } from "./caps.ts";
+import { TRUECOLOR_INFO, trueColorDetect } from "./caps.ts";
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const trim = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n");
@@ -43,9 +43,16 @@ describe("term", () => {
     expect(out).toContain("Hello, World!");
   });
 
-  it("text inherits parent background", () => {
+  it("text inherits parent background", async () => {
+    // Truecolor evidence selects the truecolor tier (color-encoding-spec
+    // §6.1); this test pins truecolor background bytes.
+    let local = await createTerm({
+      width: 40,
+      height: 10,
+      terminfo: TRUECOLOR_INFO,
+    });
     let ansi = decode(
-      term.render([
+      local.render([
         open("root", {
           layout: { width: grow(), height: grow(), direction: "ttb" },
           bg: rgba(255, 0, 0),
