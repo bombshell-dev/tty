@@ -27,7 +27,12 @@ import {
   type Stream,
   until,
 } from "effection";
-import { createTerm, type InputEvent, type PointerEvent } from "../../mod.ts";
+import {
+  createTerm,
+  detectTerminal,
+  type InputEvent,
+  type PointerEvent,
+} from "../../mod.ts";
 import {
   alternateBuffer,
   cursor,
@@ -279,16 +284,23 @@ function consoleSize(): { width: number; height: number } {
 await main(function* () {
   let { width, height } = consoleSize();
 
+  let info = yield* until(detectTerminal());
+
   Deno.stdin.setRaw(true);
   yield* ensure(() => Deno.stdin.setRaw(false));
 
   let stdin = yield* useStdin();
-  let input = useInput(stdin);
+  let input = useInput(stdin, { terminfo: info });
 
-  let term = yield* until(createTerm({ width, height }));
+  let term = yield* until(createTerm({ width, height, terminfo: info }));
 
   let tty = settings(alternateBuffer(), cursor(false), mouseTracking());
   Deno.stdout.writeSync(tty.apply);
+  // Ask the terminal about itself (OSC color queries, XTGETTCAP, DECRPM, DA1).
+  // Responses arrive on the input stream as CapabilityEvents and are routed to
+  // term.update() in the loop below, which is what switches on features like
+  // pointer shapes (renderer-spec §7.9) once the terminal confirms support.
+  Deno.stdout.writeSync(info.probe);
   yield* ensure(() => {
     Deno.stdout.writeSync(tty.revert);
   });
@@ -368,15 +380,18 @@ await main(function* () {
 
   for (let ev of yield* each(events)) {
     if (ev !== undefined && typeof ev === "object" && "type" in ev) {
-      // Resize: rebuild the term at the new size, wipe stale cells, repaint.
-      // A drag-resize fires many SIGWINCHes; we read the live size each time
-      // and skip when unchanged, so only real size changes rebuild the term.
+      // Resize: tell the term the new size (the next render repaints every
+      // cell) and wipe stale cells. A drag-resize fires many SIGWINCHes; we
+      // read the live size each time and skip when unchanged, so only real
+      // size changes touch the term.
       if ((ev as { type: string }).type === "resize") {
         let next = consoleSize();
         if (next.width !== width || next.height !== height) {
           width = next.width;
           height = next.height;
-          term = yield* until(createTerm({ width, height }));
+          Deno.stdout.writeSync(
+            term.update([{ type: "resize", width, height }]),
+          );
           Deno.stdout.writeSync(CLEAR_SCREEN);
           draw();
         }
@@ -385,6 +400,12 @@ await main(function* () {
       }
 
       let e = ev as InputEvent | PointerEvent;
+
+      if (e.type === "capability") {
+        Deno.stdout.writeSync(term.update([e]));
+        yield* each.next();
+        continue;
+      }
 
       if (e.type === "keydown") {
         if (e.ctrl && e.key === "c") break;

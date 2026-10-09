@@ -4,6 +4,7 @@ import { each, ensure, main, until } from "effection";
 import {
   close,
   createTerm,
+  detectTerminal,
   fixed,
   grow,
   type KeyEvent,
@@ -12,7 +13,12 @@ import {
   rgba,
   text,
 } from "../../mod.ts";
-import { alternateBuffer, progressiveInput, settings } from "../../settings.ts";
+import {
+  alternateBuffer,
+  mouseTracking,
+  progressiveInput,
+  settings,
+} from "../../settings.ts";
 import { useInput } from "../use-input.ts";
 import { useStdin } from "../use-stdin.ts";
 
@@ -24,18 +30,31 @@ const hint = rgba(80, 80, 100);
 await main(function* () {
   let { columns, rows } = terminalSize();
 
+  let info = yield* until(detectTerminal());
+
   setRawMode(true);
 
   let stdin = yield* useStdin();
-  let input = useInput(stdin);
+  let input = useInput(stdin, { terminfo: info });
 
-  let term = yield* until(createTerm({ width: columns, height: rows }));
+  let term = yield* until(
+    createTerm({ width: columns, height: rows, terminfo: info }),
+  );
 
-  let tty = settings(alternateBuffer(), progressiveInput(1));
+  let tty = settings(alternateBuffer(), progressiveInput(1), mouseTracking());
   writeStdout(tty.apply);
+
+  // Ask the terminal about itself (OSC color queries, XTGETTCAP, DECRPM, DA1).
+  // Responses arrive on the input stream as CapabilityEvents and are routed to
+  // term.update() in the loop below, which is what switches on features like
+  // pointer shapes (renderer-spec §7.9) once the terminal confirms support.
+  writeStdout(info.probe);
 
   let value = "";
   let caret = 0;
+  let pointer = undefined as
+    | { x: number; y: number; down: boolean }
+    | undefined;
 
   yield* ensure(() => {
     setRawMode(false);
@@ -82,10 +101,18 @@ await main(function* () {
         value = chars.join("");
         caret++;
       }
-
-      ({ output } = term.render(frame(value, caret)));
-      writeStdout(output);
+    } else if (event.type === "capability") {
+      writeStdout(term.update([event]));
+    } else if ("x" in event) {
+      pointer = {
+        x: event.x,
+        y: event.y,
+        down: event.type === "mousedown",
+      };
     }
+
+    ({ output } = term.render(frame(value, caret), { pointer }));
+    writeStdout(output);
 
     yield* each.next();
   }
@@ -113,6 +140,7 @@ function frame(value: string, caret: number): Op[] {
         padding: { left: 1, right: 1 },
       },
       bg: inputBg,
+      pointerShape: "text",
     }),
     text(value, { color: label, caret }),
     close(),

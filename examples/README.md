@@ -34,6 +34,8 @@ What it shows:
 - raw keyboard input decoded into structured key events
 - progressive keyboard protocol support
 - pointer tracking and hover/click-driven UI updates
+- OSC 22 pointer shapes: hovering the on-screen keys shows the hand pointer when
+  the terminal confirms support (renderer-spec §7.9)
 - terminal mode configuration such as alternate buffer, hidden cursor, and mouse
   reporting
 
@@ -99,15 +101,18 @@ What it shows:
 - the `animating` render signal gating a follow-up frame loop, so the process
   only renders while something is moving
 - pointer hit testing and keyboard focus working together on the chrome buttons
+- OSC 22 pointer shapes on the chrome buttons: hand cursor while hovering,
+  not-allowed on the disabled Undo button, when the terminal confirms support
+  (renderer-spec §7.9)
 - an fps readout in the footer: a sliding-window count of frames pushed to
   stdout in the last second. It measures how fast frames are _produced_, not how
   fast the terminal _paints_ them — a CPU-rendered terminal (e.g. Terminal.app)
   can coalesce or drop frames downstream where the process can't observe it, so
   motion can look steppy even while this number stays high
 - live resize handling: a `SIGWINCH` listener is bridged into the Effection
-  event loop, and because the native term has fixed-size buffers, each real size
-  change rebuilds the term, clears the screen, and repaints so the layout
-  re-centers to the new dimensions
+  event loop, and each real size change is folded into the term with
+  `term.update([{ type: "resize", width, height }])`, after which the screen is
+  cleared and repainted so the layout re-centers to the new dimensions
 - a keycaster overlay: recent key presses and button clicks appear as a centered
   row of caps near the bottom (a floating, pointer-passthrough element) that
   retire on a timer, handy for screen recordings and demos
