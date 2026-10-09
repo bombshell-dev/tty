@@ -1,5 +1,62 @@
 # @bomb.sh/tty
 
+## 0.10.0
+
+### Minor Changes
+
+- [#132](https://github.com/bombshell-dev/tty/pull/132) [`d8f2a24`](https://github.com/bombshell-dev/tty/commit/d8f2a247b2607f783d8d00790725ff954b3d7410) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Adds `CapabilityEvent` to `InputEvent` and changes `InputOptions.terminfo` to accept a `TerminalInfo`.
+  
+  `scan()` now parses terminal probe responses — OSC 10/11/12 theme colors, OSC 21 kitty color protocol, OSC 22 pointer shape, XTGETTCAP (`DCS`), kitty graphics (`APC`), kitty keyboard (`CSI ?…u`), synchronized output (`DECRPM`), and DA1 — and surfaces them as typed `CapabilityEvent` objects with keys `foreground-color`, `background-color`, `cursor-color`, `colordepth`, `sync-output`, `kitty-keyboard`, `kitty-graphics`, and `pointer-shape`.
+  
+  **Breaking:** `InputOptions.terminfo` now takes the `TerminalInfo` returned by `detectTerminal()` instead of raw compiled terminfo bytes. It seeds the key-sequence trie from `terminfo.keys` and uses `terminfo.capabilities.colors` to resolve colordepth denial events to the correct tier (`"16"` vs `"256"`). Raw bytes now go to `detectTerminal({ entry })`.
+  
+  #### Migration
+  
+  ```diff
+  - import { createInput } from "@bomb.sh/tty";
+  + import { createInput, detectTerminal } from "@bomb.sh/tty";
+  
+  - const input = await createInput({ terminfo: myTerminfoBinary });
+  + const terminfo = await detectTerminal({ env: process.env, entry: myTerminfoBinary });
+  + const input = await createInput({ terminfo });
+  ```
+  
+  Omit `terminfo` entirely to keep the xterm default key sequences.
+
+- [#133](https://github.com/bombshell-dev/tty/pull/133) [`2c6215c`](https://github.com/bombshell-dev/tty/commit/2c6215cf2d255ccf06b609327c0d89c0e2bfab09) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Adds `detectTerminal()`, `TerminalInfo`, `Capabilities`, `DetectOptions`, `KeyTable`, and `MAX_TERMINFO_ENTRY` to the public API, and a `terminfo` option to `createTerm`.
+  
+  `detectTerminal()` reads the compiled terminfo entry for the current terminal (from the ncurses search path, or from bytes passed as `entry`), applies environment evidence (`COLORTERM`), and resolves a frozen `TerminalInfo` carrying static `capabilities`, a `probe` query batch to write to stdout, and opaque `keys` for the input parser.
+  
+  Pass the returned `TerminalInfo` as `terminfo` to `createTerm` and `createInput`. `term.capabilities` exposes the renderer's current capability snapshot, seeded from `terminfo.capabilities` (or the 256-color baseline when omitted).
+  
+  Changes `term.update()` to accept an array of `InputEvent` values instead of `{ events }` or `{ width, height }`. Resizes are now `ResizeEvent`s tagged `type: "resize"`; capability events from `scan()` are folded into `term.capabilities`; all other input events are no-ops, so the full `events` array from `scan()` can be passed straight through. `update()` now returns a `Uint8Array` of bytes to write immediately (empty when there are none).
+  
+  #### Migration
+  
+  ```diff
+  -term.update({ events });
+  +const out = term.update(events);
+  +if (out.length) process.stdout.write(out);
+  ```
+  
+  ```diff
+  -term.update({ width, height });
+  +term.update([{ type: "resize", width, height }]);
+  ```
+  
+  To opt in to terminfo-based capability detection:
+  
+  ```diff
+  +const terminfo = await detectTerminal({ env: process.env });
+   const term = await createTerm({ width, height, terminfo });
+   const input = await createInput({ terminfo });
+  +process.stdout.write(terminfo.probe);
+  ```
+
+### Patch Changes
+
+- [#114](https://github.com/bombshell-dev/tty/pull/114) [`666546e`](https://github.com/bombshell-dev/tty/commit/666546e88a54885eb18c5fd5d288f3844483c58b) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Fixes combining marks (accents, ZWJ, variation selectors, kitty-graphics placeholder diacritics) being silently dropped from rendered output instead of attaching to their base character's cell. Cells that overflow the 8-mark-per-cell limit now also surface a `COMBINING_MARKS_EXCEEDED` render error instead of truncating silently.
+
 ## 0.9.0
 
 ### Minor Changes
