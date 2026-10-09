@@ -12,6 +12,10 @@
  *   grabbing anywhere on screen while held (a capture-mode drag shield —
  *   userland drag persistence, no spec support needed), releasing returns
  *   to grab.
+ * - An ambient brightness wave sweeps the tiles: idle borders and labels
+ *   breathe on a phase-offset sine (~4s cycle, ~12fps ticker), so a ripple
+ *   of light crosses the grid. Hovered and grabbed tiles keep their full
+ *   hue treatment.
  * - Curated to the 9 shapes confirmed working in ghostty 1.3.1; ghostty
  *   drops help, progress, wait, move, zoom-in, zoom-out, and none.
  *
@@ -25,8 +29,11 @@ import {
   each,
   ensure,
   main,
+  type Operation,
   race,
   resource,
+  sleep,
+  spawn,
   type Stream,
   until,
 } from "effection";
@@ -73,9 +80,11 @@ await main(function* () {
     pointer,
     capsOn: term.capabilities.pointerShape,
     grabbing: false,
+    now: 0,
   };
 
   let pointerEvents = createChannel<PointerEvent, void>();
+  let ticks = ticker(80);
 
   yield* ensure(() => {
     // Restore the pointer before leaving: a frame without `pointer` resolves
@@ -87,6 +96,7 @@ await main(function* () {
           pointer: undefined,
           capsOn: false,
           grabbing: false,
+          now: 0,
         }),
       ).output,
     );
@@ -94,10 +104,11 @@ await main(function* () {
     writeStdout(tty.revert);
   });
 
+  ctx.now = performance.now();
   let { output } = term.render(frame(ctx));
   writeStdout(output);
 
-  for (let event of yield* each(merge(input, pointerEvents))) {
+  for (let event of yield* each(merge(merge(input, pointerEvents), ticks))) {
     if (event.type === "keydown" && event.ctrl && event.key === "c") {
       break;
     }
@@ -130,6 +141,7 @@ await main(function* () {
     }
 
     ctx.capsOn = term.capabilities.pointerShape;
+    ctx.now = performance.now();
 
     let { output, events } = term.render(
       withDragShield(frame(ctx), columns, rows, ctx.grabbing),
@@ -161,6 +173,35 @@ function setRawMode(enabled: boolean): void {
 
 function writeStdout(bytes: Uint8Array): void {
   process.stdout.write(Buffer.from(bytes));
+}
+
+/**
+ * A steady tick stream driving the brightness wave. Ticks are disposable:
+ * ones sent before the loop subscribes are dropped harmlessly, the next
+ * arrives an interval later. ~12fps is plenty for a ~4s wave cycle.
+ */
+function ticker(interval: number): Stream<Tick, void> {
+  return resource(function* (provide) {
+    let ch = createChannel<Tick, void>();
+    yield* spawn(function* () {
+      while (true) {
+        yield* sleep(interval);
+        yield* ch.send({ type: "tick" });
+      }
+    });
+    let sub = yield* ch;
+    yield* race([provide(sub), drain(ch)]);
+  });
+}
+
+function* drain<T, TClose>(stream: Stream<T, TClose>): Operation<void> {
+  for (let _ of yield* each(stream)) {
+    yield* each.next();
+  }
+}
+
+interface Tick {
+  type: "tick";
 }
 
 function merge<A, B, TClose>(

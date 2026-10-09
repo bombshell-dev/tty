@@ -9,10 +9,23 @@
  * is double-wide and shows grabbing while the pointer is held down on it —
  * a capture-mode drag shield keeps the grabbing cursor anywhere on screen
  * until release, matching CSS drag behavior — returning to grab on release,
- * staying orange throughout.
+ * staying orange throughout. Idle tiles breathe with a brightness wave: a
+ * phase-offset sine sweeps the grid so a ripple of light crosses it.
  */
 
 import { close, fixed, grow, type Op, open, rgba, text } from "../../mod.ts";
+
+/**
+ * Scale a packed rgba() color's channels by `factor` (clamped to 255),
+ * preserving its hue — the primitive behind the brightness wave.
+ */
+function shade(color: number, factor: number): number {
+  let a = (color >>> 24) & 0xFF;
+  let r = Math.min(255, Math.round(((color >>> 16) & 0xFF) * factor));
+  let g = Math.min(255, Math.round(((color >>> 8) & 0xFF) * factor));
+  let b = Math.min(255, Math.round((color & 0xFF) * factor));
+  return (a << 24) | (r << 16) | (g << 8) | b;
+}
 
 // Brand hues from bomb.sh's CSS: --c-pink, --c-cyan, --c-green, --c-yellow,
 // --c-purple, --c-orange, --c-blue, --c-red.
@@ -48,6 +61,8 @@ export interface Ctx {
   capsOn: boolean;
   /** The grab tile's toggled state: true shows grabbing, false grab. */
   grabbing: boolean;
+  /** Wall-clock ms, refreshed per frame — drives the brightness wave. */
+  now: number;
 }
 
 // One tile per confirmed shape (verified against ghostty 1.3.1, which drops
@@ -99,10 +114,14 @@ export function withDragShield(
   return out;
 }
 
-function tile(ops: Op[], t: Tile, ctx: Ctx): void {
+function tile(ops: Op[], t: Tile, idx: number, ctx: Ctx): void {
   let id = `shape:${t.shape}`;
   let hovered = ctx.entered.has(id);
   let shape = "toggle" in t && ctx.grabbing ? t.toggle : t.shape;
+  // Ambient brightness wave: each idle tile breathes on a phase-offset sine,
+  // sweeping the grid in reading order (~4s per cycle). Hovered and grabbed
+  // tiles keep their full hue treatment instead.
+  let wave = 0.5 + 0.5 * Math.sin(ctx.now / 650 - idx * 0.55);
   ops.push(
     open(id, {
       layout: {
@@ -113,7 +132,7 @@ function tile(ops: Op[], t: Tile, ctx: Ctx): void {
         alignY: "center",
       },
       border: {
-        color: hovered ? t.hue : borderIdle,
+        color: hovered ? t.hue : shade(borderIdle, 0.85 + wave * 0.9),
         left: 1,
         right: 1,
         top: 1,
@@ -122,7 +141,7 @@ function tile(ops: Op[], t: Tile, ctx: Ctx): void {
       cornerRadius: { tl: 1, tr: 1, bl: 1, br: 1 },
       pointerShape: shape,
     }),
-    text(shape, { color: hovered ? t.hue : label }),
+    text(shape, { color: hovered ? t.hue : shade(label, 0.85 + wave * 0.3) }),
     close(),
   );
 }
@@ -176,12 +195,13 @@ export function frame(ctx: Ctx): Op[] {
   }
   if (row.length > 0) rows.push(row);
 
+  let idx = 0;
   for (let r of rows) {
     ops.push(
       open("", { layout: { direction: "ltr", gap: 1, height: fixed(3) } }),
     );
     for (let t of r) {
-      tile(ops, t, ctx);
+      tile(ops, t, idx++, ctx);
     }
     ops.push(close());
   }
