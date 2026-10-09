@@ -14,6 +14,17 @@ export interface TermOptions {
    * baseline.
    */
   terminfo?: TerminalInfo;
+  /**
+   * Fallback terminal default colors for compositing destinations
+   * (renderer-spec §7.9). Used when the terminal has not reported its
+   * own theme; does not change term.capabilities.theme, which holds
+   * only reported colors. Defaults to a black background and a white
+   * foreground.
+   */
+  defaultTheme?: {
+    foreground?: Rgb;
+    background?: Rgb;
+  };
 }
 
 /**
@@ -94,6 +105,23 @@ function runtimeFromStatic(caps: Capabilities): RuntimeCapabilities {
   });
 }
 
+/** Resolve the §7.9 terminal-default chain: reported theme >
+ * defaultTheme > a black background and a white foreground. Packed as
+ * 24-bit RGB for the renderer. */
+function defaultColors(
+  fallback: TermOptions["defaultTheme"],
+  reported: { theme: RuntimeCapabilities["theme"] } | undefined,
+): { defaultBg: number; defaultFg: number } {
+  let bg = reported?.theme.background ?? fallback?.background ??
+    { r: 0, g: 0, b: 0 };
+  let fg = reported?.theme.foreground ?? fallback?.foreground ??
+    { r: 255, g: 255, b: 255 };
+  return {
+    defaultBg: (bg.r & 0xff) << 16 | (bg.g & 0xff) << 8 | (bg.b & 0xff),
+    defaultFg: (fg.r & 0xff) << 16 | (fg.g & 0xff) << 8 | (fg.b & 0xff),
+  };
+}
+
 export interface RenderOptions {
   mode?: "line";
   row?: number;
@@ -162,7 +190,7 @@ export interface Term {
 }
 
 export async function createTerm(options: TermOptions): Promise<Term> {
-  let { width, height, terminfo } = options;
+  let { width, height, terminfo, defaultTheme } = options;
 
   let seed = terminfo?.capabilities ?? {
     colors: 256,
@@ -177,6 +205,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
   let native = await createTermNative(width, height, {
     colors: seed.colors,
     trueColor: seed.trueColor,
+    ...defaultColors(defaultTheme, undefined),
   });
   let { memory } = native;
 
@@ -310,15 +339,24 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         }
 
         currentCaps = next;
-        // Folded evidence changed the renderer's color capabilities:
-        // push it so the next render resolves the new tier
-        // (color-encoding-spec §4.2). The tier change itself forces a
-        // complete redraw on the next transaction (§6.4).
+        // Folded evidence changed the renderer's color capabilities or
+        // theme: push it so the next render resolves the tier and the
+        // compositing defaults (color-encoding-spec §4.2; renderer-spec
+        // §7.9 theme changes). The update transaction itself emits no
+        // bytes; the next transaction picks the change up.
+        let colors = defaultColors(defaultTheme, next);
         if (
           next.colors !== native.caps.colors ||
-          next.trueColor !== native.caps.trueColor
+          next.trueColor !== native.caps.trueColor ||
+          colors.defaultBg !== native.caps.defaultBg ||
+          colors.defaultFg !== native.caps.defaultFg
         ) {
-          native.setCapabilities(next.colors, next.trueColor);
+          native.setCapabilities(
+            next.colors,
+            next.trueColor,
+            colors.defaultBg,
+            colors.defaultFg,
+          );
         }
         if (bytes.length) out.push(bytes);
       }

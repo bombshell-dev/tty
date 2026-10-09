@@ -60,6 +60,8 @@ describe("width", () => {
     let native = await createTermNative(10, 3, {
       colors: 256,
       trueColor: false,
+      defaultBg: 0x000000, // §7.9 fallback: black background
+      defaultFg: 0xffffff, // §7.9 fallback: white foreground
     });
 
     // TextEncoder never produces surrogate bytes, so pack a placeholder
