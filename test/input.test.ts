@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createInput, type Input } from "../input.ts";
+import { detectTerminal } from "../terminfo.ts";
+import { CLAYTERM_16, CLAYTERM_TC } from "./fixtures.ts";
 
 function bytes(...values: number[]): Uint8Array {
   return new Uint8Array(values);
@@ -373,6 +375,50 @@ describe("input", () => {
     });
   });
 
+  describe("ESC + introducer timeout", () => {
+    for (let introducer of ["[", "O", "]", "P", "_"]) {
+      it(`reports ESC ${introducer} as pending`, () => {
+        let result = input.scan(str(`\x1b${introducer}`));
+        expect(result.events).toEqual([]);
+        expect(result.pending?.delay).toBe(25);
+      });
+
+      it(`resolves ESC ${introducer} to Alt+${introducer} after the timeout`, async () => {
+        input.scan(str(`\x1b${introducer}`));
+        await new Promise((r) => setTimeout(r, 30));
+        let result = input.scan();
+        expect(result.events).toEqual([
+          expect.objectContaining({
+            type: "keydown",
+            key: introducer,
+            alt: true,
+          }),
+        ]);
+        expect(result.pending).toBeUndefined();
+      });
+    }
+
+    it("stays pending when the introducer arrives after a lone ESC", () => {
+      input.scan(bytes(0x1b));
+      let result = input.scan(str("P"));
+      expect(result.events).toEqual([]);
+      expect(result.pending?.delay).toBe(25);
+    });
+
+    it("parses the sequence when more bytes arrive before the timeout", () => {
+      input.scan(str("\x1b]"));
+      let result = input.scan(str("11;rgb:00/00/00\x07"));
+      expect(result.events).toEqual([
+        {
+          type: "capability",
+          key: "background-color",
+          value: { r: 0, g: 0, b: 0 },
+        },
+      ]);
+      expect(result.pending).toBeUndefined();
+    });
+  });
+
   describe("Alt combinations", () => {
     it("parses Alt+a as unrecognized ESC sequence", () => {
       let result = input.scan(bytes(0x1b, 0x61));
@@ -741,6 +787,570 @@ describe("input", () => {
         type: "keydown",
         key: "\u{1f389}",
       });
+    });
+  });
+});
+
+function terminfoEntry(strings: Record<number, string>): Uint8Array {
+  let names = str("synthetic|generated key-length test entry\0");
+  let count = Math.max(...Object.keys(strings).map(Number)) + 1;
+  let offsets = new Int16Array(count).fill(-1);
+  let table: number[] = [];
+  for (let [index, value] of Object.entries(strings)) {
+    offsets[Number(index)] = table.length;
+    table.push(...str(value), 0);
+  }
+  let header = new Int16Array([0o432, names.length, 0, 0, count, table.length]);
+  let pad = names.length % 2;
+  let out = new Uint8Array(12 + names.length + pad + count * 2 + table.length);
+  let view = new DataView(out.buffer);
+  header.forEach((v, i) => view.setInt16(i * 2, v, true));
+  out.set(names, 12);
+  let at = 12 + names.length + pad;
+  offsets.forEach((v, i) => view.setInt16(at + i * 2, v, true));
+  out.set(table, at + count * 2);
+  return out;
+}
+
+describe("terminfo integration", () => {
+  async function withTerminfo() {
+    let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_TC });
+    let input = await createInput({ terminfo });
+    return { terminfo, input };
+  }
+
+  describe("key sequences from terminfo", () => {
+    it("decodes a terminfo-specific arrow sequence", async () => {
+      // clayterm-tc defines kcuu1=\EOZ
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bOZ"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "keydown",
+        key: "ArrowUp",
+      });
+    });
+
+    it("decodes a terminfo-specific function key", async () => {
+      // clayterm-tc defines kf5=\E[99~
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b[99~"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({ type: "keydown", key: "F5" });
+    });
+
+    it("accepts a terminfo key sequence of exactly 16 bytes", async () => {
+      let seq = "\x1bO" + "z".repeat(13) + "Z";
+      let terminfo = await detectTerminal({
+        env: {},
+        entry: terminfoEntry({ 87: seq }),
+      });
+      let input = await createInput({ terminfo });
+      expect(input.scan(str(seq)).events).toEqual([
+        expect.objectContaining({ type: "keydown", key: "ArrowUp" }),
+      ]);
+    });
+
+    it("ignores terminfo key sequences longer than 16 bytes", async () => {
+      let seq = "\x1bO" + "z".repeat(14) + "Z";
+      let terminfo = await detectTerminal({
+        env: {},
+        entry: terminfoEntry({ 87: seq }),
+      });
+      let input = await createInput({ terminfo });
+      let events = input.scan(str(seq)).events;
+      expect(events.some((e) => "key" in e && e.key === "ArrowUp")).toBe(false);
+    });
+
+    it("keeps the default keys when every terminfo key is oversized", async () => {
+      let caps = [
+        59,
+        61,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        79,
+        81,
+        82,
+        83,
+        87,
+        148,
+        164,
+        216,
+        217,
+      ];
+      let strings: Record<number, string> = {};
+      caps.forEach((cap, i) => {
+        strings[cap] = "\x1bX" + String.fromCharCode(0x61 + i) +
+          "y".repeat(997);
+      });
+      let terminfo = await detectTerminal({
+        env: {},
+        entry: terminfoEntry(strings),
+      });
+      expect(terminfo.keys.byteLength).toBeGreaterThan(0);
+      let input = await createInput({ terminfo });
+      for (
+        let [seq, key] of [
+          ["\x1bOA", "ArrowUp"],
+          ["\x1bOP", "F1"],
+          ["\x1bOH", "Home"],
+          ["\x1bOF", "End"],
+          ["\x1b[3~", "Delete"],
+        ]
+      ) {
+        expect(input.scan(str(seq)).events).toEqual([
+          expect.objectContaining({ type: "keydown", key }),
+        ]);
+      }
+    });
+
+    it("fits a key table larger than the initial wasm memory", async () => {
+      let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_TC });
+      let keys = new Uint8Array(300_000);
+      keys.set(terminfo.keys);
+      let input = await createInput({ terminfo: { ...terminfo, keys } });
+      let result = input.scan(str("\x1bOZ"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "keydown",
+        key: "ArrowUp",
+      });
+    });
+
+    it("keeps the xterm defaults registered", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bOA"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "keydown",
+        key: "ArrowUp",
+      });
+    });
+  });
+
+  describe("query response recognition", () => {
+    it("surfaces an OSC 10 foreground report as CapabilityEvent", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]10;rgb:ffff/ffff/ffff\x07"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "foreground-color",
+        value: { r: 255, g: 255, b: 255 },
+      });
+    });
+
+    it("surfaces an OSC 11 background report (ST-terminated)", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]11;rgb:1e1e/2a2a/3b3b\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "background-color",
+        value: { r: 0x1e, g: 0x2a, b: 0x3b },
+      });
+    });
+
+    it("surfaces an OSC 12 cursor color report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]12;#ff8800\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "cursor-color",
+        value: { r: 0xff, g: 0x88, b: 0 },
+      });
+    });
+
+    it("surfaces per-field events from an OSC 21 kitty color report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(
+        str("\x1b]21;foreground=rgb:ff/00/00;background=\x1b\\"),
+      );
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "foreground-color",
+        value: { r: 255, g: 0, b: 0 },
+      });
+    });
+
+    it("surfaces an OSC 22 pointer shape report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]22;default\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "pointer-shape",
+        value: true,
+      });
+    });
+
+    it("surfaces truecolor colordepth from a valid XTGETTCAP reply", async () => {
+      let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_16 });
+      let input = await createInput({ terminfo });
+      let result = input.scan(str("\x1bP1+r524742\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "colordepth",
+        value: "truecolor",
+      });
+    });
+
+    it("surfaces 256-color colordepth denial from an invalid XTGETTCAP reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bP0+r\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "colordepth",
+        value: "256",
+      });
+    });
+
+    it("surfaces 16-color colordepth denial when colors <= 16", async () => {
+      let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_16 });
+      let input = await createInput({ terminfo });
+      let result = input.scan(str("\x1bP0+r\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "colordepth",
+        value: "16",
+      });
+    });
+
+    it("preserves truecolor when RGB succeeds and Tc fails, in either order", async () => {
+      let truecolor = {
+        type: "capability",
+        key: "colordepth",
+        value: "truecolor",
+      };
+      let rgbOk = "\x1bP1+r524742\x1b\\";
+      let tcDenied = "\x1bP0+r5463\x1b\\";
+
+      let { input: together } = await withTerminfo();
+      expect(together.scan(str(rgbOk + tcDenied)).events).toEqual([truecolor]);
+
+      let { input: reversed } = await withTerminfo();
+      expect(reversed.scan(str(tcDenied + rgbOk)).events).toEqual([truecolor]);
+
+      let { input: split } = await withTerminfo();
+      expect(split.scan(str(rgbOk)).events).toEqual([truecolor]);
+      expect(split.scan(str(tcDenied)).events).toEqual([]);
+
+      let { input: splitReversed } = await withTerminfo();
+      expect(splitReversed.scan(str(tcDenied)).events).toEqual([]);
+      expect(splitReversed.scan(str(rgbOk)).events).toEqual([truecolor]);
+    });
+
+    it("emits the static color tier only when both RGB and Tc are denied", async () => {
+      for (
+        let [entry, tier] of [[CLAYTERM_TC, "256"], [
+          CLAYTERM_16,
+          "16",
+        ]] as const
+      ) {
+        let terminfo = await detectTerminal({ env: {}, entry });
+        let input = await createInput({ terminfo });
+        expect(input.scan(str("\x1bP0+r524742\x1b\\")).events).toEqual([]);
+        expect(input.scan(str("\x1bP0+r5463\x1b\\")).events).toEqual([
+          { type: "capability", key: "colordepth", value: tier },
+        ]);
+      }
+    });
+
+    it("starts a fresh colordepth tally after the DA1 fence", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(
+        str(
+          "\x1bP1+r524742\x1b\\\x1b[?65;1c" +
+            "\x1bP0+r524742\x1b\\\x1bP0+r5463\x1b\\",
+        ),
+      );
+      expect(result.events).toEqual([
+        { type: "capability", key: "colordepth", value: "truecolor" },
+        { type: "capability", key: "colordepth", value: "256" },
+      ]);
+    });
+
+    it("surfaces synchronized output from a DECRPM confirm report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b[?2026;2$y"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "sync-output",
+        value: true,
+      });
+    });
+
+    it("surfaces sync-output=false from a not-recognized DECRPM report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b[?2026;0$y"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "sync-output",
+        value: false,
+      });
+    });
+
+    it("surfaces kitty-keyboard from a flags report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b[?1u"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "kitty-keyboard",
+        value: true,
+      });
+    });
+
+    it("surfaces kitty-graphics=true from an OK APC reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b_Gi=31;OK\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "kitty-graphics",
+        value: true,
+      });
+    });
+
+    it("surfaces kitty-graphics=false from an error APC reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b_Gi=31;ENOTSUPPORTED:x\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "kitty-graphics",
+        value: false,
+      });
+    });
+
+    it("consumes a DA1 report without emitting any event", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b[?65;1;9c"));
+      expect(result.events).toEqual([]);
+    });
+
+    it("interleaves CapabilityEvents with key events correctly", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(
+        str("a\x1b]11;rgb:0000/0000/0000\x1b\\b"),
+      );
+      expect(result.events.length).toBe(3);
+      expect(result.events[0]).toMatchObject({ type: "keydown", key: "a" });
+      expect(result.events[1]).toEqual({
+        type: "capability",
+        key: "background-color",
+        value: { r: 0, g: 0, b: 0 },
+      });
+      expect(result.events[2]).toMatchObject({ type: "keydown", key: "b" });
+    });
+
+    it("buffers a response split across scans", async () => {
+      let { input } = await withTerminfo();
+      let first = input.scan(str("\x1b]11;rgb:12"));
+      expect(first.events).toEqual([]);
+      let second = input.scan(str("34/5678/9abc\x1b\\"));
+      expect(second.events.length).toBe(1);
+      expect(second.events[0]).toEqual({
+        type: "capability",
+        key: "background-color",
+        value: { r: 0x12, g: 0x56, b: 0x9a },
+      });
+    });
+
+    it("recognizes every supported response split at every byte boundary", async () => {
+      let cap = (key: string, value: unknown) => ({
+        type: "capability",
+        key,
+        value,
+      });
+      let white = { r: 255, g: 255, b: 255 };
+      let cases: [string, unknown[]][] = [
+        ["\x1b]10;rgb:ffff/ffff/ffff\x07", [cap("foreground-color", white)]],
+        ["\x1b]11;rgb:ff/ff/ff\x1b\\", [cap("background-color", white)]],
+        ["\x1b]12;#ffffff\x1b\\", [cap("cursor-color", white)]],
+        [
+          "\x1b]21;foreground=#ffffff;cursor=rgb:f/f/f\x1b\\",
+          [cap("foreground-color", white), cap("cursor-color", white)],
+        ],
+        ["\x1b]22;default\x1b\\", [cap("pointer-shape", true)]],
+        ["\x1bP1+r524742=382F382F38\x1b\\", [cap("colordepth", "truecolor")]],
+        ["\x1bP0+r\x1b\\", [cap("colordepth", "256")]],
+        ["\x1b[?2026;2$y", [cap("sync-output", true)]],
+        ["\x1b[?1u", [cap("kitty-keyboard", true)]],
+        ["\x1b_Gi=31;OK\x1b\\", [cap("kitty-graphics", true)]],
+        ["\x1b[?65;1;9c", []],
+      ];
+      let x = expect.objectContaining({ type: "keydown", key: "x" });
+      let y = expect.objectContaining({ type: "keydown", key: "y" });
+
+      for (let [response, expected] of cases) {
+        let data = str("x" + response + "y");
+        for (let at = 1; at < data.length; at++) {
+          let input = await createInput({ escLatency: 60_000 });
+          let events = [
+            ...input.scan(data.subarray(0, at)).events,
+            ...input.scan(data.subarray(at)).events,
+          ];
+          expect({ response, at, events }).toEqual({
+            response,
+            at,
+            events: [x, ...expected, y],
+          });
+        }
+
+        let input = await createInput({ escLatency: 60_000 });
+        let events = [...data].flatMap((b) => input.scan(bytes(b)).events);
+        expect({ response, events }).toEqual({
+          response,
+          events: [x, ...expected, y],
+        });
+      }
+    });
+
+    it("surfaces CapabilityEvents on a standalone parser without terminfo", async () => {
+      let input = await createInput();
+      let result = input.scan(str("\x1b]11;rgb:0000/0000/0000\x1b\\"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toMatchObject({
+        type: "capability",
+        key: "background-color",
+      });
+    });
+  });
+
+  describe("response recovery", () => {
+    function drain(input: Input, data: Uint8Array) {
+      let events = input.scan(data).events;
+      for (
+        let more = input.scan().events;
+        more.length;
+        more = input.scan().events
+      ) {
+        events.push(...more);
+      }
+      return events;
+    }
+
+    it("rejects malformed color payloads and preserves the following key", async () => {
+      for (
+        let payload of [
+          "\x1b]10;#fffjunk\x07",
+          "\x1b]11;rgb:ff/ff/ffzz\x1b\\",
+          "\x1b]12;rgb:ff/ff\x07",
+          "\x1b]11;rgba:ff/ff/ff/\x07",
+          "\x1b]21;foreground=#fffjunk\x1b\\",
+        ]
+      ) {
+        let input = await createInput();
+        let events = input.scan(str(payload + "a")).events;
+        expect(events).toEqual([
+          expect.objectContaining({ type: "keydown", key: "a" }),
+        ]);
+      }
+    });
+
+    it("accepts an rgba payload and ignores its alpha channel", async () => {
+      let input = await createInput();
+      expect(input.scan(str("\x1b]11;rgba:10/20/30/ff\x07")).events).toEqual([
+        {
+          type: "capability",
+          key: "background-color",
+          value: { r: 0x10, g: 0x20, b: 0x30 },
+        },
+      ]);
+    });
+
+    it("ends a cut-off response at a control byte and keeps the typed keys", async () => {
+      let truncated = [
+        "\x1b]11;rgb:ff",
+        "\x1b]21;foreground=#ff",
+        "\x1b]22;def",
+        "\x1bP1+r5247",
+        "\x1b_Gi=31",
+      ];
+      let tails = ["\rab", "\nab", "\x7fab", "\x03", "\x1b[Aab", "\x1bxab"];
+      for (let response of truncated) {
+        for (let tail of tails) {
+          let reference = await createInput();
+          let expected = reference.scan(str(tail)).events;
+
+          let together = await createInput();
+          expect({
+            response,
+            tail,
+            events: together.scan(str(response + tail)).events,
+          })
+            .toEqual({ response, tail, events: expected });
+
+          let split = await createInput();
+          expect(split.scan(str(response)).events).toEqual([]);
+          expect({ response, tail, events: split.scan(str(tail)).events })
+            .toEqual({ response, tail, events: expected });
+        }
+      }
+    });
+
+    it("parses a complete response that follows a cut-off one", async () => {
+      let input = await createInput();
+      let result = input.scan(
+        str("\x1b]11;rgb:ff\x1b]10;rgb:00/00/00\x07"),
+      );
+      expect(result.events).toEqual([
+        {
+          type: "capability",
+          key: "foreground-color",
+          value: { r: 0, g: 0, b: 0 },
+        },
+      ]);
+    });
+
+    it("recovers from oversized OSC, DCS, and APC responses", async () => {
+      let filler = "x".repeat(2000);
+      for (
+        let response of [
+          `\x1b]11;${filler}\x07`,
+          `\x1bP1+r${filler}\x1b\\`,
+          `\x1b_G${filler}\x1b\\`,
+        ]
+      ) {
+        let input = await createInput();
+        let events = drain(input, str(response));
+        events.push(...drain(input, str("a")));
+        expect(events.filter((e) => e.type === "capability")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({ type: "keydown", key: "a" });
+      }
+    });
+
+    it("recovers when an incomplete private CSI response fills the input buffer", async () => {
+      let input = await createInput();
+      let events = drain(input, str("\x1b[?" + ";".repeat(4093)));
+      events.push(...drain(input, str("a")));
+      expect(events.at(-1)).toMatchObject({ type: "keydown", key: "a" });
+    });
+
+    it("does not wrap an overflowing private CSI parameter into a known mode", async () => {
+      let input = await createInput();
+      // 4294969322 = 2026 + 2^32
+      let result = input.scan(str("\x1b[?4294969322;1$ya"));
+      expect(result.events.filter((e) => e.type === "capability")).toEqual([]);
+      expect(result.events.at(-1)).toMatchObject({ type: "keydown", key: "a" });
     });
   });
 });

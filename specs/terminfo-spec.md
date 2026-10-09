@@ -27,7 +27,7 @@ event stream.
 ### In scope (normative)
 
 - The `Capabilities` interface: its fields and the rules for how they are set
-- The `Detection` value returned by `detectTerminal()`
+- The `TerminalInfo` value returned by `detectTerminal()`
 - The `CapabilityEvent` discriminated union and its `key`/`value` shapes
 - Compiled terminfo binary parsing (legacy and extended formats)
 - The probe model: query batch, DA1 completion fence, and sans-IO contract
@@ -52,7 +52,7 @@ event stream.
 state of one terminal, resolved at detection time. Frozen after `detectTerminal`
 returns. No WASM backing.
 
-**`Detection`.** The value returned by `detectTerminal()`. Carries the frozen
+**`TerminalInfo`.** The value returned by `detectTerminal()`. Carries the frozen
 `Capabilities`, the probe query batch (`probe`), and the raw terminfo
 key-sequence bytes the input parser needs to seed its trie (`keys`).
 
@@ -117,9 +117,9 @@ probe bytes ──▶ terminal ──▶ stdin                │
 
 ### 4.3 Standalone operation
 
-`createTerm` and `createInput` remain usable without a `Detection`. When no
-`detection` option is provided, each factory initializes from the §7.1 baseline.
-Behavior is identical to a `Detection` with no terminfo bytes, no environment
+`createTerm` and `createInput` remain usable without a `TerminalInfo`. When no
+`terminfo` option is provided, each factory initializes from the §7.1 baseline.
+Behavior is identical to a `TerminalInfo` with no terminfo bytes, no environment
 evidence, and no probe responses.
 
 ---
@@ -133,9 +133,11 @@ _This section is normative._
 it.
 
 **TINV-2. Pure parsing.** `terminfo_parse` performs no IO, allocates no memory,
-and never traps on malformed input. Input larger than 32 768 bytes is rejected
-at the TypeScript boundary. Malformed or truncated binaries yield the §7.1
-baseline and a nonzero parse-result code. They MUST NOT partially apply.
+and never traps on malformed input. Input larger than `MAX_TERMINFO_ENTRY`
+(32768 bytes) never reaches the parser: an oversized `entry` rejects at the
+TypeScript boundary (§10.1), and an oversized file found on the search path is
+skipped. Malformed or truncated binaries yield the §7.1 baseline and a nonzero
+parse-result code. They MUST NOT partially apply.
 
 **TINV-3. Progressive enhancement.** The capability layer starts from the
 conservative §7.1 baseline and raises a capability only on positive evidence.
@@ -145,10 +147,12 @@ responses. A capability no evidence supports keeps its baseline value.
 Higher-precedence evidence overrides lower-precedence evidence in both
 directions: a probe denial overrides a statically-set capability.
 
-**TINV-4. Sans-IO probe.** `Detection.probe` is a `Uint8Array` produced by
+**TINV-4. Sans-IO probe.** `TerminalInfo.probe` is a `Uint8Array` produced by
 `detectTerminal()` without touching any stream. The host writes the bytes.
 `detectTerminal()` resolves — never rejects — on timeout, non-TTY streams, a
-missing terminfo file, or abort.
+missing, oversized, or malformed terminfo file, or abort. Environmental
+conditions degrade to the §7.1 baseline. The only rejection is caller error
+(§10.1).
 
 **TINV-5. Immediate update output.** `term.update()` returns a `Uint8Array` of
 bytes to write now. It MUST NOT defer output to the next `render()` call. An
@@ -190,8 +194,8 @@ interface Capabilities {
 | `styledUnderline` | `Su` boolean or `Smulx` string                                      |
 
 Key sequences (`key_*` capabilities) are not stored here. The input parser reads
-them directly from the raw terminfo bytes in `Detection.keys` at initialization
-time.
+them directly from the raw terminfo bytes in `TerminalInfo.keys` at
+initialization time.
 
 ### 6.2 `ColorDepth`
 
@@ -382,7 +386,8 @@ Specification §6.1 for the key set).
 
 _This section is normative._
 
-`Detection.probe` contains the following queries as one `Uint8Array`, in order:
+`TerminalInfo.probe` contains the following queries as one `Uint8Array`, in
+order:
 
 | #  | Query               | Bytes                                                | `CapabilityEvent` key |
 | -- | ------------------- | ---------------------------------------------------- | --------------------- |
@@ -429,16 +434,16 @@ _This section is normative for the shapes shown._
 ### 10.1 `detectTerminal`
 
 ```ts
-function detectTerminal(options?: DetectOptions): Promise<Detection>;
+function detectTerminal(options?: DetectOptions): Promise<TerminalInfo>;
 
 interface DetectOptions {
   term?: string;
   env?: Record<string, string | undefined>;
-  terminfo?: Uint8Array;
+  entry?: Uint8Array;
   signal?: AbortSignal;
 }
 
-interface Detection {
+interface TerminalInfo {
   readonly capabilities: Capabilities;
   /**
    * Write to stdout immediately after detection. Responses arrive as
@@ -454,20 +459,24 @@ type KeyTable = Uint8Array;
 
 `detectTerminal()`:
 
-1. Locates and reads the compiled terminfo entry for the terminal (unless raw
-   bytes are provided via `terminfo`), following the ncurses search path:
+1. Rejects with a `RangeError` if `entry` is provided and exceeds
+   `MAX_TERMINFO_ENTRY` bytes. This is the only rejection: it reports invalid
+   caller input, not an environmental condition.
+2. Locates and reads the compiled terminfo entry for the terminal (unless raw
+   bytes are provided via `entry`), following the ncurses search path:
    `$TERMINFO`, `$HOME/.terminfo`, `$TERMINFO_DIRS` (empty entry = compiled-in
    defaults), then `/usr/share/terminfo`, `/etc/terminfo`, `/lib/terminfo`,
    `/usr/lib/terminfo`. Both directory layouts are probed: first-letter (Linux)
    and two-hex-digit (macOS). Names with path separators, NUL, or a leading `.`
-   are rejected. Files are validated by magic number.
-2. Parses the bytes into `Capabilities` and extracts key-sequence bytes into
+   are rejected. Files are validated by magic number and skipped when larger
+   than `MAX_TERMINFO_ENTRY`.
+3. Parses the bytes into `Capabilities` and extracts key-sequence bytes into
    `keys`.
-3. Applies environment evidence (§7.2) from the injectable `env`.
-4. Constructs `probe` without performing any IO.
-5. Resolves the `Detection`. It never rejects.
+4. Applies environment evidence (§7.2) from the injectable `env`.
+5. Constructs `probe` without performing any IO.
+6. Resolves the `TerminalInfo`. Apart from step 1, it never rejects.
 
-Every environmental dependency is injectable (`env`, `terminfo`), making the
+Every environmental dependency is injectable (`env`, `entry`), making the
 function fully testable without a TTY or real terminfo files.
 
 ### 10.2 `createTerm`
@@ -476,12 +485,12 @@ function fully testable without a TTY or real terminfo files.
 function createTerm(options: {
   width: number;
   height: number;
-  detection?: Detection;
+  terminfo?: TerminalInfo;
 }): Promise<Term>;
 ```
 
-When `detection` is provided, the renderer initializes its private
-`RuntimeCapabilities` from `detection.capabilities` and `RuntimeCapabilities`
+When `terminfo` is provided, the renderer initializes its private
+`RuntimeCapabilities` from `terminfo.capabilities` and `RuntimeCapabilities`
 dynamic fields at their baseline values. When omitted, the renderer uses the
 §7.1 baseline for all fields.
 
@@ -490,12 +499,12 @@ dynamic fields at their baseline values. When omitted, the renderer uses the
 ```ts
 function createInput(options?: {
   escLatency?: number;
-  detection?: Detection;
+  terminfo?: TerminalInfo;
 }): Promise<Input>;
 ```
 
-When `detection` is provided, the parser loads its key trie from
-`detection.keys`. When omitted, the parser uses built-in xterm key sequences.
+When `terminfo` is provided, the parser loads its key trie from `terminfo.keys`.
+When omitted, the parser uses built-in xterm key sequences.
 
 ### 10.4 `Term.update`
 
@@ -528,11 +537,11 @@ import { detectTerminal } from "./terminfo.ts";
 import { createTerm } from "./term.ts";
 import { createInput } from "./input.ts";
 
-const detection = await detectTerminal({ env: process.env });
-const term = await createTerm({ width: 80, height: 24, detection });
-const input = await createInput({ detection });
+const terminfo = await detectTerminal({ env: process.env });
+const term = await createTerm({ width: 80, height: 24, terminfo });
+const input = await createInput({ terminfo });
 
-process.stdout.write(detection.probe);
+process.stdout.write(terminfo.probe);
 
 process.stdin.on("data", (bytes: Uint8Array) => {
   const { events } = input.scan(bytes);
@@ -556,9 +565,9 @@ process.on("SIGWINCH", () => {
 });
 ```
 
-`createTerm` and `createInput` each take `detection` and build their own private
-state from it. Passing the same `Detection` to both passes the same plain value
-twice. There is no shared memory and no attachment guard.
+`createTerm` and `createInput` each take `terminfo` and build their own private
+state from it. Passing the same `TerminalInfo` to both passes the same plain
+value twice. There is no shared memory and no attachment guard.
 
 ---
 
@@ -575,8 +584,8 @@ dark/light switching is not tracked.
 **XTVERSION / DA2 / DA3 identity parsing.** The DA1 reply is used purely as a
 fence; terminal identification is not extracted.
 
-**Re-probing after suspend/resume.** `Detection.probe` may be written again by
-the host at any time; responses arrive as events as normal. The spec does not
+**Re-probing after suspend/resume.** `TerminalInfo.probe` may be written again
+by the host at any time; responses arrive as events as normal. The spec does not
 define a managed re-probe lifecycle.
 
 **Pixel mouse (1016) and in-band resize (2048) probing.** Candidates for the

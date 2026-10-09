@@ -5,10 +5,10 @@ export * from "./settings.ts";
 export * from "./termcodes.ts";
 export {
   type Capabilities,
-  type Detection,
   type DetectOptions,
   detectTerminal,
   type KeyTable,
-  MAX_TERMINFO,
+  MAX_TERMINFO_ENTRY,
   type Rgb,
+  type TerminalInfo,
 } from "./terminfo.ts";

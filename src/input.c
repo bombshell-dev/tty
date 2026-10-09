@@ -13,12 +13,27 @@
  */
 
 #include "input.h"
+#include "terminfo.h"
 #include "trie.h"
+
+/* CAP_COLORDEPTH value encoding (must match input-native.ts): */
+#define COLORDEPTH_16 0
+#define COLORDEPTH_256 1
+#define COLORDEPTH_TRUECOLOR 2
 #include "mem.h"
 #include "utf8.h"
 
 #define SCAN_BUFFER_SIZE 4096
 #define MAX_EVENTS 128
+/* Longest capability query response we will buffer before giving up. */
+#define MAX_RESPONSE 1024
+#define MAX_CSI_PARAM 99999
+/* Longest terminfo key sequence loaded into the trie (input-spec 6.1). */
+#define MAX_TERMINFO_KEY 16
+
+#define TCAP_RGB_DENIED 1
+#define TCAP_TC_DENIED 2
+#define TCAP_CONFIRMED 4
 
 /* ── State ────────────────────────────────────────────────────────── */
 
@@ -30,6 +45,8 @@ struct InputState {
   struct InputEvent events[MAX_EVENTS];
   int count;
   int trie_len;
+  int colors;
+  uint8_t tcap;
   Trie trie;
 };
 
@@ -689,6 +706,409 @@ static int parse_csi_legacy(struct InputState *st, struct InputEvent *ev) {
   return PARSE_OK;
 }
 
+/* ── Capability query responses (terminfo-spec section 9) ─────────── */
+
+/* Emit a boolean capability event (type=EVENT_CAPABILITY, key=cap_key,
+ * ch=1 for true / 0 for false). */
+static void emit_cap_bool(struct InputState *st, uint8_t cap_key, int on) {
+  struct InputEvent *ev = emit(st);
+  ev->type = EVENT_CAPABILITY;
+  ev->key = cap_key;
+  ev->ch = on ? 1 : 0;
+}
+
+/* Emit an Rgb color capability event (ch = packed 0x00RRGGBB). */
+static void emit_cap_color(struct InputState *st, uint8_t cap_key,
+                           uint32_t color) {
+  struct InputEvent *ev = emit(st);
+  ev->type = EVENT_CAPABILITY;
+  ev->key = cap_key;
+  ev->ch = color;
+}
+
+static int hexval(char c) {
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  return -1;
+}
+
+/* Scale a 1-4 hex digit channel to 8-bit (rounded). */
+static int color_channel(const char *s, int n, uint32_t *out) {
+  if (n < 1 || n > 4)
+    return 0;
+  int v = 0;
+  for (int i = 0; i < n; i++) {
+    int h = hexval(s[i]);
+    if (h < 0)
+      return 0;
+    v = v * 16 + h;
+  }
+  int max = (1 << (4 * n)) - 1;
+  *out = (uint32_t)((v * 255 + max / 2) / max);
+  return 1;
+}
+
+/* Parse an OSC color payload: X11 "rgb:R/G/B" (1-4 hex digits per
+ * channel, "rgba:" alpha ignored) or "#"-hash with equal-width
+ * channels. Returns 0 when no color is recognized. */
+static int parse_color_spec(const char *s, int len, uint32_t *out) {
+  if (len >= 4 && s[0] == 'r' && s[1] == 'g' && s[2] == 'b') {
+    int i = 3;
+    int alpha = i < len && s[i] == 'a';
+    if (alpha)
+      i++;
+    if (i >= len || s[i] != ':')
+      return 0;
+    i++;
+    uint32_t ch[3];
+    for (int c = 0; c < 3; c++) {
+      int start = i;
+      while (i < len && hexval(s[i]) >= 0)
+        i++;
+      if (!color_channel(s + start, i - start, &ch[c]))
+        return 0;
+      if (c < 2) {
+        if (i >= len || s[i] != '/')
+          return 0;
+        i++;
+      }
+    }
+    if (alpha) {
+      if (i >= len || s[i] != '/')
+        return 0;
+      int start = ++i;
+      while (i < len && hexval(s[i]) >= 0)
+        i++;
+      uint32_t ignored;
+      if (!color_channel(s + start, i - start, &ignored))
+        return 0;
+    }
+    if (i != len)
+      return 0;
+    *out = (ch[0] << 16) | (ch[1] << 8) | ch[2];
+    return 1;
+  }
+  if (len >= 4 && s[0] == '#') {
+    int n = 0;
+    while (1 + n < len && hexval(s[1 + n]) >= 0)
+      n++;
+    if (1 + n != len || n % 3 != 0)
+      return 0;
+    int w = n / 3;
+    uint32_t ch[3];
+    for (int c = 0; c < 3; c++) {
+      if (!color_channel(s + 1 + c * w, w, &ch[c]))
+        return 0;
+    }
+    *out = (ch[0] << 16) | (ch[1] << 8) | ch[2];
+    return 1;
+  }
+  return 0;
+}
+
+static int payload_contains(const char *s, int len, const char *needle) {
+  int n = (int)strlen(needle);
+  for (int i = 0; i + n <= len; i++) {
+    int j = 0;
+    while (j < n && s[i + j] == needle[j])
+      j++;
+    if (j == n)
+      return 1;
+  }
+  return 0;
+}
+
+#define ST_NEED_MORE 0
+#define ST_TOO_LONG -1
+#define ST_ENDED_EARLY -2
+
+static int ends_response(char c) {
+  uint8_t b = (uint8_t)c;
+  return (b < 0x20 && b != 0x07 && b != 0x1b) || b == 0x7f;
+}
+
+/* Find the BEL or ST terminator of a response payload starting at
+ * `start` (input-spec section 6.3). Returns the index one past the
+ * terminator, ST_NEED_MORE, ST_TOO_LONG past MAX_RESPONSE, or
+ * ST_ENDED_EARLY with *at set to the byte that cut the response off. */
+static int find_st(struct InputState *st, int start, int *at) {
+  for (int i = start; i < st->len; i++) {
+    char c = st->buf[i];
+    if (c == '\x07')
+      return i + 1;
+    if (c == '\x1b') {
+      if (i + 1 >= st->len)
+        return ST_NEED_MORE;
+      if (st->buf[i + 1] == '\\')
+        return i + 2;
+      *at = i;
+      return ST_ENDED_EARLY;
+    }
+    if (ends_response(c)) {
+      *at = i;
+      return ST_ENDED_EARLY;
+    }
+    if (i - start > MAX_RESPONSE)
+      return ST_TOO_LONG;
+  }
+  return ST_NEED_MORE;
+}
+
+/* OSC 21 payload: ";"-separated key=value pairs. */
+static void osc21_apply(struct InputState *st, const char *s, int len) {
+  int i = 0;
+  while (i < len) {
+    int start = i;
+    while (i < len && s[i] != ';')
+      i++;
+    int eq = start;
+    while (eq < i && s[eq] != '=')
+      eq++;
+    if (eq < i) {
+      const char *key = s + start;
+      int klen = eq - start;
+      const char *val = s + eq + 1;
+      int vlen = i - eq - 1;
+      uint32_t color;
+      if (vlen > 0 && parse_color_spec(val, vlen, &color)) {
+        if (klen == 10 && payload_contains(key, klen, "foreground")) {
+          emit_cap_color(st, CAP_FOREGROUND_COLOR, color);
+        } else if (klen == 10 && payload_contains(key, klen, "background")) {
+          emit_cap_color(st, CAP_BACKGROUND_COLOR, color);
+        } else if (klen == 6 && payload_contains(key, klen, "cursor")) {
+          emit_cap_color(st, CAP_CURSOR_COLOR, color);
+        }
+      }
+    }
+    if (i < len)
+      i++;
+  }
+}
+
+/* OSC 10/11/12 theme color reports, OSC 21 kitty color, OSC 22 kitty
+ * pointer shape. Other OSC numbers are not consumed. */
+static int parse_osc_response(struct InputState *st) {
+  int i = 2;
+  int num = -1;
+  while (i < st->len && st->buf[i] >= '0' && st->buf[i] <= '9') {
+    num = (num == -1 ? 0 : num) * 10 + (st->buf[i] - '0');
+    if (num > 22)
+      return PARSE_ERR;
+    i++;
+  }
+  if (i >= st->len)
+    return PARSE_NEED_MORE;
+  if (st->buf[i] != ';')
+    return PARSE_ERR;
+  if (num != 10 && num != 11 && num != 12 && num != 21 && num != 22)
+    return PARSE_ERR;
+  i++;
+
+  int at = 0;
+  int end = find_st(st, i, &at);
+  if (end == ST_NEED_MORE)
+    return PARSE_NEED_MORE;
+  if (end == ST_ENDED_EARLY) {
+    shift(st, at);
+    return PARSE_OK;
+  }
+  if (end == ST_TOO_LONG)
+    return PARSE_ERR;
+
+  int plen = end - i;
+  if (st->buf[end - 1] == '\x07') {
+    plen -= 1;
+  } else {
+    plen -= 2;
+  }
+  const char *payload = st->buf + i;
+
+  uint32_t color;
+  switch (num) {
+  case 10:
+    if (parse_color_spec(payload, plen, &color))
+      emit_cap_color(st, CAP_FOREGROUND_COLOR, color);
+    break;
+  case 11:
+    if (parse_color_spec(payload, plen, &color))
+      emit_cap_color(st, CAP_BACKGROUND_COLOR, color);
+    break;
+  case 12:
+    if (parse_color_spec(payload, plen, &color))
+      emit_cap_color(st, CAP_CURSOR_COLOR, color);
+    break;
+  case 21:
+    osc21_apply(st, payload, plen);
+    break;
+  case 22:
+    emit_cap_bool(st, CAP_POINTER_SHAPE, 1);
+    break;
+  }
+
+  shift(st, end);
+  return PARSE_OK;
+}
+
+/* XTGETTCAP reply: DCS 1 + r … ST (valid) or DCS 0 + r … ST (invalid).
+ * We only query RGB (524742) and Tc (5463). A valid reply naming either
+ * confirms truecolor. The static tier is emitted only once both are
+ * denied without a confirmation since the last DA1 fence; an invalid
+ * reply naming neither denies both. */
+static int parse_dcs_response(struct InputState *st) {
+  if (st->len < 5)
+    return PARSE_NEED_MORE;
+  char ok = st->buf[2];
+  if ((ok != '0' && ok != '1') || st->buf[3] != '+' || st->buf[4] != 'r')
+    return PARSE_ERR;
+
+  int at = 0;
+  int end = find_st(st, 5, &at);
+  if (end == ST_NEED_MORE)
+    return PARSE_NEED_MORE;
+  if (end == ST_ENDED_EARLY) {
+    shift(st, at);
+    return PARSE_OK;
+  }
+  if (end == ST_TOO_LONG)
+    return PARSE_ERR;
+
+  const char *payload = st->buf + 5;
+  int plen = end - 5 - (st->buf[end - 1] == '\x07' ? 1 : 2);
+  int rgb = payload_contains(payload, plen, "524742");
+  int tc = payload_contains(payload, plen, "5463");
+  if (ok == '1') {
+    if (rgb || tc) {
+      st->tcap |= TCAP_CONFIRMED;
+      struct InputEvent *ev = emit(st);
+      ev->type = EVENT_CAPABILITY;
+      ev->key = CAP_COLORDEPTH;
+      ev->ch = COLORDEPTH_TRUECOLOR;
+    }
+  } else if (!(st->tcap & TCAP_CONFIRMED)) {
+    uint8_t before = st->tcap;
+    if (rgb || !tc)
+      st->tcap |= TCAP_RGB_DENIED;
+    if (tc || !rgb)
+      st->tcap |= TCAP_TC_DENIED;
+    uint8_t both = TCAP_RGB_DENIED | TCAP_TC_DENIED;
+    if ((st->tcap & both) == both && (before & both) != both) {
+      struct InputEvent *ev = emit(st);
+      ev->type = EVENT_CAPABILITY;
+      ev->key = CAP_COLORDEPTH;
+      ev->ch = (st->colors <= 16) ? COLORDEPTH_16 : COLORDEPTH_256;
+    }
+  }
+
+  shift(st, end);
+  return PARSE_OK;
+}
+
+/* Kitty graphics reply: APC _G … ST with ";OK" on success. */
+static int parse_apc_response(struct InputState *st) {
+  if (st->len < 3)
+    return PARSE_NEED_MORE;
+  if (st->buf[2] != 'G')
+    return PARSE_ERR;
+
+  int at = 0;
+  int end = find_st(st, 3, &at);
+  if (end == ST_NEED_MORE)
+    return PARSE_NEED_MORE;
+  if (end == ST_ENDED_EARLY) {
+    shift(st, at);
+    return PARSE_OK;
+  }
+  if (end == ST_TOO_LONG)
+    return PARSE_ERR;
+
+  const char *payload = st->buf + 3;
+  int plen = end - 3 - (st->buf[end - 1] == '\x07' ? 1 : 2);
+  emit_cap_bool(st, CAP_KITTY_GRAPHICS, payload_contains(payload, plen, ";OK"));
+
+  shift(st, end);
+  return PARSE_OK;
+}
+
+/* CSI ? … replies: kitty keyboard flags (final 'u'), DECRPM (final 'y'
+ * with '$' intermediate), DA1 device attributes (final 'c'). */
+static int parse_csi_private(struct InputState *st) {
+  if (st->len < 3)
+    return PARSE_NEED_MORE;
+  if (st->buf[2] != '?')
+    return PARSE_ERR;
+
+  int nums[4] = {-1, -1, -1, -1};
+  int ni = 0;
+  int cur = -1;
+  char intermediate = 0;
+  int i = 3;
+
+  while (i < st->len) {
+    if (i - 3 > MAX_RESPONSE)
+      return PARSE_ERR;
+    char c = st->buf[i];
+    if (c >= '0' && c <= '9') {
+      if (cur == -1)
+        cur = 0;
+      if (cur <= MAX_CSI_PARAM)
+        cur = cur * 10 + (c - '0');
+    } else if (c == ';' || c == ':') {
+      if (ni < 4)
+        nums[ni++] = cur;
+      cur = -1;
+    } else if (c >= 0x20 && c <= 0x2f) {
+      intermediate = c;
+    } else if (c >= 0x40 && c <= 0x7e) {
+      if (ni < 4)
+        nums[ni++] = cur;
+      i++;
+
+      if (c == 'u' && intermediate == 0) {
+        emit_cap_bool(st, CAP_KITTY_KEYBOARD, 1);
+      } else if (c == 'y' && intermediate == '$') {
+        if (nums[0] == 2026 && ni >= 2) {
+          int v = nums[1];
+          emit_cap_bool(st, CAP_SYNC_OUTPUT, v == 1 || v == 2 || v == 3);
+        }
+        /* other modes: consumed silently */
+      } else if (c == 'c' && intermediate == 0) {
+        /* DA1 fence: consumed silently, MUST NOT surface as CapabilityEvent */
+        st->tcap = 0;
+      } else {
+        return PARSE_ERR;
+      }
+
+      shift(st, i);
+      return PARSE_OK;
+    } else {
+      return PARSE_ERR;
+    }
+    i++;
+  }
+  return PARSE_NEED_MORE;
+}
+
+static int parse_response(struct InputState *st) {
+  if (st->len < 2)
+    return PARSE_NEED_MORE;
+  switch (st->buf[1]) {
+  case ']':
+    return parse_osc_response(st);
+  case 'P':
+    return parse_dcs_response(st);
+  case '_':
+    return parse_apc_response(st);
+  case '[':
+    return parse_csi_private(st);
+  default:
+    return PARSE_ERR;
+  }
+}
+
 /* ── Cap table (xterm defaults) ───────────────────────────────────── */
 
 struct CapEntry {
@@ -927,15 +1347,63 @@ static const struct CapEntry mod_caps[] = {
 
 /* ── Public API ───────────────────────────────────────────────────── */
 
+/* terminfo key_* string capability indices (ncurses Caps) mapped to
+ * KEY_* codes. Indices verified against tic output. */
+struct KeyCap {
+  uint16_t index;
+  uint16_t key;
+};
+
+static const struct KeyCap key_caps[] = {
+    {59, KEY_DELETE},      /* kdch1 */
+    {61, KEY_ARROW_DOWN},  /* kcud1 */
+    {66, KEY_F1},          /* kf1 */
+    {67, KEY_F10},         /* kf10 */
+    {68, KEY_F2},          /* kf2 */
+    {69, KEY_F3},          /* kf3 */
+    {70, KEY_F4},          /* kf4 */
+    {71, KEY_F5},          /* kf5 */
+    {72, KEY_F6},          /* kf6 */
+    {73, KEY_F7},          /* kf7 */
+    {74, KEY_F8},          /* kf8 */
+    {75, KEY_F9},          /* kf9 */
+    {76, KEY_HOME},        /* khome */
+    {77, KEY_INSERT},      /* kich1 */
+    {79, KEY_ARROW_LEFT},  /* kcub1 */
+    {81, KEY_PGDN},        /* knp */
+    {82, KEY_PGUP},        /* kpp */
+    {83, KEY_ARROW_RIGHT}, /* kcuf1 */
+    {87, KEY_ARROW_UP},    /* kcuu1 */
+    {148, KEY_BACKTAB},    /* kcbt */
+    {164, KEY_END},        /* kend */
+    {216, KEY_F11},        /* kf11 */
+    {217, KEY_F12},        /* kf12 */
+    {0, 0},
+};
+
 int input_size(void) { return align8((int)sizeof(struct InputState)); }
 
-struct InputState *input_init(void *mem, int esc_latency_ms) {
+struct InputState *input_init(void *mem, int esc_latency_ms,
+                              const uint8_t *terminfo, int terminfo_len,
+                              int initial_colors) {
   struct InputState *st = (struct InputState *)mem;
   memset(st, 0, sizeof(struct InputState));
   st->esc_latency_ms = esc_latency_ms;
+  st->colors = initial_colors > 0 ? initial_colors : 256;
 
-  /* build escape sequence trie from cap tables */
+  /* build escape sequence trie: terminfo keys first (first writer wins
+   * in trie_add, so the entry's sequences take precedence), then the
+   * xterm defaults for anything the entry does not define */
   trie_init(st->trie, &st->trie_len);
+  if (terminfo && terminfo_len > 0) {
+    for (int i = 0; key_caps[i].key; i++) {
+      int n = 0;
+      const char *seq =
+          terminfo_str(terminfo, terminfo_len, key_caps[i].index, &n);
+      if (seq && n > 0 && n <= MAX_TERMINFO_KEY)
+        trie_add(st->trie, &st->trie_len, seq, n, key_caps[i].key, 0);
+    }
+  }
   for (int i = 0; base_caps[i].seq; i++)
     trie_add(st->trie, &st->trie_len, base_caps[i].seq,
              strlen(base_caps[i].seq), base_caps[i].key, base_caps[i].mod);
@@ -944,6 +1412,10 @@ struct InputState *input_init(void *mem, int esc_latency_ms) {
              mod_caps[i].key, mod_caps[i].mod);
 
   return st;
+}
+
+static int is_introducer(char c) {
+  return c == '[' || c == 'O' || c == ']' || c == 'P' || c == '_';
 }
 
 int input_scan(struct InputState *st, const char *buf, int len, double now) {
@@ -974,6 +1446,22 @@ int input_scan(struct InputState *st, const char *buf, int len, double now) {
           continue;
         }
         /* pending — caller should retry after timeout */
+        return accepted;
+      }
+
+      /* ESC + lone introducer: Alt+key or the start of a sequence */
+      if (st->len == 2 && is_introducer(st->buf[1])) {
+        if (st->esc_time == 0)
+          st->esc_time = now;
+        if (now - st->esc_time >= (double)st->esc_latency_ms) {
+          struct InputEvent *ev = emit(st);
+          ev->type = EVENT_KEY;
+          ev->mod = MOD_ALT;
+          ev->ch = (uint8_t)st->buf[1];
+          shift(st, 2);
+          st->esc_time = 0;
+          continue;
+        }
         return accepted;
       }
 
@@ -1053,6 +1541,18 @@ int input_scan(struct InputState *st, const char *buf, int len, double now) {
         if (rv == PARSE_OK) {
           struct InputEvent *ev = emit(st);
           *ev = kev;
+          st->esc_time = 0;
+          continue;
+        }
+        if (rv == PARSE_NEED_MORE) {
+          return accepted;
+        }
+      }
+
+      /* try capability query responses (OSC/DCS/APC/CSI ?) */
+      {
+        int rv = parse_response(st);
+        if (rv == PARSE_OK) {
           st->esc_time = 0;
           continue;
         }

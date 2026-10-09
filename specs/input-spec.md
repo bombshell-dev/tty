@@ -78,9 +78,9 @@ Options:
   responsiveness (lower values) and correct disambiguation of ESC-prefixed
   sequences (higher values).
 
-- **`detection`** — A `Detection` value from `detectTerminal()` (see
+- **`terminfo`** — A `TerminalInfo` value from `detectTerminal()` (see
   [Terminfo Specification](terminfo-spec.md) §10.1). Terminal-specific key
-  sequences from `detection.keys` are loaded into the parser's escape sequence
+  sequences from `terminfo.keys` are loaded into the parser's escape sequence
   trie at initialization (Section 6.1). When omitted, the parser uses built-in
   xterm default sequences.
 
@@ -112,6 +112,13 @@ returns immediately.
   `scan()` with no arguments) after the indicated delay. The `delay` field is a
   relative duration in milliseconds. The `deadline` field is an absolute
   timestamp (milliseconds since epoch) for the same point in time.
+
+An ESC followed by exactly one introducer byte — `[`, `O`, `]`, `P`, or `_` —
+and nothing else is ambiguous in the same way: it is either an Alt-modified key
+or the start of an escape sequence or probe response. The parser MUST treat it
+as pending and report `pending`. If no further bytes arrive within `escLatency`,
+the rescan MUST resolve it as a key event for the introducer character with
+`alt: true`.
 
 ---
 
@@ -149,7 +156,7 @@ capability layer specified by the [Terminfo Specification](terminfo-spec.md)._
 
 ### 6.1 Key sequences from terminfo
 
-When given a `detection` value whose `keys` field is present, the parser MUST
+When given a `terminfo` value whose `keys` field is present, the parser MUST
 load the terminal's `key_*` string capabilities into its escape sequence trie at
 initialization, before any scan. Terminfo-supplied sequences take precedence
 over the built-in xterm defaults when they conflict; defaults remain registered
@@ -159,7 +166,7 @@ The key capabilities consumed are the `key_*` string range mapped to existing
 `KEY_*` codes: arrows (`kcuu1`, `kcud1`, `kcub1`, `kcuf1`), function keys
 (`kf1`–`kf12`), editing keys (`khome`, `kend`, `kich1`, `kdch1`, `kpp`, `knp`),
 and backtab (`kcbt`). Key capabilities with no corresponding `KEY_*` code are
-ignored.
+ignored. Terminfo key sequences longer than 16 bytes are ignored.
 
 ### 6.2 Query response recognition
 
@@ -175,8 +182,23 @@ For each recognized response the parser MUST emit a `CapabilityEvent` in the
 consumed silently: they MUST NOT surface as `InputEvent`s, and bytes belonging
 to a recognized response MUST NOT leak into adjacent events.
 
-When the parser is standalone (no `detection`), responses are still recognized
+When the parser is standalone (no `terminfo`), responses are still recognized
 and consumed so stray replies never corrupt the event stream.
+
+### 6.3 Response termination
+
+OSC, DCS, and APC responses are terminated by BEL (`0x07`) or ST (`ESC \`). Once
+the parser has recognized a response header — `ESC ] Ps ;` with `Ps` one of 10,
+11, 12, 21, or 22; `ESC P 0 + r` or `ESC P 1 + r`; or `ESC _ G` — the following
+bytes end the response early instead:
+
+- any other C0 control: `0x00`–`0x06`, `0x08`–`0x1A`, `0x1C`–`0x1F`;
+- DEL (`0x7F`);
+- ESC followed by any byte other than `\`.
+
+When a response ends early, the parser MUST discard the bytes received for it
+and MUST NOT emit a `CapabilityEvent` for it. Parsing resumes at the byte that
+ended the response, so the key or sequence it begins is delivered normally.
 
 ---
 
