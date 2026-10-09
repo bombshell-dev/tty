@@ -51,9 +51,10 @@ struct Clayterm *ct_active_context = NULL;
 /* clip stack depth: nesting beyond this clamps to the deepest rect */
 #define CLIP_STACK_MAX 16
 
-/* Clayterm-specific error code, numbered past Clay's error enum (0..8).
+/* Clayterm-specific error codes, numbered past Clay's error enum (0..8).
  * Mirrored by ERROR_TYPES in term.ts. */
 #define CLAYTERM_ERR_CLIP_DEPTH_EXCEEDED 9
+#define CLAYTERM_ERR_COMBINING_MARKS_EXCEEDED 10
 
 #define CLAYTERM_STR_(x) #x
 #define CLAYTERM_STR(x) CLAYTERM_STR_(x)
@@ -80,6 +81,8 @@ struct Clayterm {
   int clipoverflow;
   /* set once per frame when nesting first exceeds the tracked depth */
   int clip_depth_exceeded;
+  /* set once per frame when a cell first runs out of combining-mark slots */
+  int combining_exceeded;
   /* error collection */
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
@@ -109,7 +112,9 @@ struct Clayterm {
  * Output buffer is sized at 64 bytes per cell — enough for worst-case
  * full-screen redraws with truecolor SGR sequences on every cell.
  */
-#define OUT_BYTES_PER_CELL 64
+/* 128 bytes per cell: ~84 bytes worst-case for CUP + SGR sequences, plus up
+ * to 4 (base SMP char) + 8×4 (combining marks) = 36 bytes of cluster text. */
+#define OUT_BYTES_PER_CELL 128
 
 /* ── Cell buffer ops ──────────────────────────────────────────────── */
 
@@ -117,15 +122,15 @@ static Cell *cell_at(struct Clayterm *ct, Cell *buf, int x, int y) {
   return &buf[y * ct->w + x];
 }
 
-static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
-                    uint32_t bg) {
+static int setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
+                   uint32_t bg) {
   if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
-    return;
+    return 0;
   if (ct->clipping) {
     if (x < ct->clipx || x >= ct->clipx + ct->clipw)
-      return;
+      return 0;
     if (y < ct->clipy || y >= ct->clipy + ct->cliph)
-      return;
+      return 0;
   }
   Cell *c = cell_at(ct, ct->back, x, y);
   c->ch = ch;
@@ -133,6 +138,45 @@ static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
   if (!(bg & ATTR_DEFAULT)) {
     c->bg = bg;
   }
+  for (int i = 0; i < CELL_MAX_COMBINING; i++)
+    c->combining[i] = 0;
+  return 1;
+}
+
+/* Surface a COMBINING_MARKS_EXCEEDED error once per frame. */
+static void report_combining_exceeded(struct Clayterm *ct) {
+  if (ct->combining_exceeded)
+    return;
+  ct->combining_exceeded = 1;
+  if (ct->error_count >= MAX_ERRORS)
+    return;
+  static const char msg[] =
+      "cell exceeds combining-mark limit of " CLAYTERM_STR(
+          CELL_MAX_COMBINING) "; excess marks truncated";
+  ct->errors[ct->error_count++] = (Clay_ErrorData){
+      .errorType = (Clay_ErrorType)CLAYTERM_ERR_COMBINING_MARKS_EXCEEDED,
+      .errorText = {.isStaticallyAllocated = true,
+                    .length = (int32_t)(sizeof(msg) - 1),
+                    .chars = msg},
+      .userData = ct,
+  };
+}
+
+/* Append a combining-mark codepoint to the cell at (x, y) in the back buffer.
+ * Marks beyond CELL_MAX_COMBINING are dropped (truncation from end) and
+ * reported once per frame.
+ */
+static void append_combining(struct Clayterm *ct, int x, int y, uint32_t cp) {
+  if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
+    return;
+  Cell *c = cell_at(ct, ct->back, x, y);
+  for (int i = 0; i < CELL_MAX_COMBINING; i++) {
+    if (c->combining[i] == 0) {
+      c->combining[i] = cp;
+      return;
+    }
+  }
+  report_combining_exceeded(ct);
 }
 
 /* ── Escape sequence generation ───────────────────────────────────── */
@@ -238,6 +282,8 @@ static void present_cups(struct Clayterm *ct, int row) {
             emit_ch(ct, i, y, row, ' ');
         } else {
           emit_ch(ct, x, y, row, back->ch);
+          for (int ci = 0; ci < CELL_MAX_COMBINING && back->combining[ci]; ci++)
+            buf_char(&ct->out, back->combining[ci]);
           /* mark trailing cells of wide char as invalid in front
            * so they'll diff when overwritten by narrow chars */
           for (int i = 1; i < w; i++) {
@@ -298,6 +344,8 @@ static void present_lines(struct Clayterm *ct) {
         if (!iswprint(ch))
           ch = 0xfffd;
         buf_char(&ct->out, ch);
+        for (int ci = 0; ci < CELL_MAX_COMBINING && back->combining[ci]; ci++)
+          buf_char(&ct->out, back->combining[ci]);
         for (int i = 1; i < w; i++) {
           Cell *fw = cell_at(ct, ct->front, x + i, y);
           fw->ch = 0xffffffff;
@@ -391,6 +439,7 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
   const char *p = slice;
   int rem = slice_len;
   int x = x0;
+  int last_x = -1; /* column of the most-recently written base cell */
 
   while (rem > 0) {
     /* Check at the top of each iteration: if the pointer we are about to
@@ -414,8 +463,11 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
     if (cw < 0)
       cw = 1;
     if (cw > 0) {
-      setcell(ct, x, y0, cp, fg, bg);
+      last_x = setcell(ct, x, y0, cp, fg, bg) ? x : -1;
       x += cw;
+    } else if (last_x >= 0) {
+      /* combining mark: attach to the preceding base cell */
+      append_combining(ct, last_x, y0, cp);
     }
     p += n;
     rem -= n;
@@ -870,6 +922,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   ct->clipdepth = 0;
   ct->clipoverflow = 0;
   ct->clip_depth_exceeded = 0;
+  ct->combining_exceeded = 0;
   ct->clipping = 0;
 
   cells_fill(ct->back, ct->w, ct->h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);

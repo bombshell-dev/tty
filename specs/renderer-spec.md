@@ -603,6 +603,15 @@ NOT override the background already present in each glyph cell; element
 backgrounds established by `open({ bg })` remain in effect, and the terminal
 default remains in effect where no element background applies.
 
+**Grapheme cluster preservation.** When `content` contains grapheme clusters — a
+base codepoint followed by one or more combining marks (Unicode codepoints with
+`wcwidth` ≤ 0) — the renderer MUST preserve and emit the full cluster. Combining
+marks MUST NOT be silently dropped. Combining marks do not advance the cursor
+position; they are attached to the preceding base codepoint's cell and emitted
+immediately after the base codepoint's bytes in the output stream. A cell
+occupied by a grapheme cluster with combining marks MUST be treated as changed
+(and thus emitted) when any mark in the cluster changes between frames.
+
 The set of styling properties accepted by `props` is part of the current
 implementation surface and may be extended.
 
@@ -1062,8 +1071,8 @@ The `errors` field contains any errors reported by the Clay layout engine during
 the most recent `render()` call. Each error is a `ClayError` object with:
 
 - `type`: a string identifying the error category. The following types are
-  defined. Most mirror Clay's error taxonomy; `"CLIP_DEPTH_EXCEEDED"` is
-  Clayterm-specific.
+  defined. Most mirror Clay's error taxonomy; `"CLIP_DEPTH_EXCEEDED"` and
+  `"COMBINING_MARKS_EXCEEDED"` are Clayterm-specific.
   - `"TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED"`
   - `"ARENA_CAPACITY_EXCEEDED"`
   - `"ELEMENTS_CAPACITY_EXCEEDED"`
@@ -1076,6 +1085,10 @@ the most recent `render()` call. Each error is a `ClayError` object with:
   - `"CLIP_DEPTH_EXCEEDED"` — A frame nested clip regions more deeply than the
     renderer could track. See §7.5 for the guarantees that still hold in this
     case. The `message` SHOULD identify the renderer's tracking limit.
+  - `"COMBINING_MARKS_EXCEEDED"` — A frame attached more combining marks to a
+    single cell than the cell can store. The excess marks are truncated (see
+    §13, Cell representation). Reported at most once per frame, on the first
+    truncation. The `message` SHOULD identify the per-cell limit.
 - `message`: a human-readable string describing the error in detail.
 
 Errors are collected per-render; each call to `render()` returns only the errors
@@ -1138,11 +1151,25 @@ elements; clip regions; and scroll containers.
 
 **Text measurement.** Text width measurement uses `wcwidth`-based character
 width computation, supporting ASCII, CJK wide characters, and other Unicode
-codepoints.
+codepoints. Combining marks (codepoints with `wcwidth` ≤ 0) contribute zero to
+measured width; they attach to the preceding base codepoint's cell and are not
+counted as separate cells in layout. Measurement and rendering MUST agree: if
+the measurer ignores a combining mark for width purposes, the renderer MUST
+still attach and emit it.
 
-**Cell representation.** Each cell in the buffer stores a Unicode codepoint, a
-foreground color (packed ARGB with attribute flags in the high byte), and a
-background color.
+**Cell representation.** Each cell in the buffer stores a grapheme cluster — a
+base Unicode codepoint plus up to 8 combining-mark codepoints — together with a
+foreground color (packed ARGB with attribute flags in the high byte) and a
+background color. The combining-mark slots are zero-terminated; a cell with no
+combining marks stores zero in every slot. When a text string produces more than
+8 combining marks for a single base codepoint, the excess marks are truncated
+from the end (marks 1–8 are kept, marks 9+ are discarded), ensuring that the
+first and most semantically significant marks always survive. The first
+truncation in a frame is reported as a `"COMBINING_MARKS_EXCEEDED"` error
+(§12.3); later truncations in the same frame are not reported again. Cell
+comparison for diffing considers combining marks: a cell is considered changed
+when any combining mark differs from the front buffer, not only when the base
+codepoint or color attributes differ.
 
 **Border junction resolution.** When bordered elements share edges, the renderer
 accumulates per-cell direction bitmasks and resolves them to correct box-drawing

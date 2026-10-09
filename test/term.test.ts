@@ -335,6 +335,102 @@ describe("term", () => {
     });
   });
 
+  describe("grapheme clusters", () => {
+    let border = {
+      color: rgba(255, 255, 255),
+      left: 1,
+      right: 1,
+      top: 1,
+      bottom: 1,
+    };
+
+    async function render(content: string): Promise<string> {
+      let t = await createTerm({ width: 12, height: 3 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+            border,
+          }),
+          text(content),
+          close(),
+        ]).output,
+      );
+      return trim(print(ansi, 12, 3));
+    }
+
+    it("preserves combining accent (e + U+0301)", async () => {
+      expect(await render("cafe\u0301")).toEqual(`\
+┌──────────┐
+│cafe\u0301      │
+└──────────┘`);
+    });
+
+    it("preserves kitty-graphics placeholder cluster (base + 2 combining marks)", async () => {
+      expect(await render("\u{10EEEE}\u0305\u030D")).toEqual(`\
+┌──────────┐
+│\u{10EEEE}\u0305\u030D         │
+└──────────┘`);
+    });
+
+    it("preserves ZWJ (ZWJ is per-cell combining; following emoji start new cells)", async () => {
+      // The trailing half of each wide emoji is the blank column after it.
+      expect(await render("👨\u200D👩\u200D👧\u200D👦")).toEqual(`\
+┌──────────┐
+│👨\u200D 👩\u200D 👧\u200D 👦   │
+└──────────┘`);
+    });
+
+    it("truncates excess combining marks from the end (first 8 survive)", async () => {
+      let grave = "\u0300";
+      expect(await render("a" + grave.repeat(9))).toEqual(`\
+┌──────────┐
+│a${grave.repeat(8)}         │
+└──────────┘`);
+    });
+
+    it("reports COMBINING_MARKS_EXCEEDED once per frame on truncation", async () => {
+      let t = await createTerm({ width: 12, height: 3 });
+      let frame = (content: string) => [
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        text(content),
+        close(),
+      ];
+      let types = (content: string) =>
+        t.render(frame(content)).errors.map((e) => e.type);
+      let grave = "̀";
+
+      expect(types("a" + grave.repeat(9) + "b" + grave.repeat(9))).toEqual([
+        "COMBINING_MARKS_EXCEEDED",
+      ]);
+      expect(types("a" + grave.repeat(8))).toEqual([]);
+      expect(types("c" + grave.repeat(10))).toEqual([
+        "COMBINING_MARKS_EXCEEDED",
+      ]);
+    });
+
+    it("drops combining marks whose base cell is clipped", async () => {
+      let t = await createTerm({ width: 6, height: 1 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ltr" },
+          }),
+          open("clip", {
+            layout: { width: fixed(2), height: fixed(1) },
+            clip: { horizontal: true, vertical: true },
+          }),
+          text("abe\u0301"),
+          close(),
+          close(),
+        ]).output,
+      );
+      expect(print(ansi, 6, 1)).toEqual("ab    ");
+    });
+  });
+
   describe("caret placement", () => {
     // These tests use `print()`, which marks the terminal's final
     // cursor position by appending U+0332 COMBINING LOW LINE to that

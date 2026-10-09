@@ -69,6 +69,7 @@ const ERROR_TYPES = [
   "INTERNAL_ERROR",
   "UNBALANCED_OPEN_CLOSE",
   "CLIP_DEPTH_EXCEEDED",
+  "COMBINING_MARKS_EXCEEDED",
 ] as const;
 
 export interface ClayError {

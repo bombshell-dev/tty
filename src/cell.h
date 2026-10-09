@@ -5,10 +5,16 @@
 
 #include <stdint.h>
 
+/* Maximum combining marks stored per cell. Marks beyond this limit are
+ * silently truncated from the end; the first CELL_MAX_COMBINING are kept. */
+#define CELL_MAX_COMBINING 8
+
 typedef struct {
   uint32_t ch;
   uint32_t fg; /* 0xAARRGGBB — upper byte: attribute flags */
   uint32_t bg; /* 0xAARRGGBB — upper byte: attribute flags */
+  uint32_t combining[CELL_MAX_COMBINING]; /* zero-terminated combining-mark
+                                             codepoints */
 } Cell;
 
 /* Attribute flags (packed into high byte of fg) */
