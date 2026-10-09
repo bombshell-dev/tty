@@ -6,6 +6,7 @@ import {
   grow,
   type Op,
   open,
+  percent,
   rgba,
   text,
 } from "../mod.ts";
@@ -120,6 +121,35 @@ describe("transitions", () => {
         }
       }
       expect(sawPartial).toBe(true);
+    });
+
+    it("clears combining marks when an edge repaints a marked cell", async () => {
+      // The overlay floats at x=12.5, so its left edge lands mid-cell over
+      // cell 12. Floating elements paint after earlier siblings, so in this
+      // single frame the text first writes "e" + U+0301 into cell 12 and the
+      // overlay's edge glyph then overwrites it — the edge path must clear
+      // the mark the way setcell does.
+      let W = 21, H = 3;
+      let term = await createTerm({ width: W, height: H });
+      let frame: Op[] = [
+        open("root", { layout: { width: grow(), height: grow() } }),
+        open("box", { layout: { width: percent(1), height: fixed(1) } }),
+        text("abcdefghijkl" + "e\u0301"), // U+0301 lands in cell 12
+        close(),
+        open("overlay", {
+          layout: { width: fixed(4), height: fixed(1) },
+          bg: rgba(0, 0, 255),
+          floating: { x: 12.5, attachTo: "parent" },
+        }),
+        close(),
+        close(),
+      ];
+
+      let out = decode(term.render(frame, { deltaTime: 0 }).output);
+      // The overlay's edge glyph must be painted over the marked cell…
+      expect(EIGHTH_BLOCKS.test(print(out, W, H))).toBe(true);
+      // …and must not inherit the stale combining mark.
+      expect(out).not.toContain("\u0301");
     });
   });
 

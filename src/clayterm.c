@@ -403,6 +403,11 @@ static void edge_cell(struct Clayterm *ct, int x, int y, EdgeSide side,
   int n = (int)(cov * 8.0f + 0.5f); /* 8 hard sub-positions per axis */
   if (n <= 0)
     return;
+  /* Overwriting the glyph invalidates any combining marks attached to the
+   * previous content. setcell clears them on every write; this direct-write
+   * path must do the same or stale marks reattach to the block glyph. */
+  for (int i = 0; i < CELL_MAX_COMBINING; i++)
+    c->combining[i] = 0;
   if (n >= 8) {
     c->ch = 0x2588;
     c->fg = fill;
