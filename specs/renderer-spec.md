@@ -149,9 +149,11 @@ yields, or partial results.
 
 Each render transaction operates on a complete, self-contained snapshot of the
 UI. The renderer MUST NOT maintain an internal component tree or UI state across
-frames. The only state the renderer retains between frames is the cell buffer
-used for diffing, which is an implementation detail of output minimization and
-not observable to the caller except through reduced output size.
+frames. The only state the renderer retains between frames is diffing state —
+the cell buffers, the image registry, and the previous frame's placements
+record (as defined in the [Graphics Specification](graphics-spec.md) §4.1) —
+which is an implementation detail of output minimization and correct graphics
+cleanup, and not observable to the caller except through reduced output size.
 
 ### 4.4 Double-buffered diffing
 
@@ -412,6 +414,12 @@ multi-cursor extension without breaking this contract.
 This responsibility is limited to the hardware cursor's position and visibility.
 Cursor shape and blink rate remain caller-managed.
 
+Frames containing image elements at a graphics tier MAY additionally include
+cursor-positioning bytes required by the graphics protocol ([Graphics
+Specification](graphics-spec.md) §10.6), provided the post-frame cursor state
+defined here is unchanged and caret-declaring frames still end with the
+caret's cell.
+
 ### 7.7 Update transaction
 
 The update transaction changes a Term instance's dimensions or capability state
@@ -451,7 +459,9 @@ be a no-op for that step.
 `value` into the Term's private `RuntimeCapabilities`. The foundation update
 transaction does not emit bytes or alter renderer output as a consequence of a
 capability event. A focused capability specification MUST define any output
-invalidation or immediate bytes required by its consumer.
+invalidation or immediate bytes required by its consumer; the [Graphics
+Specification](graphics-spec.md) defines such bytes for graphics cleanup on
+capability denial and resize (§11.2 and §10.5 there).
 
 **Return value.** `update()` returns a `Uint8Array` of bytes to write to the
 terminal immediately. An empty array is valid when the update changes no
@@ -476,8 +486,9 @@ own renderer section, capability evidence, invalidation rules, and tests in a
 focused feature specification.
 
 In particular, color encoding, synchronized-output wrapping, pointer-shape
-output, Kitty keyboard mode setup, and Kitty graphics emission are deferred to
-their respective follow-up PRs. The renderer continues to emit its existing
+output, and Kitty keyboard mode setup are deferred to their respective
+follow-up PRs; Kitty graphics emission is specified by the [Graphics
+Specification](graphics-spec.md). The renderer continues to emit its existing
 hardcoded ANSI output until one of those specifications is adopted.
 
 ---
@@ -494,6 +505,7 @@ createTerm(options: {
   width: number;
   height: number;
   terminfo?: TerminalInfo;
+  imagePoolBytes?: number;
 }): Promise<Term>
 ```
 
@@ -505,6 +517,9 @@ The optional `terminfo` value (from `detectTerminal()`; see
 [Terminfo Specification](terminfo-spec.md) §10.1) initializes the Term's private
 `RuntimeCapabilities` from the static `Capabilities` it carries. When omitted,
 the Term uses the §7.1 baseline.
+
+The optional `imagePoolBytes` sizes the Term's carved image pixel pool
+([Graphics Specification](graphics-spec.md) §5.3; default 4 MiB).
 
 ### 8.2 Render invocation
 
@@ -634,6 +649,20 @@ snapshot's ops MUST be structurally balanced (every `open` matched by a
 Snapshots enable higher-level frameworks to implement dirty tracking: a
 component whose inputs have not changed can reuse a previously created snapshot,
 avoiding the cost of re-packing its subtree each frame.
+
+#### 8.3.5 img
+
+```
+img(id: string, props: ImgProps): Img
+```
+
+Creates an image directive: a void, self-closing element that participates in
+layout as a leaf and does not participate in open/close balance — it MUST NOT
+be paired with `close()` and has no children. The `id` provides element
+identity as for `open()`. Its properties (`ImgProps`), the tier ladder, and
+the Term-level pixel-surface registry it references are specified normatively
+in the [Graphics Specification](graphics-spec.md); this section defines only
+its existence, its plain-object form, and its void semantics.
 
 ### 8.4 Sizing helpers
 
