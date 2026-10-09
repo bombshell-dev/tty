@@ -14,6 +14,21 @@ export interface TermOptions {
    * baseline.
    */
   terminfo?: TerminalInfo;
+  /**
+   * Sizes the Term's carved image pixel pool (Graphics Specification §5.3).
+   * Default 4 MiB. The registry never grows at runtime (INV-I8).
+   */
+  imagePoolBytes?: number;
+}
+
+/**
+ * Decoded raster pixels for the image registry (Graphics Specification
+ * §6.2): straight (non-premultiplied) RGBA8, top-to-bottom rows.
+ */
+export interface ImageData {
+  width: number; // positive integer
+  height: number; // positive integer
+  pixels: Uint8Array; // exactly width * height * 4 bytes
 }
 
 /**
@@ -126,6 +141,9 @@ const ERROR_TYPES = [
   "UNBALANCED_OPEN_CLOSE",
   "CLIP_DEPTH_EXCEEDED",
   "COMBINING_MARKS_EXCEEDED",
+  "IMAGE_NOT_FOUND",
+  "IMAGE_PLACEMENTS_EXCEEDED",
+  "IMAGE_PLACEMENT_COLLISION",
 ] as const;
 
 export interface ClayError {
@@ -157,17 +175,45 @@ export interface Term {
    */
   update(events: readonly InputEvent[]): Uint8Array;
 
+  /**
+   * Put a decoded image into the Term's pixel-surface registry (Graphics
+   * Specification §6.2). Synchronous, byte-free: transmission is lazy, on
+   * the first render that places the image. Throws RangeError on
+   * validation failure or pool/registry exhaustion. Re-setting a live id
+   * replaces the image and re-transmits on the next placing render.
+   */
+  setImage(id: number, data: ImageData): void;
+
+  /**
+   * Remove a registry image. Returns bytes to write now: the terminal's
+   * data-freeing deletion block when the id was live, empty otherwise.
+   * Idempotent; the covered cells are reconciled so the next render
+   * repaints them.
+   */
+  removeImage(id: number): Uint8Array;
+
   /** Frozen snapshot of the current merged capability state. */
   readonly capabilities: RuntimeCapabilities;
 }
 
-export async function createTerm(options: TermOptions): Promise<Term> {
-  let { width, height, terminfo } = options;
+const IMAGE_ERROR_MESSAGES: Record<number, string> = {
+  [-1]: "registry id outside [1, 4294967295]",
+  [-2]: "width and height must be positive integers",
+  [-4]: "image registry table full",
+  [-5]: "image pixel pool exhausted (raise the imagePoolBytes option)",
+  [-6]: "unknown registry id",
+};
 
-  let native = await createTermNative(
-    width,
-    height,
+function imageRangeError(n: number): RangeError {
+  return new RangeError(
+    `setImage failed: ${IMAGE_ERROR_MESSAGES[n] ?? `native error ${n}`}`,
   );
+}
+
+export async function createTerm(options: TermOptions): Promise<Term> {
+  let { width, height, terminfo, imagePoolBytes } = options;
+
+  let native = await createTermNative(width, height, imagePoolBytes);
   let { memory } = native;
 
   let currentCaps: RuntimeCapabilities = runtimeFromStatic(
@@ -283,6 +329,50 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       return { output, events, info, errors, animating };
     },
 
+    setImage(id: number, data: ImageData): void {
+      if (!Number.isInteger(id) || id < 1 || id > 4294967295) {
+        throw new RangeError(`invalid image registry id ${id}`);
+      }
+      if (
+        !Number.isInteger(data.width) || data.width < 1 ||
+        !Number.isInteger(data.height) || data.height < 1
+      ) {
+        throw new RangeError(
+          `invalid image dimensions ${data.width}x${data.height}`,
+        );
+      }
+      if (data.pixels.length !== data.width * data.height * 4) {
+        throw new RangeError(
+          `image pixels length ${data.pixels.length} !== ${data.width} * ${data.height} * 4`,
+        );
+      }
+      let addr = native.imageBegin(
+        native.statePtr,
+        id,
+        data.width,
+        data.height,
+      );
+      if (addr < 0) {
+        throw imageRangeError(addr);
+      }
+      new Uint8Array(memory.buffer).set(data.pixels, addr);
+      let committed = native.imageCommit(native.statePtr, id);
+      if (committed < 0) {
+        throw imageRangeError(committed);
+      }
+    },
+
+    removeImage(id: number): Uint8Array {
+      let n = native.imageRemove(native.statePtr, id);
+      if (n <= 0) {
+        return new Uint8Array(0);
+      }
+      // copy: the native output buffer is reused by the next call; these
+      // bytes are the caller's to write now (TINV-5)
+      return new Uint8Array(memory.buffer, native.output(native.statePtr), n)
+        .slice();
+    },
+
     update(events: readonly InputEvent[]): Uint8Array {
       let out: Uint8Array[] = [];
 
@@ -298,6 +388,18 @@ export async function createTerm(options: TermOptions): Promise<Term> {
             throw new RangeError(`invalid terminal dimensions ${w}x${h}`);
           }
           if (w !== width || h !== height) {
+            // Graphics Specification §10.5: deletion bytes for live
+            // placements precede the placements record's discard
+            let prepared = native.graphicsResizePrepare(native.statePtr);
+            if (prepared > 0) {
+              out.push(
+                new Uint8Array(
+                  memory.buffer,
+                  native.output(native.statePtr),
+                  prepared,
+                ).slice(),
+              );
+            }
             width = w;
             height = h;
             native.update(width, height);
@@ -306,6 +408,22 @@ export async function createTerm(options: TermOptions): Promise<Term> {
             wasDown = false;
             lastRenderAt = undefined;
             wasAnimating = false;
+          }
+        } else if (
+          c.type === "capability" && c.key === "kitty-graphics"
+        ) {
+          // the renderer's capability mirror (terminfo-spec §4.2); the
+          // denial path emits §11.2's deletion bytes immediately (TINV-5)
+          let kitty = c.value ? 1 : 0;
+          let wrote = native.graphicsCapability(native.statePtr, kitty);
+          if (wrote > 0) {
+            out.push(
+              new Uint8Array(
+                memory.buffer,
+                native.output(native.statePtr),
+                wrote,
+              ).slice(),
+            );
           }
         }
 
