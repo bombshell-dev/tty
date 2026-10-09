@@ -19,14 +19,39 @@ make
 
 ## Pointer shapes
 
-The keyboard, 2048, and text-input demos change the mouse pointer over their
-interactive elements (OSC 22, renderer-spec §7.9). Terminals that answer the OSC
-22 probe — kitty does — switch this on automatically. Ghostty can set shapes but
-never answers the query, so assert support by hand with:
+The cursor, keyboard, 2048, and text-input demos change the mouse pointer over
+their interactive elements (OSC 22, renderer-spec §7.9). Support is detected by
+the probe (kitty) and by the known-support table in `detectTerminal()` (ghostty,
+foot, xterm ≥ 367), so those work out of the box. For anything else, assert
+support by hand with:
 
 ```sh
 TTY_POINTER_SHAPES=1 deno run examples/keyboard/index.ts
 ```
+
+## Cursor
+
+Path: `examples/cursor/index.ts`
+
+Run it with:
+
+```sh
+deno run examples/cursor/index.ts
+# or
+node examples/cursor/index.ts
+```
+
+What it shows:
+
+- a catalog of 16 pointer shapes, one tile per shape declaring its
+  `pointerShape` (renderer-spec §7.9) — hovering a tile shows that exact cursor
+  in terminals that support OSC 22
+- a 3D-ish bevel drawn with half blocks: `▀` shades the top edge, `▄` the bottom
+  edge, and hovering presses the tile in, so the hover state reads even in
+  terminals without OSC 22
+- a status line showing the hovered shape and whether pointer shapes are
+  currently on (probe reply or known-support table)
+- a final frame on exit that restores the default pointer (§7.9 restore)
 
 ## Keyboard
 
