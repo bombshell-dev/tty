@@ -6,8 +6,8 @@
  * border-only rounded boxes — no painted fills — with the Bombshell brand
  * hues from bomb.sh. Hovering lights the tile's ring and name in its hue,
  * so the hover state reads even in terminals without OSC 22. The grab tile
- * is double-wide and toggles between grab and grabbing on click, staying
- * orange.
+ * is double-wide and shows grabbing while the pointer is held down on it,
+ * returning to grab on release, staying orange throughout.
  */
 
 import { close, fixed, grow, type Op, open, rgba, text } from "../../mod.ts";
