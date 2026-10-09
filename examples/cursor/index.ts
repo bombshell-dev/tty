@@ -8,7 +8,8 @@
  * - Tiles are border-only rounded boxes in Bombshell brand hues (from
  *   bomb.sh); hovering lights the tile's ring and name, so the hover state
  *   reads even in terminals without OSC 22.
- * - Curated to 16 shapes so the grid fits an 80×24 terminal.
+ * - Curated to the 9 shapes confirmed working in ghostty 1.3.1; ghostty
+ *   drops help, progress, wait, move, zoom-in, zoom-out, and none.
  *
  * Run: `deno run examples/cursor/index.ts` (or with node).
  */

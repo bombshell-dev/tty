@@ -43,9 +43,10 @@ node examples/cursor/index.ts
 
 What it shows:
 
-- a catalog of 16 pointer shapes, one border-only rounded tile per shape
-  declaring its `pointerShape` (renderer-spec §7.9) — hovering a tile shows that
-  exact cursor in terminals that support OSC 22
+- a catalog of 9 pointer shapes — the subset confirmed working in ghostty — one
+  border-only rounded tile per shape declaring its `pointerShape` (renderer-spec
+  §7.9); hovering a tile shows that exact cursor in terminals that support OSC
+  22
 - tiles in Bombshell brand hues (from bomb.sh); hovering lights the tile's ring
   and name, so the hover state reads even in terminals without OSC 22
 - a status line showing the hovered shape and whether pointer shapes are
