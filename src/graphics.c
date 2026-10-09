@@ -403,10 +403,25 @@ static void dirty_mark(struct Clayterm *ct, int x, int y, int w, int h) {
 
 /* ── Removal, denial, resize (§7.2/§11.2/§10.5) ───────────────────── */
 
+/* Reconcile (and clear) the front-table records of one id — or every id
+ * when only_id is 0 — without emitting bytes. The terminal's cells revert
+ * to the blank state the moment the pixels are gone. */
+static void reconcile_and_clear(struct Clayterm *ct, uint32_t only_id) {
+  struct Graphics *g = ct->gfx;
+  for (int i = 0; i < PLACEMENT_CAP; i++) {
+    struct ImagePlacement *p = &g->placements_front[i];
+    if (p->used && (only_id == 0 || p->registry_id == only_id)) {
+      reconcile_blank(ct, p);
+      p->used = 0;
+    }
+    g->placements_back[i].used = 0;
+  }
+  g->placement_count = 0;
+}
+
 /* Deletion bytes for every image with live front placements (one d=I per
- * registry id, deduplicated), transmission-state reset, table clear, and
- * cell reconciliation. Shared by removeImage (scoped to one id), denial,
- * and resize (all images). Returns bytes written. */
+ * registry id, deduplicated) plus the reconcile/clear above. The denial
+ * (§11.2) and resize (§10.5) paths. Returns bytes written. */
 static int emit_deletions_and_clear(struct Clayterm *ct, uint32_t only_id) {
   struct Graphics *g = ct->gfx;
   int wrote = 0;
@@ -440,16 +455,7 @@ static int emit_deletions_and_clear(struct Clayterm *ct, uint32_t only_id) {
     }
     wrote = 1;
   }
-  /* reconcile + clear: both tables die with their placements */
-  for (int i = 0; i < PLACEMENT_CAP; i++) {
-    struct ImagePlacement *p = &g->placements_front[i];
-    if (p->used && (only_id == 0 || p->registry_id == only_id)) {
-      reconcile_blank(ct, p);
-      p->used = 0;
-    }
-    g->placements_back[i].used = 0;
-  }
-  g->placement_count = 0;
+  reconcile_and_clear(ct, only_id);
   return wrote;
 }
 
@@ -459,15 +465,18 @@ int image_remove(struct Clayterm *ct, uint32_t id) {
   if (e == NULL || !e->live) {
     return -IMG_ERR_UNKNOWN;
   }
-  /* bytes whenever the id was live (§7.2), regardless of evidence */
+  /* bytes whenever the id was live (§7.2) — a never-placed image's d=I is
+   * a harmless no-op; a placed image's must flow even when the evidence
+   * has since been denied (the terminal may still hold the pixels) */
   ct->out.length = 0;
-  emit_deletions_and_clear(ct, id);
+  kitty_delete_image(ct, id);
+  reconcile_and_clear(ct, id);
   e->live = 0;
   e->id = 0; /* frees the slot for entry_free_slot */
   return ct->out.length;
 }
 
-void graphics_capability(struct Clayterm *ct, int kitty_graphics) {
+int graphics_capability(struct Clayterm *ct, int kitty_graphics) {
   struct Graphics *g = ct->gfx;
   int was = g->kitty_graphics;
   g->kitty_graphics = (uint8_t)(kitty_graphics != 0);
@@ -476,6 +485,7 @@ void graphics_capability(struct Clayterm *ct, int kitty_graphics) {
     ct->out.length = 0;
     emit_deletions_and_clear(ct, 0);
   }
+  return ct->out.length;
 }
 
 int graphics_resize_prepare(struct Clayterm *ct) {
@@ -733,6 +743,21 @@ void graphics_paint_ascii(struct Clayterm *ct, const struct ImageEntry *e,
 
 /* ── Frame phases (§9.2.6 ordering) ───────────────────────────────── */
 
+/* Any covered cell differing front-vs-back? (§10.2's repair trigger.) */
+static int box_differs(struct Clayterm *ct, const struct ImagePlacement *bp) {
+  for (int y = bp->y; y < bp->y + bp->h; y++) {
+    for (int x = bp->x; x < bp->x + bp->w; x++) {
+      if (x < 0 || x >= ct->w || y < 0 || y >= ct->h) {
+        continue;
+      }
+      if (cell_cmp(cell_at(ct, ct->front, x, y), cell_at(ct, ct->back, x, y))) {
+        return 1; /* one write is enough to heal the whole box */
+      }
+    }
+  }
+  return 0;
+}
+
 /* Phase 0, before any emission: the repair precheck (§10.2) — a placement
  * whose covered cells will receive writes (front ≠ back anywhere in its
  * box) must be re-placed this frame; run before any dirty-marking mutates
@@ -744,18 +769,7 @@ static void graphics_precheck_repairs(struct Clayterm *ct) {
     if (!bp->used || bp->tier != IMG_TIER_KITTY) {
       continue;
     }
-    for (int y = bp->y; y < bp->y + bp->h; y++) {
-      for (int x = bp->x; x < bp->x + bp->w; x++) {
-        if (x < 0 || x >= ct->w || y < 0 || y >= ct->h) {
-          continue;
-        }
-        if (cell_cmp(cell_at(ct, ct->front, x, y),
-                     cell_at(ct, ct->back, x, y))) {
-          bp->repair = 1;
-          return; /* one write is enough to heal the whole box */
-        }
-      }
-    }
+    bp->repair = (uint8_t)box_differs(ct, bp);
   }
 }
 
@@ -871,7 +885,10 @@ void graphics_emit_placements(struct Clayterm *ct, int row) {
     struct ImagePlacement *fp = front_match(g, p->registry_id, p->placement_id);
     int moved = fp == NULL || fp->x != p->x || fp->y != p->y || fp->w != p->w ||
                 fp->h != p->h;
-    if (!moved && !p->repair) {
+    /* a re-transmitted image lost its terminal placements (the protocol's
+     * delete-before-re-transmit) — the same frame must re-place it */
+    int retransmitted = fp != NULL && fp->data_version != p->data_version;
+    if ((!moved && !retransmitted) && !p->repair) {
       continue;
     }
     emit_cursor(ct, p->x, p->y, row);

@@ -57,7 +57,7 @@ export interface Native {
   imageBegin(ct: number, id: number, w: number, h: number): number;
   imageCommit(ct: number, id: number): number;
   imageRemove(ct: number, id: number): number;
-  graphicsCapability(ct: number, kitty: number): void;
+  graphicsCapability(ct: number, kitty: number): number;
   graphicsResizePrepare(ct: number): number;
   setPointer(x: number, y: number, down: boolean): void;
   getPointerOverIds(): string[];
@@ -73,6 +73,7 @@ import { compiled } from "./wasm.ts";
 export async function createTermNative(
   w: number,
   h: number,
+  imagePoolBytes?: number,
 ): Promise<Native> {
   let memory = new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
@@ -121,7 +122,7 @@ export async function createTermNative(
     image_begin(ct: number, id: number, w: number, h: number): number;
     image_commit(ct: number, id: number): number;
     image_remove(ct: number, id: number): number;
-    graphics_capability(ct: number, kitty: number): void;
+    graphics_capability(ct: number, kitty: number): number;
     graphics_resize_prepare(ct: number): number;
     Clay_SetPointerState(vec: number, down: number): void;
     pointer_over_count(): number;
@@ -155,9 +156,9 @@ export async function createTermNative(
   function layout(lw: number, lh: number): void {
     let heap = ct.__heap_base.value as number;
     if (gfxPtr === 0) {
-      gfxBytes = ct.graphics_size(DEFAULT_IMAGE_POOL_BYTES);
+      gfxBytes = ct.graphics_size(imagePoolBytes ?? DEFAULT_IMAGE_POOL_BYTES);
       gfxPtr = heap;
-      ct.graphics_init(gfxPtr, DEFAULT_IMAGE_POOL_BYTES);
+      ct.graphics_init(gfxPtr, imagePoolBytes ?? DEFAULT_IMAGE_POOL_BYTES);
     }
     let size = ct.clayterm_size(lw, lh);
     let clayBase = gfxPtr + gfxBytes;

@@ -122,8 +122,9 @@ int image_remove(struct Clayterm *ct, uint32_t id);
 /* Capability mirror (terminfo-spec §4.2). A true→false transition is a
  * capability denial (§11.2): emits deletion bytes for every image with live
  * placements into the output buffer (reset first), resets transmission
- * state, clears the placements tables, and reconciles covered cells. */
-void graphics_capability(struct Clayterm *ct, int kitty_graphics);
+ * state, clears the placements tables, and reconciles covered cells.
+ * Returns the byte length written (0 = nothing emitted). */
+int graphics_capability(struct Clayterm *ct, int kitty_graphics);
 
 /* Resize (§10.5): before the dimension-dependent state is discarded, emit
  * one data-freeing deletion per image with live placements into the output
