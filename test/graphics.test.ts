@@ -2,16 +2,9 @@
  * One spec, one test file. */
 
 import { createInput } from "../input.ts";
-import {
-  close,
-  img,
-  type ImgProps,
-  type Op,
-  open,
-  type SizingAxis,
-} from "../ops.ts";
+import { close, img, type Op, open, type SizingAxis } from "../ops.ts";
 import { createTerm } from "../term.ts";
-import { describe, expect, it } from "./suite.ts";
+import { describe, it } from "./suite.ts";
 import { print } from "./print.ts";
 
 const KITTY_GRANT = {
@@ -31,7 +24,7 @@ function solid(w: number, h: number, rgb: [number, number, number]): {
   height: number;
   pixels: Uint8Array;
 } {
-  const pixels = new Uint8Array(w * h * 4);
+  let pixels = new Uint8Array(w * h * 4);
   for (let i = 0; i < pixels.length; i += 4) {
     pixels[i] = rgb[0];
     pixels[i + 1] = rgb[1];
@@ -51,12 +44,8 @@ function frame(t: Awaited<ReturnType<typeof term>>, ops: Op[]): string {
 }
 
 function grid(t: Awaited<ReturnType<typeof term>>, ops: Op[]): string[] {
-  const text = print(frame(t, ops), 40, 12);
+  let text = print(frame(t, ops), 40, 12);
   return text.split("\n");
-}
-
-function stripApc(s: string): string {
-  return s.replace(/\x1b_G[^\x1b]*\x1b\\/g, "");
 }
 
 describe("graphics: tier resolution", () => {
@@ -389,6 +378,7 @@ describe("graphics: registry API", () => {
     let out = frame(t, [img("a", { image: 1, alt: "x" })]);
     // INV-I5's claim is about the graphics frames themselves: fed to the
     // input parser, an APC frame generates no responses of any kind
+    // deno-lint-ignore no-control-regex
     let apc = out.match(/\x1b_G[^\x1b]*\x1b\\/g) ?? [];
     if (apc.length === 0) throw new Error("no APC frames to test");
     let input = await createInput();
