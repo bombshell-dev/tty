@@ -34,10 +34,13 @@ const dim = rgba(137, 142, 156);
 
 const TILE_W = 17;
 const COLS = 3;
-// Matches the grid width so the status line's left edge is stable: the
-// hovered name changes length, and a fit-sized line would re-center and
+// Matches the grid width so the title and status bars align with the tiles:
+// their content lengths change, and fit-sized bars would re-center and
 // jitter under the root's alignX.
-const STATUS_W = COLS * TILE_W + (COLS - 1);
+const BAR_W = COLS * TILE_W + (COLS - 1);
+
+const PKG = "@bomb.sh/tty";
+const DEMO = "cursor";
 
 export interface Ctx {
   entered: Set<string>;
@@ -142,8 +145,18 @@ export function frame(ctx: Ctx): Op[] {
   );
 
   ops.push(
-    open("header", { layout: { height: fixed(1) } }),
-    text("cursor shape - hover a tile", { color: heading }),
+    open("header", {
+      layout: {
+        width: fixed(BAR_W),
+        height: fixed(1),
+        direction: "ltr",
+      },
+    }),
+    text(`${PKG} `, { color: heading }),
+    text("▪".repeat(Math.max(0, BAR_W - PKG.length - DEMO.length - 2)), {
+      color: dim,
+    }),
+    text(` ${DEMO}`, { color: heading }),
     close(),
   );
 
@@ -194,7 +207,7 @@ export function frame(ctx: Ctx): Op[] {
   ops.push(
     open("status", {
       layout: {
-        width: fixed(STATUS_W),
+        width: fixed(BAR_W),
         height: fixed(1),
         direction: "ltr",
         padding: { top: 1 },
