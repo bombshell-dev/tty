@@ -12,10 +12,9 @@
  *   grabbing anywhere on screen while held (a capture-mode drag shield —
  *   userland drag persistence, no spec support needed), releasing returns
  *   to grab.
- * - An ambient brightness wave sweeps the tiles: idle borders and labels
- *   breathe on a phase-offset sine (~4s cycle, ~12fps ticker), so a ripple
- *   of light crosses the grid. Hovered and grabbed tiles keep their full
- *   hue treatment.
+ * - An ambient brightness wave travels the title bar: the ▪ spacers breathe
+ *   on a phase-offset sine (~4s cycle, ~12fps ticker), so a ripple of light
+ *   crosses the brand title.
  * - Curated to the 9 shapes confirmed working in ghostty 1.3.1; ghostty
  *   drops help, progress, wait, move, zoom-in, zoom-out, and none.
  *

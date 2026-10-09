@@ -50,9 +50,9 @@ What it shows:
 - the grab tile is double-wide: holding the pointer down shows grabbing anywhere
   on screen while held — a capture-mode drag shield (userland drag persistence,
   matching CSS drag behavior); releasing returns to grab
-- an ambient brightness wave sweeps the tiles: idle borders and labels breathe
-  on a phase-offset sine, so a ripple of light crosses the grid (~12fps ticker;
-  hovered and grabbed tiles keep their full hue)
+- an ambient brightness wave travels the title bar: the ▪ spacers breathe on a
+  phase-offset sine, so a ripple of light crosses the brand title (~12fps
+  ticker)
 - hover feedback lights the tile's ring and name, so the hover state reads even
   in terminals without OSC 22
 - a muted status line whose hover label takes the hovered tile's hue, with a
