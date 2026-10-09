@@ -29,27 +29,22 @@ const label = rgba(195, 199, 208);
 const dim = rgba(137, 142, 156);
 
 const TILE_W = 17;
-const COLS = 4;
+const COLS = 3;
 
-// One representative per interaction family; the full 32-name vocabulary is
-// in renderer-spec §7.9 and POINTER_SHAPES.
+// Shapes confirmed working in set-supporting terminals (verified against
+// ghostty 1.3.1: it draws these and drops help/progress/wait/move/
+// zoom-in/zoom-out/none). The full 32-name vocabulary is in renderer-spec
+// §7.9 and POINTER_SHAPES.
 export const SHAPES = [
   "default",
   "pointer",
   "text",
   "crosshair",
-  "help",
-  "progress",
-  "wait",
-  "move",
   "grab",
   "grabbing",
   "not-allowed",
-  "zoom-in",
-  "zoom-out",
   "ew-resize",
   "ns-resize",
-  "none",
 ] as const;
 
 export interface Ctx {
