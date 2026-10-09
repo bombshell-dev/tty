@@ -26,10 +26,14 @@ const CLAY_DEFAULT_MAX_ELEMENT_COUNT = 8192;
 const MAX_FIXED_ELEMENT_WIRE_BYTES = 116;
 
 /** Color capability evidence the renderer consumes for emission
- * (color-encoding-spec §4.2). */
+ * (color-encoding-spec §4.2). The default colors are the §7.9 chain's
+ * resolution (reported theme > defaultTheme > black/white), packed as
+ * 24-bit RGB. */
 export interface ColorCaps {
   colors: number;
   trueColor: boolean;
+  defaultBg: number;
+  defaultFg: number;
 }
 
 export interface Native {
@@ -46,11 +50,16 @@ export interface Native {
   update(w: number, h: number): void;
   /**
    * Push color capability evidence into the renderer. Called by the
-   * host after update() folds capability events that change either
-   * value (color-encoding-spec §4.2); re-pushed internally after any
-   * re-init so the values survive resize updates.
+   * host after update() folds capability events that change any value
+   * (color-encoding-spec §4.2); re-pushed internally after any re-init
+   * so the values survive resize updates.
    */
-  setCapabilities(colors: number, trueColor: boolean): void;
+  setCapabilities(
+    colors: number,
+    trueColor: boolean,
+    defaultBg: number,
+    defaultFg: number,
+  ): void;
   reduce(
     ct: number,
     buf: number,
@@ -119,7 +128,13 @@ export async function createTermNative(
     ): void;
     output(ct: number): number;
     length(ct: number): number;
-    set_capabilities(ct: number, colors: number, truecolor: number): void;
+    set_capabilities(
+      ct: number,
+      colors: number,
+      truecolor: number,
+      default_bg: number,
+      default_fg: number,
+    ): void;
     Clay_SetPointerState(vec: number, down: number): void;
     pointer_over_count(): number;
     pointer_over_id_string_length(index: number): number;
@@ -151,6 +166,8 @@ export async function createTermNative(
       statePtr,
       currentCaps.colors,
       currentCaps.trueColor ? 1 : 0,
+      currentCaps.defaultBg,
+      currentCaps.defaultFg,
     );
   }
 
@@ -187,8 +204,13 @@ export async function createTermNative(
     update(uw: number, uh: number): void {
       layout(uw, uh);
     },
-    setCapabilities(colors: number, trueColor: boolean): void {
-      currentCaps = { colors, trueColor };
+    setCapabilities(
+      colors: number,
+      trueColor: boolean,
+      defaultBg: number,
+      defaultFg: number,
+    ): void {
+      currentCaps = { colors, trueColor, defaultBg, defaultFg };
       pushCaps();
     },
     reduce: ct.reduce,

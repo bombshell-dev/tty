@@ -75,6 +75,11 @@ struct Clayterm {
    * re-init, so the values survive resize updates. */
   uint32_t colors; /* max_colors evidence; §7.1 baseline is 256 */
   int truecolor;   /* positive truecolor evidence */
+  /* Terminal-default colors for compositing destinations (renderer-spec
+   * §7.9), resolved by the host: reported theme > createTerm
+   * defaultTheme > black background / white foreground. 24-bit RGB. */
+  uint32_t default_bg;
+  uint32_t default_fg;
   /* Emission tier, resolved once per reduce. last_tier detects tier
    * changes, which force a complete redraw (color-encoding-spec CI-5). */
   int tier;
@@ -857,12 +862,16 @@ int error_message_ptr(struct Clayterm *ct, int index) {
 }
 
 /* Push host-held color capability evidence into the instance
- * (color-encoding-spec §4.2). Called once after init and after update()
- * folds capability events that change either value; re-pushed by the
- * host after any re-init so the values survive resize updates. */
-void set_capabilities(struct Clayterm *ct, uint32_t colors, int truecolor) {
+ * (color-encoding-spec §4.2; renderer-spec §7.9 defaults). Called once
+ * after init and after update() folds capability events that change any
+ * value; re-pushed by the host after any re-init so the values survive
+ * resize updates. */
+void set_capabilities(struct Clayterm *ct, uint32_t colors, int truecolor,
+                      uint32_t default_bg, uint32_t default_fg) {
   ct->colors = colors;
   ct->truecolor = truecolor ? 1 : 0;
+  ct->default_bg = default_bg & 0x00FFFFFF;
+  ct->default_fg = default_fg & 0x00FFFFFF;
 }
 
 struct Clayterm *init(void *mem, int w, int h) {
@@ -890,7 +899,9 @@ struct Clayterm *init(void *mem, int w, int h) {
       .lastbg = 0xffffffff,
       .lastx = -1,
       .lasty = -1,
-      .colors = 256, /* §7.1 baseline until the host pushes evidence */
+      .colors = 256,          /* §7.1 baseline until the host pushes evidence */
+      .default_bg = 0x000000, /* §7.9 fallback: black background */
+      .default_fg = 0xffffff, /* §7.9 fallback: white foreground */
       .last_tier = -1,
   };
 
