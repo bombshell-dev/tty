@@ -11,7 +11,7 @@
 //   a       pause/resume the active square's drift
 //   q/Ctrl+C quit
 //
-// Run with: deno run --allow-read examples/compositing-demo/index.ts
+// Run with: deno run --allow-read --allow-env examples/compositing-demo/index.ts
 import { Buffer } from "node:buffer";
 import process from "node:process";
 import {
@@ -198,5 +198,10 @@ await main(function* () {
       deltaTime: dt,
     });
     writeStdout(output);
+
+    // Effection's each protocol: every iteration must end with
+    // each.next(), which fetches the next value for the for-of to hand
+    // out (examples/keyboard, transitions do the same).
+    yield* each.next();
   }
 });

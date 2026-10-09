@@ -143,6 +143,35 @@ What it shows:
 - small animated demos including a spinner, a progress bar, and a nyan-cat-style
   sequence
 
+## Compositing Demo
+
+Path: `examples/compositing-demo/index.ts`
+
+Run it with:
+
+```sh
+deno run --allow-read --allow-env examples/compositing-demo/index.ts
+```
+
+What it shows (renderer-spec §7.9, color-encoding-spec):
+
+- a mosaic of colorful tiles with drifting semi-transparent squares compositing
+  over them each frame
+- a translucent status bar compositing over whatever the squares leave beneath
+  it
+- `1`/`2`/`3` folding `colordepth` capability events — truecolor → 256 → 16
+  narrowing applied to composited results, live (color-encoding-spec)
+- arrow keys move the active square, `Tab` cycles it, `a` pauses its drift,
+  `q`/`Ctrl+C` quits
+
+`examples/compositing-demo/capture.ts` renders two drift arrangements of the
+same scene headless in each tier and writes `compositing-demo.html` with exact
+CSS colors:
+
+```sh
+deno run --allow-read --allow-write examples/compositing-demo/capture.ts
+```
+
 This example is useful if you want to embed transient or animated UI output into
 a normal command-line workflow instead of switching to a full-screen alternate
 buffer interface.
