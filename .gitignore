@@ -3,3 +3,4 @@
 /wasm.ts
 /build/
 /node_modules/
+/examples/compositing-demo/compositing-demo.html
