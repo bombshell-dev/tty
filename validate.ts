@@ -205,7 +205,30 @@ const TextOp = Type.Object({
   attrs: Type.Optional(u8),
 });
 
-const Ops = Type.Array(Type.Union([OpenElement, TextOp, CloseElement]));
+/* The void image directive (Graphics Specification §6.1/§6.3): no children,
+ * not part of open/close balance. `image` is a pixel-surface registry id in
+ * the kitty protocol's positive-id range. */
+const ImgOp = Type.Object({
+  directive: Type.Literal(0x06),
+  id: Type.String(),
+  image: Type.Optional(
+    Type.Integer({ minimum: 1, maximum: 4294967295 }),
+  ),
+  alt: Type.String(),
+  width: Type.Optional(SizingAxis),
+  height: Type.Optional(SizingAxis),
+  variant: Type.Optional(
+    Type.Union([
+      Type.Literal("auto"),
+      Type.Literal("kitty"),
+      Type.Literal("ascii"),
+      Type.Literal("alt"),
+    ]),
+  ),
+  bg: Type.Optional(rgba),
+});
+
+const Ops = Type.Array(Type.Union([OpenElement, TextOp, CloseElement, ImgOp]));
 
 /* ── Compiled validator ───────────────────────────────────────────── */
 
@@ -239,6 +262,12 @@ export function validated(term: Term): Term {
     },
     update(events) {
       return term.update(events);
+    },
+    setImage(id, data) {
+      return term.setImage(id, data);
+    },
+    removeImage(id) {
+      return term.removeImage(id);
     },
   };
 }

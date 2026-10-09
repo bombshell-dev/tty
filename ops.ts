@@ -25,6 +25,8 @@ const OP_OPEN_ELEMENT = 0x02;
 const OP_TEXT = 0x03;
 const OP_CLOSE_ELEMENT = 0x04;
 const OP_SNAPSHOT = 0x05;
+/* the void image directive (Graphics Specification §6.1) */
+const OP_IMG = 0x06;
 
 /* Property group masks for OPEN_ELEMENT */
 const PROP_LAYOUT = 0x01;
@@ -323,6 +325,37 @@ export function pack(
         o = packString(view, str, o, end, "text content");
         break;
       }
+
+      case OP_IMG: {
+        view.setUint32(o, OP_IMG, true);
+        o += 4;
+
+        o = packString(view, encoder.encode(op.id), o, end, "element id");
+
+        // image registry id; 0 = omitted (alt-only element)
+        view.setUint32(o, op.image ?? 0, true);
+        o += 4;
+
+        // variant (low byte) | bg_flag (byte 1) | pad
+        view.setUint32(
+          o,
+          IMG_VARIANT_CODE[op.variant ?? "auto"] |
+            ((op.bg !== undefined ? 1 : 0) << 8),
+          true,
+        );
+        o += 4;
+
+        o = packAxis(view, o, op.width ?? fit());
+        o = packAxis(view, o, op.height ?? fit());
+
+        o = packString(view, encoder.encode(op.alt), o, end, "alt text");
+
+        if (op.bg !== undefined) {
+          view.setUint32(o, op.bg, true);
+          o += 4;
+        }
+        break;
+      }
     }
     if (o > end) {
       throw new RangeError(
@@ -488,12 +521,61 @@ export interface Text {
   caret?: number;
 }
 
+export type ImgVariant = "auto" | "kitty" | "ascii" | "alt";
+
+export interface ImgProps {
+  /** Registry id of the image to render. Omit for an alt-only element. */
+  image?: number;
+  /** Required. Text fallback and description. "" = decorative. */
+  alt: string;
+  width?: SizingAxis;
+  height?: SizingAxis;
+  /** Tier override; evidence-gated — falls through the auto ladder when the
+   * tier's evidence is missing (Graphics Specification §9.1). */
+  variant?: ImgVariant;
+  /** Element background, same value space as open({ bg }). */
+  bg?: number;
+}
+
+/** The void image element: one self-closing directive, no children, not
+ * paired with close() (Graphics Specification §6.1). */
+export interface Img {
+  directive: typeof OP_IMG;
+  id: string;
+  image?: number;
+  alt: string;
+  width?: SizingAxis;
+  height?: SizingAxis;
+  variant?: ImgVariant;
+  bg?: number;
+}
+
+const IMG_VARIANT_CODE: Record<ImgVariant, number> = {
+  auto: 0,
+  kitty: 1,
+  ascii: 2,
+  alt: 3,
+};
+
+export function img(id: string, props: ImgProps): Img {
+  return {
+    directive: OP_IMG,
+    id,
+    image: props.image,
+    alt: props.alt,
+    width: props.width ?? fit(),
+    height: props.height ?? fit(),
+    variant: props.variant ?? "auto",
+    bg: props.bg,
+  };
+}
+
 interface Snapshot {
   directive: typeof OP_SNAPSHOT;
   data: Uint8Array;
 }
 
-export type Op = OpenElement | Text | CloseElement | Snapshot;
+export type Op = OpenElement | Text | CloseElement | Snapshot | Img;
 
 export function open(
   id: string,
@@ -540,6 +622,16 @@ function packSize(ops: Op[]): number {
       case OP_TEXT: {
         n += 4 + 4 + 4 + 4 + 4; // opcode + color + bg + cfg + caret
         n += 4 + Math.ceil(encoder.encode(op.content).length / 4) * 4; // string
+        break;
+      }
+      case OP_IMG: {
+        n += 4; // opcode
+        n += 4 + Math.ceil(encoder.encode(op.id).length / 4) * 4; // id string
+        n += 4; // image registry id
+        n += 4; // variant | bg_flag | pad
+        n += 6 * 4; // width + height axes
+        n += 4 + Math.ceil(encoder.encode(op.alt).length / 4) * 4; // alt string
+        if (op.bg !== undefined) n += 4; // element background
         break;
       }
     }
