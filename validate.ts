@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
 import type { Op } from "./ops.ts";
+import { POINTER_SHAPES } from "./pointer-shape.ts";
 import type { RenderOptions, RenderResult, Term } from "./term.ts";
 
 /* ── Range helpers (match bit-packing in pack()) ──────────────────── */
@@ -178,6 +179,8 @@ const Transition = Type.Object({
   interactive: Type.Optional(Type.Boolean()),
 });
 
+const PointerShape = Type.Union(POINTER_SHAPES.map((s) => Type.Literal(s)));
+
 /* ── Op types (discriminated on `directive`) ──────────────────────── */
 
 const CloseElement = Type.Object({ directive: Type.Literal(0x04) });
@@ -192,6 +195,7 @@ const OpenElement = Type.Object({
   clip: Type.Optional(Clip),
   floating: Type.Optional(Floating),
   transition: Type.Optional(Transition),
+  pointerShape: Type.Optional(PointerShape),
 });
 
 const TextOp = Type.Object({

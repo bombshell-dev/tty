@@ -1,3 +1,7 @@
+import type { PointerShape } from "./pointer-shape.ts";
+
+export type { PointerShape };
+
 export type TransitionProperty =
   | "x"
   | "y"
@@ -410,6 +414,7 @@ export interface OpenElement {
     zIndex?: number;
   };
   transition?: Transition;
+  pointerShape?: PointerShape;
 }
 
 export type AttachPoint =
@@ -491,6 +496,7 @@ export interface Text {
 interface Snapshot {
   directive: typeof OP_SNAPSHOT;
   data: Uint8Array;
+  shapes?: readonly (readonly [id: string, shape: string])[];
 }
 
 export type Op = OpenElement | Text | CloseElement | Snapshot;
@@ -551,7 +557,19 @@ export function snapshot(ops: Op[]): Op {
   let size = packSize(ops);
   let buf = new ArrayBuffer(size);
   let words = pack(ops, buf, 0, size);
-  return { directive: OP_SNAPSHOT, data: new Uint8Array(buf, 0, words * 4) };
+  let data = new Uint8Array(buf, 0, words * 4);
+  let shapes: (readonly [string, string])[] = [];
+  for (let op of ops) {
+    if (op.directive === OP_SNAPSHOT) {
+      if (op.shapes) shapes.push(...op.shapes);
+    } else if (
+      op.directive === OP_OPEN_ELEMENT && op.pointerShape !== undefined
+    ) {
+      shapes.push([op.id, op.pointerShape]);
+    }
+  }
+  if (shapes.length === 0) return { directive: OP_SNAPSHOT, data };
+  return { directive: OP_SNAPSHOT, data, shapes };
 }
 
 const TP_X = 1;
