@@ -1,23 +1,30 @@
-# Clayterm Image Specification
+# Clayterm Graphics Specification
 
-**Version:** 0.1 (draft) **Status:** Proposed. Normative for the image element
-upon adoption.
+**Version:** 0.1 (draft) **Status:** Proposed. Normative for the graphics
+substrate and the image element upon adoption.
 
 ---
 
 ## 1. Purpose
 
-This specification defines Clayterm's image element: a declarative, void
-directive that renders a caller-supplied raster image into the terminal,
-degrading through a fidelity ladder of output tiers — Kitty graphics protocol
-pixels, shape-aware ASCII character art, and alt text.
+This specification defines Clayterm's graphics substrate and its first
+element. The substrate is a per-Term registry of **pixel surfaces** —
+caller-supplied decoded raster buffers — plus the engine that downsamples a
+surface onto the terminal through a fidelity ladder of output tiers: Kitty
+graphics protocol pixels, shape-aware ASCII character art, and alt text. The
+first element on the substrate is the declarative, void `img()` directive.
 
-The image element fulfills the commitment made in
-[Renderer Specification](renderer-spec.md) §7.8, which defers "Kitty graphics
-emission" to a focused feature specification. It consumes the terminfo
-foundation (PR stack #131–#133): tier selection reads the `RuntimeCapabilities`
-snapshot that `term.update()` maintains, and the kitty tier is gated on the
-`kitty-graphics` capability probe (query 9).
+The substrate is designed for more than images. Higher-level bitmap
+producers — video, SVG, 3D rasterizers, a draw-canvas — are consumers of the
+same surface registry and tier engine, not renderer features; §4.5 fixes
+that layering as part of this specification's contract.
+
+The image element — this specification's first consumer — fulfills the
+commitment made in [Renderer Specification](renderer-spec.md) §7.8, which
+defers "Kitty graphics emission" to a focused feature specification. It
+consumes the terminfo foundation (PR stack #131–#133): tier selection reads
+the `RuntimeCapabilities` snapshot that `term.update()` maintains, and the
+kitty tier is gated on the `kitty-graphics` capability probe (query 9).
 
 The division of labor follows the renderer's founding invariants:
 
@@ -36,6 +43,8 @@ The division of labor follows the renderer's founding invariants:
 
 ### In scope (normative)
 
+- The graphics substrate: the pixel-surface registry, the tier engine, and
+  the layering commitment of §4.5
 - The `img()` directive: its shape, its void (self-closing) form, and its
   validation rules
 - The image registry: `term.setImage()` and `term.removeImage()`
@@ -74,6 +83,9 @@ The division of labor follows the renderer's founding invariants:
   scroll API exists; renderer-spec §14)
 - Transitions on image properties
 - Cropping, source rectangles, and sub-image placement
+- The canvas element, its 2D context, and other producers (video, svg, 3D):
+  §4.5 fixes their mapping onto the substrate; each lands as its own focused
+  specification
 
 ### Out of scope (indefinitely)
 
@@ -187,7 +199,8 @@ implementation detail invisible to the caller except through reduced output
 size and correct cleanup:
 
 1. The front/back cell buffers used for diffing (pre-existing).
-2. The image registry: caller-uploaded pixel data, keyed by registry id (§5.3).
+2. The image registry: the substrate's caller-owned pixel surfaces, keyed by
+   registry id (§5.3).
 3. The **placements table**: a fixed-capacity record of the previous frame's
    live kitty placements — for each, its registry id, wire image id, placement
    id, painted footprint box, tier, and transmission state. It exists so that
@@ -207,6 +220,41 @@ are pure functions of the directive array, the capability snapshot, the
 registry state, the placements table, and the front cell buffer — no ambient
 state, no clock, and no heuristic beyond the evidence table (§9.1) and the
 damage rules (§10).
+
+### 4.5 Substrate and consumers (layering)
+
+_This subsection is normative for the layering commitment; the per-consumer
+sketches are non-normative._
+
+The substrate is element-agnostic. Nothing in the tier engine (§9), the
+memory carve (§5), the cell-buffer integration (§10), or the invalidation
+rules (§11) may learn what produced a surface's pixels — not its format, not
+its producer, not whether it is a still image or one frame of many. Every
+consumer below is therefore a *producer of surface pixels plus ordinary
+directives*; the engine stays a transcoder and never grows a drawing API.
+
+- **img (this specification).** A decoded raster surface plus a declarative
+  element with alt-text semantics — the reference consumer, specified in
+  §6–§8.
+- **video.** A producer that re-fills a surface per frame (`setImage` per
+  tick). The substrate already supports it: a revision bump re-transmits and
+  re-places (§9.2.2; §15's streaming note) with no new API. The Kitty
+  protocol's animation machinery — multi-frame images, frame composition,
+  playback controls — is the protocol's designed fast path for this and is
+  deferred to a focused amendment (§16.8).
+- **svg / vector / 3D.** Rasterizer producers: the caller rasterizes — with
+  any TypeScript-side library, including a WebGL offscreen surface read back
+  via `readPixels` — and fills surfaces through `setImage`. The renderer
+  gains nothing: no path, stroke, tessellation, or scene-graph machinery
+  ever enters the engine.
+- **canvas (next focused specification).** A directive exposing a surface as
+  a layout-participating draw target, plus a user-facing 2D context that is
+  pure TypeScript drawing through zero-copy views into the carved pool.
+  INV-I8 is what makes this sound: the pool is carved once and never grows
+  or moves at runtime, so surface views stay valid between resizes, and
+  dirty-rect re-emission extends the revision model additively. The canvas
+  element and context API land as their own focused specification amending
+  §5.3 with an in-place mutation path; nothing here needs to change first.
 
 ### 4.2 Data flow
 
@@ -1317,11 +1365,13 @@ data version. All costs are bounded by registry image sizes, not by frame
 rate.
 
 **Streaming video ergonomics.** The registry's replace-on-id path is the
-natural video-streaming API (one `setImage` per frame). Each replacement
+natural video-streaming API (one `setImage` per frame; §4.5's video
+producer). Each replacement
 costs a delete/re-transmit/re-place cycle (§9.2.2); terminals batch this
 within a write burst, but the protocol does not guarantee flicker-free
 updates. Per-frame streaming ergonomics are revisited with §16.4
-(placeholders), which would make moves pure cell diffs.
+(placeholders) and §16.8 (animation frames), which would make moves pure
+cell diffs and updates re-transmission-free.
 
 **Cursor safety.** `C=1` keeps the cursor at the placement origin; combined
 with §10.6's post-frame restore, no frame leaves the cursor somewhere the
@@ -1397,10 +1447,17 @@ could be added as a directive property in a future amendment, ascii-only.
 
 ### 16.8 Animation, cropping, transitions
 
-Multi-frame formats, source rectangles, and transitions on image geometry are
-not designed here. The directive model leaves room: `image` could become a
-richer descriptor and `transition` could apply to footprint axes without
-breaking §7.1's shape.
+Under §4.5's layering, video is a per-frame revision-bump producer and the
+substrate supports it today — but per-frame full re-transmission does not
+flicker-free. The Kitty protocol's own animation machinery is its designed
+fast path: multi-frame images, frame composition (delta frames), and
+playback controls, uploaded once and played back without re-transmission.
+Landing it is a focused amendment; it is a protocol sub-feature, and §9.1
+does not verify sub-features in v1. Multi-frame source formats, cropping
+source rectangles, and transitions on image geometry are also not designed
+here. The directive model leaves room: `image` could become a richer
+descriptor and `transition` could apply to footprint axes without breaking
+§7.1's shape.
 
 ### 16.9 Synchronized-output wrapping
 
@@ -1417,22 +1474,22 @@ approval the amendments land as their own spec-only commit._
 the renderer retains between frames is the cell buffer used for diffing" to
 "the only state the renderer retains between frames is diffing state: the
 cell buffers, the image registry, and the previous frame's placements table
-(as defined in the Image Specification §4.1)". Frame-snapshot independence of
+(as defined in the Graphics Specification §4.1)". Frame-snapshot independence of
 the directive array is unchanged.
 
 **A2. Renderer-spec §7.6 (cursor carve-out).** Append to the cursor
 visibility/positioning section: frames containing image elements at a
 graphics tier MAY additionally include cursor-positioning bytes required by
-the graphics protocol (Image Specification §10.6), provided the post-frame
+the graphics protocol (Graphics Specification §10.6), provided the post-frame
 cursor visibility state defined here is unchanged and caret-declaring frames
 still end with the caret's cell.
 
 **A3. Renderer-spec §8.3 (directive constructors).** Add §8.3.5 `img()`
-deferring normatively to the Image Specification, noting the void-directive
+deferring normatively to the Graphics Specification, noting the void-directive
 form and that `img` values do not participate in open/close balance.
 
 **A4. Renderer-spec §7.8 (capability consumption).** Remove "Kitty graphics
-emission" from the deferred list and reference the Image Specification as the
+emission" from the deferred list and reference the Graphics Specification as the
 focused feature specification that defines it.
 
 **A5. Renderer-spec §12.1/§12.2 (current surface).** Note the `img` opcode in
@@ -1444,9 +1501,9 @@ surface per §5's contract-layer boundary.
 Clayterm-specific error types.
 
 **A7. Renderer-spec §8.1 (createTerm options).** Add the optional
-`imagePoolBytes` option (Image Specification §5.3), default 4 MiB, sizing the
+`imagePoolBytes` option (Graphics Specification §5.3), default 4 MiB, sizing the
 carved image registry. The memory carve and capacity behavior are normative
-in the Image Specification; renderer-spec §2 keeps WASM memory layout out of
+in the Graphics Specification; renderer-spec §2 keeps WASM memory layout out of
 scope beyond such behavioral requirements.
 
 **A8. Terminfo specification.** No changes in v1. The kitty tier consumes the
@@ -1461,7 +1518,7 @@ keeps the renderer's emissions from generating any.
 
 **A10. Renderer-spec §7.7 (update transaction).** Note that a focused feature
 specification may define immediate update-output bytes for its capability or
-resize steps; the Image Specification exercises this for graphics cleanup
+resize steps; the Graphics Specification exercises this for graphics cleanup
 (§10.5, §11.2). No foundation behavior changes.
 
 ## Open Decisions
