@@ -9,8 +9,8 @@
  * is double-wide and shows grabbing while the pointer is held down on it —
  * a capture-mode drag shield keeps the grabbing cursor anywhere on screen
  * until release, matching CSS drag behavior — returning to grab on release,
- * staying orange throughout. Idle tiles breathe with a brightness wave: a
- * phase-offset sine sweeps the grid so a ripple of light crosses it.
+ * staying orange throughout. The ▪ spacers in the title bar breathe with a
+ * brightness wave: a phase-offset sine ripple travels the bar.
  */
 
 import { close, fixed, grow, type Op, open, rgba, text } from "../../mod.ts";
@@ -114,14 +114,13 @@ export function withDragShield(
   return out;
 }
 
-function tile(ops: Op[], t: Tile, idx: number, ctx: Ctx): void {
+function tile(ops: Op[], t: Tile, ctx: Ctx): void {
   let id = `shape:${t.shape}`;
-  let hovered = ctx.entered.has(id);
+  // While the drag shield is up, capture mode hides the tiles beneath and
+  // the grab tile takes a pointerleave — the grabbed tile keeps its hover
+  // treatment anyway so the panel stays lit for the whole drag.
+  let hovered = ctx.entered.has(id) || (ctx.grabbing && id === "shape:grab");
   let shape = "toggle" in t && ctx.grabbing ? t.toggle : t.shape;
-  // Ambient brightness wave: each idle tile breathes on a phase-offset sine,
-  // sweeping the grid in reading order (~4s per cycle). Hovered and grabbed
-  // tiles keep their full hue treatment instead.
-  let wave = 0.5 + 0.5 * Math.sin(ctx.now / 650 - idx * 0.55);
   ops.push(
     open(id, {
       layout: {
@@ -132,7 +131,7 @@ function tile(ops: Op[], t: Tile, idx: number, ctx: Ctx): void {
         alignY: "center",
       },
       border: {
-        color: hovered ? t.hue : shade(borderIdle, 0.85 + wave * 0.9),
+        color: hovered ? t.hue : borderIdle,
         left: 1,
         right: 1,
         top: 1,
@@ -141,7 +140,7 @@ function tile(ops: Op[], t: Tile, idx: number, ctx: Ctx): void {
       cornerRadius: { tl: 1, tr: 1, bl: 1, br: 1 },
       pointerShape: shape,
     }),
-    text(shape, { color: hovered ? t.hue : shade(label, 0.85 + wave * 0.3) }),
+    text(shape, { color: hovered ? t.hue : label }),
     close(),
   );
 }
@@ -172,12 +171,15 @@ export function frame(ctx: Ctx): Op[] {
       },
     }),
     text(`${PKG} `, { color: heading }),
-    text("▪".repeat(Math.max(0, BAR_W - PKG.length - DEMO.length - 2)), {
-      color: dim,
-    }),
-    text(` ${DEMO}`, { color: heading }),
-    close(),
   );
+  // Brightness wave: the ▪ spacers breathe on a phase-offset sine, so a
+  // ripple of light travels the bar (~4s per square cycle, ~4s to cross it).
+  let fill = Math.max(0, BAR_W - PKG.length - DEMO.length - 2);
+  for (let i = 0; i < fill; i++) {
+    let wave = 0.5 + 0.5 * Math.sin(ctx.now / 650 - i * 0.19);
+    ops.push(text("▪", { color: shade(dim, 0.85 + wave * 0.65) }));
+  }
+  ops.push(text(` ${DEMO}`, { color: heading }), close());
 
   // Pack tiles into rows of COLS units; the toggle tile spans two.
   let rows: Tile[][] = [];
@@ -195,13 +197,12 @@ export function frame(ctx: Ctx): Op[] {
   }
   if (row.length > 0) rows.push(row);
 
-  let idx = 0;
   for (let r of rows) {
     ops.push(
       open("", { layout: { direction: "ltr", gap: 1, height: fixed(3) } }),
     );
     for (let t of r) {
-      tile(ops, t, idx++, ctx);
+      tile(ops, t, ctx);
     }
     ops.push(close());
   }
