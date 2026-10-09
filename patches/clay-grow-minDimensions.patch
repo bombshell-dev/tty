@@ -1,0 +1,34 @@
+diff --git a/clay.h b/clay.h
+index 7c967bb..5421621 100644
+--- a/clay.h
++++ b/clay.h
+@@ -1921,7 +1921,14 @@ void Clay__CloseElement(void) {
+             layoutConfig->sizing.width.size.minMax.max = CLAY__MAXFLOAT;
+         }
+         openLayoutElement->dimensions.width = CLAY__MIN(CLAY__MAX(openLayoutElement->dimensions.width, layoutConfig->sizing.width.size.minMax.min), layoutConfig->sizing.width.size.minMax.max);
+-        openLayoutElement->minDimensions.width = CLAY__MIN(CLAY__MAX(openLayoutElement->minDimensions.width, layoutConfig->sizing.width.size.minMax.min), layoutConfig->sizing.width.size.minMax.max);
++        // GROW elements resolve against the parent content box and must be compressible to their
++        // configured min (default 0). Content-derived minDimensions would prevent this compression,
++        // so for GROW we use only the user-configured min, not the content-derived value.
++        if (layoutConfig->sizing.width.type == CLAY__SIZING_TYPE_GROW) {
++            openLayoutElement->minDimensions.width = layoutConfig->sizing.width.size.minMax.min;
++        } else {
++            openLayoutElement->minDimensions.width = CLAY__MIN(CLAY__MAX(openLayoutElement->minDimensions.width, layoutConfig->sizing.width.size.minMax.min), layoutConfig->sizing.width.size.minMax.max);
++        }
+     } else {
+         openLayoutElement->dimensions.width = 0;
+     }
+@@ -1932,7 +1939,12 @@ void Clay__CloseElement(void) {
+             layoutConfig->sizing.height.size.minMax.max = CLAY__MAXFLOAT;
+         }
+         openLayoutElement->dimensions.height = CLAY__MIN(CLAY__MAX(openLayoutElement->dimensions.height, layoutConfig->sizing.height.size.minMax.min), layoutConfig->sizing.height.size.minMax.max);
+-        openLayoutElement->minDimensions.height = CLAY__MIN(CLAY__MAX(openLayoutElement->minDimensions.height, layoutConfig->sizing.height.size.minMax.min), layoutConfig->sizing.height.size.minMax.max);
++        // Same rationale as width: GROW elements use the configured min, not content-derived.
++        if (layoutConfig->sizing.height.type == CLAY__SIZING_TYPE_GROW) {
++            openLayoutElement->minDimensions.height = layoutConfig->sizing.height.size.minMax.min;
++        } else {
++            openLayoutElement->minDimensions.height = CLAY__MIN(CLAY__MAX(openLayoutElement->minDimensions.height, layoutConfig->sizing.height.size.minMax.min), layoutConfig->sizing.height.size.minMax.max);
++        }
+     } else {
+         openLayoutElement->dimensions.height = 0;
+     }
