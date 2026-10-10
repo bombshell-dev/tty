@@ -10,6 +10,7 @@
 //           and panel content, so the veil composites over the
 //           terminal's own background — queried live via OSC 11
 //   arrows  move the translucent veil over the mixed backdrop
+//           (shift+arrows jump: ±10 columns / ±5 rows)
 //   tab     cycle the veil's color
 //   -/+     narrow or widen the veil's alpha
 //   q/Ctrl+C quit
@@ -165,10 +166,18 @@ await main(function* () {
       if (key === "+" || key === "=") {
         VEIL.alpha = Math.min(240, VEIL.alpha + 16);
       }
-      if (key === "ArrowUp") VEIL.y -= 1;
-      if (key === "ArrowDown") VEIL.y += 1;
-      if (key === "ArrowLeft") VEIL.x -= 1;
-      if (key === "ArrowRight") VEIL.x += 1;
+      if (key === "ArrowUp") {
+        VEIL.y += event.shift ? -5 : -1;
+      }
+      if (key === "ArrowDown") {
+        VEIL.y += event.shift ? 5 : 1;
+      }
+      if (key === "ArrowLeft") {
+        VEIL.x += event.shift ? -10 : -1;
+      }
+      if (key === "ArrowRight") {
+        VEIL.x += event.shift ? 10 : 1;
+      }
       // Arrow handling doubled into keydown and keyrepeat, so holding
       // an arrow glides the veil.
     }

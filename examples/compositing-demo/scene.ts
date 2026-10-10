@@ -3,20 +3,49 @@
 // a large translucent veil the user drives over it, and a fixed
 // composited control bar. Shared by the interactive demo (index.ts) and
 // the headless capture (capture.ts).
+//
+// Colors come from bomb.sh's :root CSS variables (the brand system):
+// the eight chromatic accents plus the gray ramp used for surfaces and
+// text.
 import { close, fixed, type Op, open, rgba, text } from "../../mod.ts";
+
+/* ── Bombshell brand colors (bomb.sh :root CSS vars) ─────────────── */
+
+export const BRAND = {
+  pink: rgba(255, 53, 206), // --c-pink: #ff35ce (accent)
+  green: rgba(0, 239, 89), // --c-green: #00ef59
+  yellow: rgba(255, 226, 33), // --c-yellow: #ffe221
+  cyan: rgba(0, 227, 245), // --c-cyan: #00e3f5
+  red: rgba(255, 64, 75), // --c-red: #ff404b
+  blue: rgba(0, 87, 246), // --c-blue: #0057f6
+  purple: rgba(135, 26, 255), // --c-purple: #871aff
+  orange: rgba(255, 145, 42), // --c-orange: #ff912a
+  // gray ramp: --c-gray-90 surface fill, -80 borders, -40 muted text,
+  // -20 headings, -10 white
+  surface: rgba(25, 27, 36), // --c-gray-90: #191b24
+  border: rgba(42, 46, 57), // --c-gray-80: #2a2e39
+  borderLight: rgba(72, 74, 85), // --c-gray-70: #484a55
+  muted: rgba(137, 142, 156), // --c-gray-50: #898e9c
+  textDim: rgba(169, 171, 183), // --c-gray-40: #a9abb7
+  textMid: rgba(195, 199, 208), // --c-gray-30: #c3c7d0
+  heading: rgba(244, 245, 249), // --c-gray-20: #f4f5f9
+  white: rgba(255, 255, 255), // --c-gray-10 / --c-white
+  // --c-gray-100 page fill #0a0a0d, used for the bar's tint base
+  ink: rgba(10, 10, 13),
+} as const;
 
 /** The tier override folded through the 1/2/3 keys. -1 keeps the
  * terminal's own color evidence (color-encoding-spec §6.1). */
 export const TIER_LABELS = ["terminal evidence", "256", "16"] as const;
 
-/** The veil's candidate colors, cycled with tab. Alpha is applied
- * separately (the -/+ keys). */
+/** The veil's candidate colors — the bomb.sh chromatic accents. Alpha
+ * is applied separately (the -/+ keys). */
 export const VEIL_COLORS = [
-  rgba(255, 80, 80), // red
-  rgba(255, 180, 60), // amber
-  rgba(90, 220, 120), // green
-  rgba(90, 140, 255), // blue
-  rgba(190, 120, 255), // violet
+  BRAND.pink,
+  BRAND.orange,
+  BRAND.green,
+  BRAND.blue,
+  BRAND.purple,
 ];
 
 export interface Veil {
@@ -59,15 +88,15 @@ function veilBg(): number {
 
 /* ── Backdrop regions ─────────────────────────────────────────────── */
 
-/** The tile backdrop: saturated hues tiled in a fixed pattern, with a
- * checker offset so adjacent tiles differ. */
+/** The tile backdrop: the bomb.sh chromatic accents in a fixed pattern,
+ * with a checker offset so adjacent tiles differ. */
 const TILES = [
-  rgba(226, 60, 60),
-  rgba(60, 178, 72),
-  rgba(66, 118, 230),
-  rgba(240, 200, 48),
-  rgba(184, 78, 204),
-  rgba(48, 200, 210),
+  BRAND.pink,
+  BRAND.green,
+  BRAND.blue,
+  BRAND.yellow,
+  BRAND.purple,
+  BRAND.cyan,
 ];
 
 function tileColor(x: number, y: number): number {
@@ -311,7 +340,7 @@ export function frame(
   // alpha-composited over whatever is beneath it.
   let bgLabel = bare ? `bg: ${reportedBg ?? "fallback"}` : "tiles+gradient";
   let label =
-    ` §7.9 · veil α${VEIL.alpha} · q quit · arrows · tab color · -/+ alpha · ${bgLabel} · 1/2/3 tier`;
+    ` §7.9 · veil α${VEIL.alpha} · q quit · ⇧arrows jump · tab color · -/+ alpha · ${bgLabel} · 1/2/3 tier`;
   ops.push(
     open("bar", {
       layout: {

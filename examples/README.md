@@ -159,8 +159,8 @@ What it shows (renderer-spec §7.9, color-encoding-spec):
   background, and a file-manager panel (border, bold header, selected row with
   an explicit background, right-aligned sizes, a block-glyph progress bar)
 - a large translucent veil driven with the arrow keys (held arrows glide via
-  keyrepeat), compositing over the backdrop per §7.9 — `tab` cycles its color,
-  `-`/`+` narrow or widen its alpha
+  keyrepeat, shift+arrows jump ±10 columns / ±5 rows), compositing over the
+  backdrop per §7.9 — `tab` cycles its color, `-`/`+` narrow or widen its alpha
 - a control bar fixed to the bottom row (floating, above the veil) with internal
   padding and a centered label; its translucent background composites over
   tiles, the reported background, and the veil sliding beneath it
