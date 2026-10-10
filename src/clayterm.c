@@ -592,129 +592,37 @@ static uint32_t color(Clay_Color c) {
 
 /* ── Clay render backend ──────────────────────────────────────────── */
 
-/* Eighth-block ramps. Only LEFT (2588..258F) and LOWER (2581..2588) families
- * exist; RIGHT/UPPER coverage is the same glyph with fg/bg swapped. */
-static uint32_t block_left(int n) {
-  return 0x2590u - (uint32_t)n;
-} /* n=1..7 -> ▏..▉ */
-static uint32_t block_lower(int n) {
-  return 0x2580u + (uint32_t)n;
-} /* n=1..7 -> ▁..▇ */
-
-typedef enum { EDGE_LEFT, EDGE_RIGHT, EDGE_TOP, EDGE_BOTTOM } EdgeSide;
-
-/* cov in (0,1): fraction of THIS cell the fill covers, measured inward from
- * the box edge. Reads the cell's current bg as paper — resolved through the
- * §7.9 default chain — so the edge composites over what it slides across.
- * The ink is the fill composited over the paper at the fill's alpha, which
- * is exactly the interior tint, so a translucent rect's edge is continuous
- * with its body. */
-static void edge_cell(struct Clayterm *ct, int x, int y, EdgeSide side,
-                      float cov, uint32_t fill, int alpha) {
-  if (cov <= 0.0f || alpha <= 0)
-    return; /* transparent rect: no edge */
-  Cell *c = writable_cell(ct, x, y);
-  if (c == NULL)
-    return;
-  uint32_t paper = channel_dst(ct, c->bg, 0);
-  fill &= COLOR_MASK;
-
-  uint32_t ink = composite(fill, paper, alpha);
-
-  int n = (int)(cov * 8.0f + 0.5f); /* 8 hard sub-positions per axis */
-  if (n <= 0)
-    return;
-  /* Overwriting the glyph invalidates any combining marks attached to the
-   * previous content; this direct-write path must clear them the way
-   * composite_cell does, or stale marks reattach to the block glyph. */
-  for (int i = 0; i < CELL_MAX_COMBINING; i++)
-    c->combining[i] = 0;
-  if (n >= 8) {
-    c->ch = 0x2588;
-    c->fg = ink;
-    return;
-  }
-
-  switch (side) {
-  case EDGE_RIGHT:
-    c->ch = block_left(n); /* ink on the left n/8 */
-    c->fg = ink;
-    break;
-  case EDGE_LEFT:
-    c->ch = block_left(8 - n);
-    c->fg = paper;
-    c->bg = ink; /* swap: the fill's sliver rides the background */
-    break;
-  case EDGE_TOP:
-    c->ch = block_lower(n);
-    c->fg = ink;
-    break;
-  case EDGE_BOTTOM:
-    c->ch = block_lower(8 - n);
-    c->fg = paper;
-    c->bg = ink;
-    break;
-  }
-}
-
-/* Solid interior + four coverage boundary lines. Corners are left empty in
- * v1: both fractions meet in one cell and a single eighth-block can't express
- * an L-corner; the octant path is deferred. */
-static void render_rect_cov(struct Clayterm *ct, Clay_BoundingBox b,
-                            uint32_t fill, int alpha) {
-  float l = b.x, r = b.x + b.width;
-  float t = b.y, btm = b.y + b.height;
-
-  /* floor==trunc and ceil==trunc+frac for the non-negative coords Clay emits,
-   * so we avoid libm. xi0/yi0 = ceil (first fully-covered), xi1/yi1 = floor. */
-  int xi0 = (int)l + (l > (float)(int)l ? 1 : 0);
-  int yi0 = (int)t + (t > (float)(int)t ? 1 : 0);
-  int xi1 = (int)r;
-  int yi1 = (int)btm;
-
-  for (int y = yi0; y < yi1;
-       y++) /* interior: §7.9 compositing at full coverage */
-    for (int x = xi0; x < xi1; x++) {
+static void render_rect(struct Clayterm *ct, int x0, int y0, int x1, int y1,
+                        Clay_RectangleRenderData *r) {
+  /* Clay only emits rectangle commands for backgrounds with alpha > 0
+   * (clay.h), so α = 0 never reaches here. */
+  uint32_t src = color(r->backgroundColor);
+  int alpha = (int)r->backgroundColor.a;
+  for (int y = y0; y < y1; y++) {
+    for (int x = x0; x < x1; x++) {
       Cell *c = writable_cell(ct, x, y);
       if (c == NULL)
         continue;
+      if (alpha <= 0)
+        continue; /* α = 0 leaves the cell unchanged (§7.9) */
       if (alpha >= 255) {
         /* α = 255 replaces the background and erases the glyph. */
         c->ch = ' ';
         for (int i = 0; i < CELL_MAX_COMBINING; i++)
           c->combining[i] = 0;
         c->fg = ATTR_DEFAULT;
-        c->bg = fill;
+        c->bg = src;
       } else {
         /* 0 < α < 255 tints the background, keeps the glyph and its
          * attributes, and composites the glyph's foreground toward the
-         * background color with the same α (§7.9 backgrounds). */
-        c->bg = composite(fill, channel_dst(ct, c->bg, 0), alpha);
-        c->fg = composite(fill, channel_dst(ct, c->fg, 1), alpha) |
+         * background color with the same α (§7.9 backgrounds). The
+         * tint makes the foreground explicit, so the default flag
+         * drops while the SGR attribute bits stay. */
+        c->bg = composite(src, channel_dst(ct, c->bg, 0), alpha);
+        c->fg = composite(src, channel_dst(ct, c->fg, 1), alpha) |
                 (c->fg & 0x7f000000);
       }
     }
-
-  float lf = (float)xi0 - l; /* edge slivers */
-  float rf = r - (float)xi1;
-  float tf = (float)yi0 - t;
-  float bf = btm - (float)yi1;
-
-  /* edges span the interior extent only; the 4 corner cells are deferred to
-   * the octant path. A missing corner sliver reads as a faint notch, which is
-   * far less distracting than the over-ink you get by letting one axis claim
-   * it. */
-  for (int x = xi0; x < xi1; x++) {
-    if (tf > 0.0f)
-      edge_cell(ct, x, yi0 - 1, EDGE_TOP, tf, fill, alpha);
-    if (bf > 0.0f)
-      edge_cell(ct, x, yi1, EDGE_BOTTOM, bf, fill, alpha);
-  }
-  for (int y = yi0; y < yi1; y++) {
-    if (lf > 0.0f)
-      edge_cell(ct, xi0 - 1, y, EDGE_LEFT, lf, fill, alpha);
-    if (rf > 0.0f)
-      edge_cell(ct, xi1, y, EDGE_RIGHT, rf, fill, alpha);
   }
 }
 
@@ -1314,8 +1222,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
 
     switch (cmd->commandType) {
     case CLAY_RENDER_COMMAND_TYPE_RECTANGLE:
-      render_rect_cov(ct, box, color(cmd->renderData.rectangle.backgroundColor),
-                      (int)cmd->renderData.rectangle.backgroundColor.a);
+      render_rect(ct, x0, y0, x1, y1, &cmd->renderData.rectangle);
       break;
     case CLAY_RENDER_COMMAND_TYPE_TEXT:
       render_text(ct, x0, y0, cmd);
