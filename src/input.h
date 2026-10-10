@@ -75,6 +75,9 @@
 #define CAP_KITTY_KEYBOARD 6
 #define CAP_KITTY_GRAPHICS 7
 #define CAP_POINTER_SHAPE 8
+#define CAP_COLOR_SCHEME 9
+
+/* CAP_COLOR_SCHEME ch values (DECDSR 997 Ps): 1=dark, 2=light. */
 
 /* ── Modifier flags (bitwise) ─────────────────────────────────────── */
 

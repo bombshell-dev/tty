@@ -1008,6 +1008,28 @@ describe("terminfo integration", () => {
       });
     });
 
+    it("surfaces a DECDSR 996 color-scheme reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b[?997;2n"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "color-scheme",
+        value: "light",
+      });
+    });
+
+    it("surfaces a mode-2031 dark push and stays silent on other DSRs", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b[?997;1n\x1b[?998;1n"));
+      expect(result.events.length).toBe(1);
+      expect(result.events[0]).toEqual({
+        type: "capability",
+        key: "color-scheme",
+        value: "dark",
+      });
+    });
+
     it("surfaces 256-color colordepth denial from an invalid XTGETTCAP reply", async () => {
       let { input } = await withTerminfo();
       let result = input.scan(str("\x1bP0+r\x1b\\"));

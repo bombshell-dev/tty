@@ -1075,6 +1075,14 @@ static int parse_csi_private(struct InputState *st) {
           emit_cap_bool(st, CAP_SYNC_OUTPUT, v == 1 || v == 2 || v == 3);
         }
         /* other modes: consumed silently */
+      } else if (c == 'n' && intermediate == 0) {
+        /* DECDSR 996 reply / mode-2031 push: CSI ? 997 ; Ps n, where
+         * Ps=1 is dark and Ps=2 is light (terminfo-spec §6.3). Other
+         * DSR numbers are consumed silently. Uses emit_cap_color's raw
+         * ch (emit_cap_bool would booleanize Ps to 1). */
+        if (nums[0] == 997 && ni >= 2) {
+          emit_cap_color(st, CAP_COLOR_SCHEME, nums[1] == 2 ? 2 : 1);
+        }
       } else if (c == 'c' && intermediate == 0) {
         /* DA1 fence: consumed silently, MUST NOT surface as CapabilityEvent */
         st->tcap = 0;

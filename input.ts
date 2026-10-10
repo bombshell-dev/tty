@@ -8,6 +8,7 @@
 
 import {
   CAP_BACKGROUND_COLOR,
+  CAP_COLOR_SCHEME,
   CAP_COLORDEPTH,
   CAP_CURSOR_COLOR,
   CAP_FOREGROUND_COLOR,
@@ -412,6 +413,11 @@ export type CapabilityEvent =
   }
   | {
     readonly type: "capability";
+    readonly key: "color-scheme";
+    readonly value: "dark" | "light";
+  }
+  | {
+    readonly type: "capability";
     readonly key: "sync-output";
     readonly value: boolean;
   }
@@ -722,6 +728,13 @@ function mapCapEvent(
         : "256";
       return { type: "capability", key: "colordepth", value };
     }
+    case CAP_COLOR_SCHEME:
+      return {
+        type: "capability",
+        key: "color-scheme",
+        // DECDSR 997 Ps: 1 = dark, 2 = light (src/input.h).
+        value: native.ch === 2 ? "light" : "dark",
+      };
     case CAP_SYNC_OUTPUT:
       return { type: "capability", key: "sync-output", value: native.ch !== 0 };
     case CAP_KITTY_KEYBOARD:

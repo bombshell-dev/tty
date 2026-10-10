@@ -760,6 +760,22 @@ hi
         expect(seeded.capabilities).toHaveProperty(key, value);
       }
     });
+
+    it("folds a color-scheme event into the theme", async () => {
+      expect(term.capabilities.theme.scheme).toBeUndefined();
+      term.update([{
+        type: "capability",
+        key: "color-scheme",
+        value: "light",
+      }]);
+      expect(term.capabilities.theme.scheme).toBe("light");
+      term.update([{
+        type: "capability",
+        key: "color-scheme",
+        value: "dark",
+      }]);
+      expect(term.capabilities.theme.scheme).toBe("dark");
+    });
   });
 
   describe("update", () => {

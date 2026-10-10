@@ -40,6 +40,9 @@ export interface RuntimeCapabilities extends Capabilities {
     readonly foreground?: Rgb;
     readonly background?: Rgb;
     readonly cursor?: Rgb;
+    /** The terminal's reported dark/light scheme (DECDSR 996 reply, or
+     * a mode-2031 push when the OS appearance changes). */
+    readonly scheme?: "dark" | "light";
   };
 }
 
@@ -76,6 +79,12 @@ function applyUpdate(
       next = { ...current, trueColor };
       break;
     }
+    case "color-scheme":
+      next = {
+        ...current,
+        theme: { ...current.theme, scheme: event.value },
+      };
+      break;
     case "sync-output":
       next = { ...current, syncOutput: event.value };
       break;
