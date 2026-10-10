@@ -8,7 +8,7 @@
 //
 // Run with: deno run --allow-read --allow-write examples/compositing-demo/capture.ts
 import { createTerm, type TerminalInfo } from "../../mod.ts";
-import { clampVeil, frame, VEIL, VEIL_COLORS } from "./scene.ts";
+import { clampVeil, frame, type Rgb, VEIL, VEIL_COLORS } from "./scene.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -240,7 +240,9 @@ const SHOTS: Array<
 
 /** Simulates what the OSC 11 background-color query replies: the
  * terminal's reported theme, folded as a CapabilityEvent. */
-const REPORTED_BG = { r: 48, g: 40, b: 88 }; // #302858
+const REPORTED_BG: Rgb = { r: 48, g: 40, b: 88 }; // #302858
+/** A light theme's reported background, for the light-polarity section. */
+const LIGHT_BG: Rgb = { r: 244, g: 245, b: 249 }; // #f4f5f9 (gray-20)
 
 let sections = "";
 for (let t of TIERS) {
@@ -277,7 +279,7 @@ for (let t of TIERS) {
       value: REPORTED_BG,
     }]);
     let ansi = decode(
-      term.render(frame(WIDTH, HEIGHT, -1, false), {
+      term.render(frame(WIDTH, HEIGHT, -1, false, REPORTED_BG), {
         mode: "line",
       }).output,
     );
@@ -306,7 +308,7 @@ for (let t of TIERS) {
       value: REPORTED_BG,
     }]);
     let ansi = decode(
-      term.render(frame(WIDTH, HEIGHT, -1, true), {
+      term.render(frame(WIDTH, HEIGHT, -1, true, REPORTED_BG), {
         mode: "line",
       }).output,
     );
@@ -314,6 +316,35 @@ for (let t of TIERS) {
   }
   sections +=
     `<section><h2>bare background (OSC 11 query)</h2><p>The full-bleed fields (tiles, gradient) drop out: compositing destinations resolve through the §7.9 chain — the reported background (#302858, as an OSC 11 reply would supply) — and the veil tints toward it. Untouched cells emit no color SGR, so the terminal's own background shows through.</p>${frames}</section>\n`;
+}
+
+// Light theme: the same scene against a light reported background — the
+// UI palette flips polarity (dark text, light chrome, light bar strip)
+// while the scrims, veil, and boxes stay put.
+{
+  let frames = "";
+  for (let s of SHOTS) {
+    arrange(s.x, s.y, s.colorIdx, s.alpha);
+    clampVeil(WIDTH, HEIGHT);
+    let term = await createTerm({
+      width: WIDTH,
+      height: HEIGHT,
+      terminfo: evidence(256, true),
+    });
+    term.update([{
+      type: "capability",
+      key: "background-color",
+      value: LIGHT_BG,
+    }]);
+    let ansi = decode(
+      term.render(frame(WIDTH, HEIGHT, -1, false, LIGHT_BG), {
+        mode: "line",
+      }).output,
+    );
+    frames += `<h3>${s.label}</h3>\n<pre>${ansiToHtml(ansi)}</pre>\n`;
+  }
+  sections +=
+    `<section><h2>light theme</h2><p>The same scene over a light reported background (#f4f5f9): the UI palette flips polarity — gray-100/90 text, gray-30 borders, a light bar strip — while the scrim tiles (relative washes), the veil, and the bouncing boxes stay chromatic.</p>${frames}</section>\n`;
 }
 
 let html = `<!doctype html>

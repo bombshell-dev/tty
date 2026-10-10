@@ -167,6 +167,59 @@ function veilBg(): number {
   );
 }
 
+/* ── Theme polarity ───────────────────────────────────────────────── */
+
+export interface Rgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/** Perceived luminance (Rec. 601) of an sRGB color, 0–255. */
+function luminance(c: Rgb): number {
+  return (c.r * 299 + c.g * 587 + c.b * 114) / 1000;
+}
+
+/** The resolved background's polarity: `light` at 50%+ luminance. */
+export function polarityOf(bg: Rgb | undefined): "light" | "dark" {
+  if (bg && luminance(bg) >= 128) return "light";
+  return "dark";
+}
+
+/** UI colors that flip with the theme's polarity. The chromatic accents
+ * (tiles' scrims' destination, veil, boxes, gradient) stay put; only the
+ * text, panel chrome, and the control bar flip. Light mode is built from
+ * the same brand ramp, inverted: gray-90/100 text, gray-30/20 chrome. */
+function uiOf(polarity: "light" | "dark") {
+  return polarity === "light"
+    ? {
+      proseHeading: rgba(10, 10, 13), // gray-100
+      proseBody: rgba(72, 74, 85), // gray-70
+      panelBorder: rgba(195, 199, 208), // gray-30
+      panelHeader: rgba(25, 27, 36), // gray-90
+      panelRow: rgba(72, 74, 85), // gray-70
+      panelFooter: rgba(108, 110, 122), // gray-60
+      selectedBg: rgba(0, 87, 246), // --c-blue
+      selectedText: rgba(255, 255, 255),
+      barBg: rgba(255, 255, 255, 216), // light lift strip
+      barText: rgba(10, 10, 13), // gray-100
+      fileAccent: rgba(200, 96, 0), // darkened orange for white bg
+    }
+    : {
+      proseHeading: rgba(195, 199, 208), // gray-30
+      proseBody: rgba(137, 142, 156), // gray-50
+      panelBorder: rgba(72, 74, 85), // gray-70
+      panelHeader: rgba(220, 224, 230),
+      panelRow: rgba(137, 142, 156), // gray-50
+      panelFooter: rgba(110, 116, 128),
+      selectedBg: rgba(36, 90, 190),
+      selectedText: rgba(240, 244, 250),
+      barBg: rgba(20, 20, 28, 200), // dark ink strip
+      barText: rgba(230, 230, 235),
+      fileAccent: rgba(255, 170, 80), // orange
+    };
+}
+
 /* ── Backdrop regions ─────────────────────────────────────────────── */
 
 /** The tile backdrop: alpha scrims over the compositing destination —
@@ -252,7 +305,12 @@ const PROSE = [
 /** Prose over the terminal default background: no explicit bg anywhere,
  * so a default foreground still tints under the veil (§7.9 backgrounds)
  * while untouched cells keep emitting no color SGR. */
-function textPanel(w: number, h: number, id: string): Op[] {
+function textPanel(
+  w: number,
+  h: number,
+  id: string,
+  ui: ReturnType<typeof uiOf>,
+): Op[] {
   let ops: Op[] = [
     open(id, {
       layout: {
@@ -263,13 +321,13 @@ function textPanel(w: number, h: number, id: string): Op[] {
       },
     }),
     text("why it matters", {
-      color: rgba(200, 205, 215),
+      color: ui.proseHeading,
       attrs: 0x01, // bold
     }),
   ];
   for (let line of PROSE.slice(0, Math.max(0, h - 1))) {
     ops.push(text(line.slice(0, Math.max(0, w - 2)), {
-      color: rgba(160, 166, 178),
+      color: ui.proseBody,
     }));
   }
   ops.push(close());
@@ -294,12 +352,17 @@ const FILES: Row[] = [
  * an explicit background, right-aligned sizes, and a footer with a
  * block-glyph progress bar. Ordinary TUI content — and every glyph in
  * it tints under the veil as the veil passes over. */
-function tuiPanel(w: number, h: number, id: string): Op[] {
+function tuiPanel(
+  w: number,
+  h: number,
+  id: string,
+  ui: ReturnType<typeof uiOf>,
+): Op[] {
   let ops: Op[] = [
     open(id, {
       layout: { width: fixed(w), height: fixed(h), direction: "ttb" },
       border: {
-        color: rgba(120, 128, 140),
+        color: ui.panelBorder,
         left: 1,
         right: 1,
         top: 1,
@@ -312,7 +375,7 @@ function tuiPanel(w: number, h: number, id: string): Op[] {
   let rows = Math.max(0, h - 2);
   ops.push(
     text(` src/ · 5 items`.slice(0, inner).padEnd(inner), {
-      color: rgba(220, 224, 230),
+      color: ui.panelHeader,
       attrs: 0x01,
     }),
   );
@@ -321,17 +384,17 @@ function tuiPanel(w: number, h: number, id: string): Op[] {
       (r.name + " ".repeat(inner)).slice(0, inner - r.size.length - 1) +
       r.size.padStart(r.size.length + 1);
     if (r.selected) {
-      // selected row: explicit background + bold light text
+      // selected row: explicit background + bold text
       ops.push(
         open(`${id}sel`, {
           layout: { width: fixed(inner), height: fixed(1) },
-          bg: rgba(36, 90, 190),
+          bg: ui.selectedBg,
         }),
-        text(line, { color: rgba(240, 244, 250), attrs: 0x01 }),
+        text(line, { color: ui.selectedText, attrs: 0x01 }),
         close(),
       );
     } else {
-      ops.push(text(line, { color: rgba(160, 166, 178) }));
+      ops.push(text(line, { color: ui.panelRow }));
     }
   }
   if (rows >= 2) {
@@ -343,12 +406,12 @@ function tuiPanel(w: number, h: number, id: string): Op[] {
         ` ♪ Nightcall  ${"█".repeat(done)}${"░".repeat(total - done)} 2:14`
           .slice(0, inner)
           .padEnd(inner),
-        { color: rgba(255, 170, 80) },
+        { color: ui.fileAccent },
       ),
     );
     ops.push(
       text(` 3.2G free`.slice(0, inner).padEnd(inner), {
-        color: rgba(110, 116, 128),
+        color: ui.panelFooter,
       }),
     );
   }
@@ -364,14 +427,18 @@ function tuiPanel(w: number, h: number, id: string): Op[] {
  * background (§7.9 chain). The bouncing boxes and the veil float above
  * all of it; the control bar floats above everything. `bare` drops the
  * full-bleed fields (scrims and gradient) so only text, panels, and
- * boxes composite over the reported background. */
+ * boxes composite over the reported background. The UI palette flips
+ * with the resolved background's polarity (§7.9 chain resolved by the
+ * caller: reported theme > defaultTheme > black/white). */
 export function frame(
   width: number,
   height: number,
   tier: number,
   bare: boolean,
-  reportedBg?: string,
+  reported?: Rgb,
 ): Op[] {
+  let polarity = polarityOf(reported);
+  let ui = uiOf(polarity);
   let ops: Op[] = [
     open("root", {
       layout: { width: fixed(width), height: fixed(height), direction: "ttb" },
@@ -405,8 +472,8 @@ export function frame(
       layout: { width: fixed(width), height: fixed(lowerH), direction: "ltr" },
     }),
   );
-  ops.push(...textPanel(leftW, lowerH, "prose"));
-  ops.push(...tuiPanel(width - leftW, lowerH, "files"));
+  ops.push(...textPanel(leftW, lowerH, "prose", ui));
+  ops.push(...tuiPanel(width - leftW, lowerH, "files", ui));
   ops.push(close());
 
   // The bouncing boxes: different brand colors and opacities, ambient
@@ -435,8 +502,9 @@ export function frame(
   );
 
   // The control bar: fixed to the bottom row, padded, centered, and
-  // alpha-composited over whatever is beneath it.
-  let bgLabel = bare ? `bg ${reportedBg ?? "fallback"}` : "scrim+grad";
+  // alpha-composited over whatever is beneath it. Its strip flips
+  // polarity with the theme.
+  let bgLabel = bare ? `bg ${hexOf(reported) ?? "fallback"}` : "scrim+grad";
   let label =
     ` §7.9 · α${VEIL.alpha} · q quit · space pause · ⇧jump · tab · -/+ · ${bgLabel} · 1/2/3 tier`;
   ops.push(
@@ -447,14 +515,22 @@ export function frame(
         padding: { left: 2, right: 2 },
         alignX: "center",
       },
-      bg: rgba(20, 20, 28, 200),
+      bg: ui.barBg,
       floating: { x: 0, y: height - 1, attachTo: "root", zIndex: 10 },
     }),
     text(label.slice(0, Math.max(0, width - 4)), {
-      color: rgba(230, 230, 235),
+      color: ui.barText,
     }),
     close(),
     close(),
   );
   return ops;
+}
+
+/** The resolved background as a `#rrggbb` label, or undefined before
+ * any evidence. */
+export function hexOf(c: Rgb | undefined): string | undefined {
+  if (!c) return undefined;
+  let hex = (v: number) => v.toString(16).padStart(2, "0");
+  return `#${hex(c.r & 0xff)}${hex(c.g & 0xff)}${hex(c.b & 0xff)}`;
 }

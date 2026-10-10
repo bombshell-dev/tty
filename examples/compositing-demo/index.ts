@@ -43,7 +43,14 @@ import {
 import { alternateBuffer, cursor, settings } from "../../settings.ts";
 import { useInput } from "../use-input.ts";
 import { useStdin } from "../use-stdin.ts";
-import { advanceBoxes, clampVeil, frame, VEIL, VEIL_COLORS } from "./scene.ts";
+import {
+  advanceBoxes,
+  clampVeil,
+  frame,
+  type Rgb,
+  VEIL,
+  VEIL_COLORS,
+} from "./scene.ts";
 
 function terminalSize(): { columns: number; rows: number } {
   return Deno.stdout.isTerminal()
@@ -130,13 +137,12 @@ await main(function* () {
   // (renderer-spec §7.9).
   writeStdout(terminfo.probe);
 
-  /** The reported background as a hex label for the bar, or undefined
-   * until the OSC 11 reply arrives. */
-  function reportedBgHex(): string | undefined {
-    let bg = term.capabilities.theme.background;
-    if (!bg) return undefined;
-    let hex = (v: number) => v.toString(16).padStart(2, "0");
-    return `#${hex(bg.r)}${hex(bg.g)}${hex(bg.b)}`;
+  /** The resolved background per the §7.9 chain as far as the host can
+   * see it: the reported theme, else undefined (the renderer's own
+   * chain falls through defaultTheme to black/white). Drives both the
+   * bare-mode compositing destinations and the UI polarity. */
+  function reportedBg(): Rgb | undefined {
+    return term.capabilities.theme.background;
   }
 
   clampVeil(columns, rows);
@@ -235,7 +241,7 @@ await main(function* () {
     clampVeil(columns, rows);
 
     let { output } = term.render(
-      frame(columns, rows, tier, bare, reportedBgHex()),
+      frame(columns, rows, tier, bare, reportedBg()),
       {
         deltaTime: dt,
       },
