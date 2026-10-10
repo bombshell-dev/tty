@@ -72,32 +72,41 @@ export const SQUARES: Square[] = [
  * terminal's own color evidence (color-encoding-spec §6.1). */
 export const TIER_LABELS = ["terminal evidence", "256", "16"] as const;
 
-/** One demo frame: tile rows, the floating squares in painter's order,
- * and the translucent status bar compositing over whatever the squares
- * leave beneath it. */
-export function frame(width: number, height: number, tier: number): Op[] {
+/** One demo frame. In tile mode the mosaic supplies explicit
+ * backgrounds; in bare mode nothing draws a bg, so compositing
+ * destinations resolve through the §7.9 chain — the terminal's reported
+ * background (OSC 11 query) > createTerm defaultTheme > black. */
+export function frame(
+  width: number,
+  height: number,
+  tier: number,
+  bare: boolean,
+  reportedBg?: string,
+): Op[] {
   let ops: Op[] = [
     open("root", {
       layout: { width: fixed(width), height: fixed(height), direction: "ttb" },
     }),
   ];
 
-  for (let y = 0; y + 2 <= height - 2; y += 2) {
-    ops.push(
-      open(`row${y}`, {
-        layout: { width: fixed(width), height: fixed(2), direction: "ltr" },
-      }),
-    );
-    for (let x = 0; x < width; x += 4) {
+  if (!bare) {
+    for (let y = 0; y + 2 <= height - 2; y += 2) {
       ops.push(
-        open(`tile${x}-${y}`, {
-          layout: { width: fixed(4), height: fixed(2) },
-          bg: tileColor(x, y),
+        open(`row${y}`, {
+          layout: { width: fixed(width), height: fixed(2), direction: "ltr" },
         }),
-        close(),
       );
+      for (let x = 0; x < width; x += 4) {
+        ops.push(
+          open(`tile${x}-${y}`, {
+            layout: { width: fixed(4), height: fixed(2) },
+            bg: tileColor(x, y),
+          }),
+          close(),
+        );
+      }
+      ops.push(close());
     }
-    ops.push(close());
   }
 
   for (let i = 0; i < SQUARES.length; i++) {
@@ -117,9 +126,10 @@ export function frame(width: number, height: number, tier: number): Op[] {
     );
   }
 
+  let bgLabel = bare ? reportedBg ?? "black/white fallback" : "tiles";
   let label = ` §7.9 compositing · tier: ${
     TIER_LABELS[tier + 1]
-  } · 1/2/3 tier · arrows move · tab square · a drift · q quit`;
+  } · bg: ${bgLabel} · t tiles · 1/2/3 tier · arrows · tab · a · q`;
   ops.push(
     open("bar", {
       layout: { width: fixed(width), height: fixed(1) },

@@ -213,6 +213,10 @@ const MOVES: Array<Array<[number, number]>> = [
   [[30, 2], [8, 10], [50, 14]],
 ];
 
+/** Simulates what the OSC 11 background-color query replies: the
+ * terminal's reported theme, folded as a CapabilityEvent. */
+const REPORTED_BG = { r: 48, g: 40, b: 88 }; // #302858
+
 let sections = "";
 for (let t of TIERS) {
   let frames = "";
@@ -224,7 +228,7 @@ for (let t of TIERS) {
       terminfo: evidence(t.colors, t.tc),
     });
     let ansi = decode(
-      term.render(frame(WIDTH, HEIGHT, -1), {
+      term.render(frame(WIDTH, HEIGHT, -1, false), {
         mode: "line",
       }).output,
     );
@@ -235,6 +239,37 @@ for (let t of TIERS) {
   }
   sections +=
     `<section><h2>tier: ${t.label}</h2><p>${t.note}</p>${frames}</section>\n`;
+}
+
+// Bare mode: no explicit background cells. The reported background from
+// the OSC 11 query (simulated here) becomes the compositing
+// destination; the squares tint toward the terminal's real color.
+{
+  let frames = "";
+  for (let m of MOVES) {
+    arrange(m);
+    let term = await createTerm({
+      width: WIDTH,
+      height: HEIGHT,
+      terminfo: evidence(256, true),
+    });
+    term.update([{
+      type: "capability",
+      key: "background-color",
+      value: REPORTED_BG,
+    }]);
+    let ansi = decode(
+      term.render(frame(WIDTH, HEIGHT, -1, true), {
+        mode: "line",
+      }).output,
+    );
+    frames += `<h3>frame · squares at ${
+      m.map((p) => `(${p[0]},${p[1]})`)
+        .join(", ")
+    }</h3>\n<pre>${ansiToHtml(ansi)}</pre>\n`;
+  }
+  sections +=
+    `<section><h2>bare background (OSC 11 query)</h2><p>No explicit background cells: compositing destinations resolve through the §7.9 chain — the reported background (#302858, as an OSC 11 reply would supply) — and the squares tint toward it. Untouched cells emit no color SGR, so the terminal's own background shows through.</p>${frames}</section>\n`;
 }
 
 let html = `<!doctype html>
