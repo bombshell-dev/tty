@@ -86,6 +86,10 @@ const PROBE = encoder.encode(
     "\x1b[?2026$p" +
     "\x1b[?u" +
     "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\" +
+    // Mode 2031: subscribe to color-scheme change pushes, then query the
+    // current scheme (DECDSR 996). Responses are CSI ? 997 ; Ps n.
+    "\x1b[?2031h" +
+    "\x1b[?996n" +
     "\x1b[c",
 );
 

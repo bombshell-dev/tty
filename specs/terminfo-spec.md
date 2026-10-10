@@ -232,6 +232,11 @@ type CapabilityEvent =
   }
   | {
     readonly type: "capability";
+    readonly key: "color-scheme";
+    readonly value: "dark" | "light";
+  }
+  | {
+    readonly type: "capability";
     readonly key: "sync-output";
     readonly value: boolean;
   }
@@ -262,6 +267,7 @@ Each variant maps to one probe query. The `key` identifies the capability; the
 | `background-color` | OSC 11               | [`osc-11-bg-color-query`](https://terminfo.dev/extensions/osc-11-bg-color-query)                |
 | `cursor-color`     | OSC 12 or OSC 21     | [`osc-12-cursor-color`](https://terminfo.dev/extensions/osc-12-cursor-color)                    |
 | `colordepth`       | XTGETTCAP `RGB`/`Tc` | [`24-bit-truecolor`](https://terminfo.dev/extensions/24-bit-truecolor)                          |
+| `color-scheme`     | DECDSR 996           | [`mode-2031-color-scheme`](https://terminfo.dev/modes/mode-2031-color-scheme)                   |
 | `sync-output`      | DECRPM mode 2026     | [`decset-2026-synchronized-output`](https://terminfo.dev/modes/decset-2026-synchronized-output) |
 | `kitty-keyboard`   | `CSI ? u`            | [`kitty-keyboard-protocol`](https://terminfo.dev/extensions/kitty-keyboard-protocol)            |
 | `kitty-graphics`   | APC `_G…`            | [`kitty-graphics-protocol`](https://terminfo.dev/extensions/kitty-graphics-protocol)            |
@@ -277,6 +283,13 @@ D }` where `D` is derived from the static
 `Capabilities.colors` field: `"16"` when `colors <= 16`, `"256"` otherwise. This
 preserves TINV-3: the probe response takes precedence over static evidence,
 including in the negative direction.
+
+**`color-scheme` reports.** The response to DECDSR 996 (`CSI ? 996 n`) and the
+unsolicited notification pushed under mode 2031 are the same sequence:
+`CSI ? 997 ; Ps n`, where `Ps = 1` is dark and `Ps = 2` is light. The parser
+MUST emit `{ key: "color-scheme", value: "dark" | "light" }` for both, in
+arrival order, so a one-shot query and a live push are indistinguishable
+downstream. Reports with any other `Ps` value are consumed without an event.
 
 **OSC 21.** An OSC 21 reply may supply any subset of `foreground-color`,
 `background-color`, and `cursor-color`. The parser emits one `CapabilityEvent`
@@ -301,6 +314,7 @@ interface RuntimeCapabilities extends Capabilities {
     readonly foreground?: Rgb;
     readonly background?: Rgb;
     readonly cursor?: Rgb;
+    readonly scheme?: "dark" | "light";
   };
 }
 ```
@@ -400,15 +414,21 @@ order:
 | 7  | Synchronized output | `CSI ? 2026 $ p` (DECRQM)                            | `sync-output`         |
 | 8  | Kitty keyboard      | `CSI ? u`                                            | `kitty-keyboard`      |
 | 9  | Kitty graphics      | `APC _G i=31,s=1,v=1,a=q,t=d,f=24 ; AAAA ST`         | `kitty-graphics`      |
-| 10 | **Fence:** DA1      | `CSI c`                                              | (internal only)       |
+| 10 | Scheme subscribe    | `CSI ? 2031 h` (DECSET)                              | (none — enables pushes) |
+| 11 | Color scheme        | `CSI ? 996 n` (DECDSR)                               | `color-scheme`        |
+| 12 | **Fence:** DA1      | `CSI c`                                              | (internal only)       |
 
-Terminals answer queries in order and ignore queries they do not understand. DA1
-is answered by every terminal, so its response marks the probe complete. Any of
-queries 1–9 not yet answered when the DA1 reply arrives will never be answered,
-and the renderer keeps their current values.
+Terminals answer queries in order and ignore queries they do not understand.
+DA1 is answered by every terminal, so its response marks the probe complete. Any
+of queries 1–11 not yet answered when the DA1 reply arrives will never be
+answered, and the renderer keeps their current values.
 
 The batch is safe to emit unconditionally: every query is either answered or
-ignored; none changes terminal state.
+ignored; none changes terminal state destructively. Query 10 does change
+terminal state — it subscribes to mode-2031 notifications so later scheme
+changes arrive as `CSI ? 997 ; Ps n` reports on the input stream (same event as
+the one-shot reply) — but unsupported terminals ignore it, and the subscription
+is the intended behavior, not a side effect.
 
 ### 9.2 Response path
 
@@ -567,8 +587,12 @@ _Non-normative._
 **OSC 4 palette queries.** The 256-entry palette is not probed; the theme group
 covers foreground, background, and cursor (OSC 10/11/12) only.
 
-**Theme-change notification (mode 2031).** The probe captures a snapshot; live
-dark/light switching is not tracked.
+**Unsolicited color reports (DECSET 2510).** Mode 2031 notifies dark/light
+polarity only; the tracked-query spec (one-time OSC queries re-report their new
+values when the color changes, e.g. iTerm2 3.6.6+) would deliver fresh colors
+without a re-query. Deferred until a consumer needs value-level change
+notifications; the host may simply re-send `OSC 10/11 ?` on a scheme change
+today.
 
 **XTVERSION / DA2 / DA3 identity parsing.** The DA1 reply is used purely as a
 fence; terminal identification is not extracted.

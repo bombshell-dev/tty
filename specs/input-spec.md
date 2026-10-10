@@ -174,8 +174,8 @@ During a normal scan — with responses potentially interleaved with user input 
 the parser MUST recognize and consume the probe responses listed in Terminfo
 Specification §9.1: OSC 10/11/12 theme color reports, OSC 21 kitty color
 reports, OSC 22 pointer shape reports, XTGETTCAP DCS replies, DECRPM mode-2026
-reports, kitty keyboard flag reports, kitty graphics APC replies, and the DA1
-device attributes report.
+reports, DECDSR color-scheme reports (`CSI ? 997 ; Ps n`), kitty keyboard flag
+reports, kitty graphics APC replies, and the DA1 device attributes report.
 
 For each recognized response the parser MUST emit a `CapabilityEvent` in the
 `scan()` return value, per Terminfo Specification §6.3 and TINV-6. Responses are

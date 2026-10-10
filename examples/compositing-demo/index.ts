@@ -224,7 +224,18 @@ await main(function* () {
       // compositing destinations; a bare-mode frame then composites over
       // the terminal's real background color.
       if (event.type === "capability") {
+        let changedScheme = term.capabilities.theme.scheme !==
+          (event as { value: string }).value;
         term.update([event]);
+        // A scheme change means the OS appearance flipped: the 997
+        // report carries no colors, so re-query them (opencode's
+        // approach) and fold the fresh OSC 10/11 replies. The
+        // compositing destinations and the UI polarity both follow.
+        if (
+          changedScheme && (event as { key: string }).key === "color-scheme"
+        ) {
+          writeStdout(new TextEncoder().encode("\x1b]10;?\x07\x1b]11;?\x07"));
+        }
       }
     }
 

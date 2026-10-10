@@ -186,6 +186,9 @@ const PROBE = "\x1b]10;?\x07" +
   "\x1b[?2026$p" +
   "\x1b[?u" +
   "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\" +
+  // Mode 2031: subscribe to scheme pushes, then query the current scheme.
+  "\x1b[?2031h" +
+  "\x1b[?996n" +
   "\x1b[c";
 
 describe("probe", () => {

@@ -19,6 +19,7 @@ export const CAP_SYNC_OUTPUT = 5;
 export const CAP_KITTY_KEYBOARD = 6;
 export const CAP_KITTY_GRAPHICS = 7;
 export const CAP_POINTER_SHAPE = 8;
+export const CAP_COLOR_SCHEME = 9;
 
 /* CAP_COLORDEPTH ch values — must match COLORDEPTH_* in src/input.c */
 export const COLORDEPTH_16 = 0;
