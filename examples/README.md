@@ -165,6 +165,10 @@ What it shows (renderer-spec §7.9, color-encoding-spec):
 - `t` toggling the tile backdrop — bare mode draws no explicit backgrounds, so
   the squares composite over the terminal's own background, queried live via OSC
   11 (`terminfo.probe`; the reply folds as a `background-color` CapabilityEvent)
+- a control bar fixed to the bottom row (floating, above the squares) with
+  internal padding and a centered label; its translucent background composites
+  over tiles, the reported background, and squares sliding beneath it
+- live terminal resize via a SIGWINCH bridge (`term.update` resize in place)
 - `1`/`2`/`3` folding `colordepth` capability events — truecolor → 256 → 16
   narrowing applied to composited results, live (color-encoding-spec)
 - arrow keys move the active square, `Tab` cycles it, `a` pauses its drift,

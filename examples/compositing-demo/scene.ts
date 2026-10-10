@@ -130,12 +130,27 @@ export function frame(
   let label = ` §7.9 compositing · tier: ${
     TIER_LABELS[tier + 1]
   } · bg: ${bgLabel} · t tiles · 1/2/3 tier · arrows · tab · a · q`;
+  // The control bar floats at the bottom row, so it holds a fixed
+  // position no matter what the flow content above it does (toggling
+  // the tiles changes their row count). Padding gives the label an
+  // inset; childAlignment centers it. The bar's translucent background
+  // composites over whatever passes beneath it — tiles, the reported
+  // background, and squares sliding under (zIndex above the squares',
+  // so boxes never render over the toolbar).
   ops.push(
     open("bar", {
-      layout: { width: fixed(width), height: fixed(1) },
+      layout: {
+        width: fixed(width),
+        height: fixed(1),
+        padding: { left: 2, right: 2 },
+        alignX: "center",
+      },
       bg: rgba(20, 20, 28, 200),
+      floating: { x: 0, y: height - 1, attachTo: "root", zIndex: 10 },
     }),
-    text(label.slice(0, width - 1), { color: rgba(230, 230, 235) }),
+    text(label.slice(0, Math.max(0, width - 4)), {
+      color: rgba(230, 230, 235),
+    }),
     close(),
     close(),
   );

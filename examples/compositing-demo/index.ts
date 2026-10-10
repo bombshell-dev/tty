@@ -9,6 +9,7 @@
 //   t       toggle the tile backdrop: bare mode draws no explicit
 //           backgrounds, so the squares composite over the terminal's
 //           own background — queried live via OSC 11
+//   resize  the terminal can be resized freely (SIGWINCH → update)
 //   arrows  move the active square
 //   tab     cycle the active square
 //   a       pause/resume the active square's drift
@@ -19,6 +20,7 @@ import { Buffer } from "node:buffer";
 import process from "node:process";
 import {
   createChannel,
+  createSignal,
   each,
   ensure,
   main,
@@ -41,11 +43,8 @@ import { useStdin } from "../use-stdin.ts";
 import { frame, type Square, SQUARES } from "./scene.ts";
 
 function terminalSize(): { columns: number; rows: number } {
-  return process.stdout.isTTY
-    ? {
-      columns: process.stdout.columns ?? 80,
-      rows: process.stdout.rows ?? 24,
-    }
+  return Deno.stdout.isTerminal()
+    ? Deno.consoleSize()
     : { columns: 80, rows: 24 };
 }
 
@@ -109,6 +108,17 @@ await main(function* () {
     writeStdout(tty.revert);
   });
 
+  // The input parser never emits resize events (examples/2048 found the
+  // same gap), so SIGWINCH is bridged into the event stream here; the
+  // handler reads the live size, so a drag-resize's burst of signals
+  // coalesces into real size changes only.
+  let resizes = createSignal<{ type: "resize" }, void>();
+  let onWinch = () => resizes.send({ type: "resize" });
+  if (Deno.build.os !== "windows") {
+    Deno.addSignalListener("SIGWINCH", onWinch);
+    yield* ensure(() => Deno.removeSignalListener("SIGWINCH", onWinch));
+  }
+
   // The background color query: ask the terminal for its actual theme
   // (OSC 10/11/12 + capability probes). Replies arrive as
   // CapabilityEvent values through scan(); folding them updates
@@ -142,7 +152,7 @@ await main(function* () {
     yield* provide(sub);
   });
 
-  for (let event of yield* each(merge(input, ticker))) {
+  for (let event of yield* each(merge(merge(input, ticker), resizes))) {
     if (typeof event !== "number") {
       if (event.type === "keydown") {
         let key = event.key;
@@ -179,10 +189,15 @@ await main(function* () {
       }
 
       if (event.type === "resize") {
-        let size = event as { width: number; height: number };
-        columns = size.width;
-        rows = size.height;
-        term.update([{ type: "resize", width: columns, height: rows }]);
+        // SIGWINCH is only a wake-up: read the live size and update the
+        // term in place (renderer-spec §7.7 keeps the instance and the
+        // color-capability state).
+        let next = terminalSize();
+        if (next.columns !== columns || next.rows !== rows) {
+          columns = next.columns;
+          rows = next.rows;
+          term.update([{ type: "resize", width: columns, height: rows }]);
+        }
       }
 
       // Fold probe replies (theme colors, colordepth, …). The push
@@ -218,8 +233,12 @@ await main(function* () {
         s.vx = -Math.abs(s.vx);
         s.vx0 = -Math.abs(s.vx0);
       }
-      if (s.y + s.h > rows - 1) {
-        s.y = rows - 1 - s.h;
+      // Squares drift over the full height: a square that reaches the
+      // bottom row slides under the floating bar, whose translucent
+      // background composites over it (the bar's zIndex is higher, so
+      // boxes never render on top of the toolbar).
+      if (s.y + s.h > rows) {
+        s.y = rows - s.h;
         s.vy = -Math.abs(s.vy);
         s.vy0 = -Math.abs(s.vy0);
       }
