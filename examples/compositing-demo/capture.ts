@@ -260,6 +260,29 @@ for (let t of TIERS) {
     );
     frames += `<h3>${s.label}</h3>\n<pre>${ansiToHtml(ansi)}</pre>\n`;
   }
+
+  // The scrim tiles composite over the reported background (simulated
+  // OSC 11 reply), so the fold happens in tile mode too.
+  for (let s of SHOTS) {
+    arrange(s.x, s.y, s.colorIdx, s.alpha);
+    clampVeil(WIDTH, HEIGHT);
+    let term = await createTerm({
+      width: WIDTH,
+      height: HEIGHT,
+      terminfo: evidence(t.colors, t.tc),
+    });
+    term.update([{
+      type: "capability",
+      key: "background-color",
+      value: REPORTED_BG,
+    }]);
+    let ansi = decode(
+      term.render(frame(WIDTH, HEIGHT, -1, false), {
+        mode: "line",
+      }).output,
+    );
+    frames += `<h3>${s.label}</h3>\n<pre>${ansiToHtml(ansi)}</pre>\n`;
+  }
   sections +=
     `<section><h2>tier: ${t.label}</h2><p>${t.note}</p>${frames}</section>\n`;
 }
@@ -309,10 +332,11 @@ let html = `<!doctype html>
 <body>
 <h1>Color compositing demo</h1>
 <p>Frames rendered headless through the real renderer (examples/compositing-demo):
-a mixed backdrop — solid tiles, a gradient, prose text, and a file-manager
-panel — with a large translucent veil compositing over it per renderer-spec
-§7.9, and a translucent control bar compositing over everything. Each tier
-shows three veil arrangements (alpha 128 / 200 / 48).</p>
+a mixed backdrop — alpha scrim tiles over the reported theme background, a
+gradient, prose text, and a file-manager panel — with bouncing boxes of
+different colors and opacities and a large translucent veil compositing over
+it all per renderer-spec §7.9, and a translucent control bar compositing over
+everything. Each tier shows three veil arrangements (alpha 128 / 200 / 48).</p>
 ${sections}
 </body>
 </html>

@@ -1,5 +1,6 @@
 // The compositing demo's scene (renderer-spec §7.9): a mixed backdrop —
-// solid tiles, a gradient, prose text, and a file-manager panel — with
+// scrim tiles over the theme background, a gradient, prose text, and a
+// file-manager panel — with
 // a large translucent veil the user drives over it, and a fixed
 // composited control bar. Shared by the interactive demo (index.ts) and
 // the headless capture (capture.ts).
@@ -76,6 +77,86 @@ export function clampVeil(width: number, height: number): void {
   VEIL.y = Math.min(Math.max(VEIL.y, 0), maxY);
 }
 
+export interface BounceBox {
+  w: number;
+  h: number;
+  color: number; // brand accent with its own alpha
+  x: number;
+  y: number;
+  vx: number; // columns per second
+  vy: number; // rows per second (≈ half the visual speed of vx)
+}
+
+/** The ambient layer: boxes matching the veil's size, in different
+ * brand colors and opacities, bouncing over the backdrop — and over
+ * each other, since each frame composites them in draw order. The
+ * user's veil rides above them. */
+export const BOXES: BounceBox[] = [
+  {
+    w: VEIL.w,
+    h: VEIL.h,
+    color: rgba(0, 227, 245, 80), // cyan α80
+    x: 10,
+    y: 5,
+    vx: 7,
+    vy: 3,
+  },
+  {
+    w: VEIL.w,
+    h: VEIL.h,
+    color: rgba(255, 226, 33, 120), // yellow α120
+    x: 40,
+    y: 9,
+    vx: -9,
+    vy: -4,
+  },
+  {
+    w: VEIL.w,
+    h: VEIL.h,
+    color: rgba(0, 239, 89, 60), // green α60
+    x: 26,
+    y: 3,
+    vx: -5,
+    vy: 5,
+  },
+  {
+    w: VEIL.w,
+    h: VEIL.h,
+    color: rgba(135, 26, 255, 100), // purple α100
+    x: 18,
+    y: 12,
+    vx: 4,
+    vy: -6,
+  },
+];
+
+/** Advance the bouncing boxes by dt, bouncing off the walls and
+ * settling exactly at the boundary. The bar row is off-limits. */
+export function advanceBoxes(dt: number, width: number, height: number): void {
+  let maxX = Math.max(0, width);
+  let maxY = Math.max(0, height - 1);
+  for (let b of BOXES) {
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    if (b.x < 0) {
+      b.x = 0;
+      b.vx = Math.abs(b.vx);
+    }
+    if (b.y < 0) {
+      b.y = 0;
+      b.vy = Math.abs(b.vy);
+    }
+    if (b.x + b.w > maxX) {
+      b.x = maxX - b.w;
+      b.vx = -Math.abs(b.vx);
+    }
+    if (b.y + b.h > maxY) {
+      b.y = maxY - b.h;
+      b.vy = -Math.abs(b.vy);
+    }
+  }
+}
+
 function veilBg(): number {
   let c = VEIL_COLORS[VEIL.colorIdx];
   return rgba(
@@ -88,19 +169,20 @@ function veilBg(): number {
 
 /* ── Backdrop regions ─────────────────────────────────────────────── */
 
-/** The tile backdrop: the bomb.sh chromatic accents in a fixed pattern,
- * with a checker offset so adjacent tiles differ. */
-const TILES = [
-  BRAND.pink,
-  BRAND.green,
-  BRAND.blue,
-  BRAND.yellow,
-  BRAND.purple,
-  BRAND.cyan,
+/** The tile backdrop: alpha scrims over the compositing destination —
+ * the terminal's reported background (§7.9 chain: reported theme >
+ * defaultTheme > black/white). A white/black checker stays visible on
+ * dark and light themes alike, where gray scrims would guess the
+ * polarity wrong. One pattern cell is α=0: pure theme background. */
+const SCRIMS = [
+  rgba(255, 255, 255, 16), // gentle lift
+  rgba(0, 0, 0, 10), // gentle shade
+  rgba(0, 0, 0, 0), // untouched: the theme background itself
+  rgba(0, 0, 0, 22), // stronger shade
 ];
 
 function tileColor(x: number, y: number): number {
-  return TILES[((x / 4 | 0) + (y / 2 | 0)) % TILES.length];
+  return SCRIMS[((x / 4 | 0) + (y / 2 | 0)) % SCRIMS.length];
 }
 
 function tilesPanel(w: number, h: number, id: string): Op[] {
@@ -276,11 +358,13 @@ function tuiPanel(w: number, h: number, id: string): Op[] {
 
 /* ── Frame assembly ───────────────────────────────────────────────── */
 
-/** One demo frame. The top row mixes the tile mosaic and the gradient;
- * the bottom row mixes prose (no bg) and the file-manager panel. The
- * veil floats above all of it; the control bar floats above the veil.
- * `bare` drops the full-bleed fields so the veil composites over the
- * terminal's reported background instead (§7.9 chain). */
+/** One demo frame. The top row mixes the scrim-tile checker and the
+ * gradient; the bottom row mixes prose (no bg) and the file-manager
+ * panel. The scrim tiles composite over the terminal's reported
+ * background (§7.9 chain). The bouncing boxes and the veil float above
+ * all of it; the control bar floats above everything. `bare` drops the
+ * full-bleed fields (scrims and gradient) so only text, panels, and
+ * boxes composite over the reported background. */
 export function frame(
   width: number,
   height: number,
@@ -325,7 +409,21 @@ export function frame(
   ops.push(...tuiPanel(width - leftW, lowerH, "files"));
   ops.push(close());
 
-  // The veil: the user-driven translucent box, above the backdrop,
+  // The bouncing boxes: different brand colors and opacities, ambient
+  // layer above the backdrop (zIndex 1-3), below the veil.
+  for (let i = 0; i < BOXES.length; i++) {
+    let b = BOXES[i];
+    ops.push(
+      open(`box${i}`, {
+        layout: { width: fixed(b.w), height: fixed(b.h) },
+        bg: b.color,
+        floating: { x: b.x, y: b.y, attachTo: "root", zIndex: 1 + i },
+      }),
+      close(),
+    );
+  }
+
+  // The veil: the user-driven translucent box, above the boxes,
   // below the bar (boxes never render over the toolbar).
   ops.push(
     open("veil", {
@@ -338,9 +436,9 @@ export function frame(
 
   // The control bar: fixed to the bottom row, padded, centered, and
   // alpha-composited over whatever is beneath it.
-  let bgLabel = bare ? `bg: ${reportedBg ?? "fallback"}` : "tiles+gradient";
+  let bgLabel = bare ? `bg ${reportedBg ?? "fallback"}` : "scrim+grad";
   let label =
-    ` §7.9 · veil α${VEIL.alpha} · q quit · ⇧arrows jump · tab color · -/+ alpha · ${bgLabel} · 1/2/3 tier`;
+    ` §7.9 · α${VEIL.alpha} · q quit · space pause · ⇧jump · tab · -/+ · ${bgLabel} · 1/2/3 tier`;
   ops.push(
     open("bar", {
       layout: {
