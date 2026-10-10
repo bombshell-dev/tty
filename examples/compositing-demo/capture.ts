@@ -8,7 +8,7 @@
 //
 // Run with: deno run --allow-read --allow-write examples/compositing-demo/capture.ts
 import { createTerm, type TerminalInfo } from "../../mod.ts";
-import { frame, SQUARES } from "./scene.ts";
+import { clampVeil, frame, VEIL, VEIL_COLORS } from "./scene.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -31,12 +31,13 @@ function evidence(colors: number, trueColor: boolean): TerminalInfo {
 const WIDTH = 80;
 const HEIGHT = 24;
 
-/** Two drift arrangements for the squares (capture-side only). */
-function arrange(moves: Array<[number, number]>): void {
-  SQUARES.forEach((s, i) => {
-    s.x = moves[i][0];
-    s.y = moves[i][1];
-  });
+/** Two veil arrangements for the shots (capture-side only): position,
+ * color, alpha. */
+function arrange(x: number, y: number, colorIdx: number, alpha: number): void {
+  VEIL.x = x;
+  VEIL.y = y;
+  VEIL.colorIdx = colorIdx;
+  VEIL.alpha = alpha;
 }
 
 const escapeHtml = (s: string) =>
@@ -208,9 +209,33 @@ const TIERS: Array<
   },
 ];
 
-const MOVES: Array<Array<[number, number]>> = [
-  [[3, 1], [40, 8], [14, 16]],
-  [[30, 2], [8, 10], [50, 14]],
+/** The veil arrangements for the shots: position, color, alpha. Two
+ * alpha extremes plus a mid value show the §7.9 spectrum over the same
+ * scene. */
+const SHOTS: Array<
+  { x: number; y: number; colorIdx: number; alpha: number; label: string }
+> = [
+  {
+    x: 3,
+    y: 2,
+    colorIdx: 0,
+    alpha: 128,
+    label: "red veil at α128, upper-left over tiles+gradient",
+  },
+  {
+    x: 38,
+    y: 8,
+    colorIdx: 3,
+    alpha: 200,
+    label: "blue veil at α200 (mostly opaque) over text+panel",
+  },
+  {
+    x: 20,
+    y: 11,
+    colorIdx: 2,
+    alpha: 48,
+    label: "green veil at α48 (mostly transparent) across both rows",
+  },
 ];
 
 /** Simulates what the OSC 11 background-color query replies: the
@@ -220,8 +245,9 @@ const REPORTED_BG = { r: 48, g: 40, b: 88 }; // #302858
 let sections = "";
 for (let t of TIERS) {
   let frames = "";
-  for (let m of MOVES) {
-    arrange(m);
+  for (let s of SHOTS) {
+    arrange(s.x, s.y, s.colorIdx, s.alpha);
+    clampVeil(WIDTH, HEIGHT);
     let term = await createTerm({
       width: WIDTH,
       height: HEIGHT,
@@ -232,22 +258,20 @@ for (let t of TIERS) {
         mode: "line",
       }).output,
     );
-    frames += `<h3>frame · squares at ${
-      m.map((p) => `(${p[0]},${p[1]})`)
-        .join(", ")
-    }</h3>\n<pre>${ansiToHtml(ansi)}</pre>\n`;
+    frames += `<h3>${s.label}</h3>\n<pre>${ansiToHtml(ansi)}</pre>\n`;
   }
   sections +=
     `<section><h2>tier: ${t.label}</h2><p>${t.note}</p>${frames}</section>\n`;
 }
 
-// Bare mode: no explicit background cells. The reported background from
-// the OSC 11 query (simulated here) becomes the compositing
-// destination; the squares tint toward the terminal's real color.
+// Bare mode: the full-bleed fields drop out. The reported background
+// from the OSC 11 query (simulated here) becomes the compositing
+// destination; the veil tints toward the terminal's real color.
 {
   let frames = "";
-  for (let m of MOVES) {
-    arrange(m);
+  for (let s of SHOTS) {
+    arrange(s.x, s.y, s.colorIdx, s.alpha);
+    clampVeil(WIDTH, HEIGHT);
     let term = await createTerm({
       width: WIDTH,
       height: HEIGHT,
@@ -263,13 +287,10 @@ for (let t of TIERS) {
         mode: "line",
       }).output,
     );
-    frames += `<h3>frame · squares at ${
-      m.map((p) => `(${p[0]},${p[1]})`)
-        .join(", ")
-    }</h3>\n<pre>${ansiToHtml(ansi)}</pre>\n`;
+    frames += `<h3>${s.label}</h3>\n<pre>${ansiToHtml(ansi)}</pre>\n`;
   }
   sections +=
-    `<section><h2>bare background (OSC 11 query)</h2><p>No explicit background cells: compositing destinations resolve through the §7.9 chain — the reported background (#302858, as an OSC 11 reply would supply) — and the squares tint toward it. Untouched cells emit no color SGR, so the terminal's own background shows through.</p>${frames}</section>\n`;
+    `<section><h2>bare background (OSC 11 query)</h2><p>The full-bleed fields (tiles, gradient) drop out: compositing destinations resolve through the §7.9 chain — the reported background (#302858, as an OSC 11 reply would supply) — and the veil tints toward it. Untouched cells emit no color SGR, so the terminal's own background shows through.</p>${frames}</section>\n`;
 }
 
 let html = `<!doctype html>
@@ -288,9 +309,10 @@ let html = `<!doctype html>
 <body>
 <h1>Color compositing demo</h1>
 <p>Frames rendered headless through the real renderer (examples/compositing-demo):
-a mosaic of colorful tiles with drifting semi-transparent squares compositing
-over them per renderer-spec §7.9, and a translucent status bar compositing over
-whatever the squares leave beneath it. Each tier shows two drift arrangements.</p>
+a mixed backdrop — solid tiles, a gradient, prose text, and a file-manager
+panel — with a large translucent veil compositing over it per renderer-spec
+§7.9, and a translucent control bar compositing over everything. Each tier
+shows three veil arrangements (alpha 128 / 200 / 48).</p>
 ${sections}
 </body>
 </html>

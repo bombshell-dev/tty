@@ -155,23 +155,25 @@ deno run --allow-read --allow-env examples/compositing-demo/index.ts
 
 What it shows (renderer-spec §7.9, color-encoding-spec):
 
-- a mosaic of colorful tiles with drifting semi-transparent squares compositing
-  over them each frame
-- a translucent status bar compositing over whatever the squares leave beneath
-  it
-- `t` toggling the tile backdrop — bare mode draws no explicit backgrounds, so
-  the squares composite over the terminal's own background, queried live via OSC
-  11 (`terminfo.probe`; the reply folds as a `background-color` CapabilityEvent)
-- a control bar fixed to the bottom row (floating, above the squares) with
-  internal padding and a centered label; its translucent background composites
-  over tiles, the reported background, and squares sliding beneath it
+- a mixed backdrop: solid tiles, a gradient, prose text over the default
+  background, and a file-manager panel (border, bold header, selected row with
+  an explicit background, right-aligned sizes, a block-glyph progress bar)
+- a large translucent veil driven with the arrow keys (held arrows glide via
+  keyrepeat), compositing over the backdrop per §7.9 — `tab` cycles its color,
+  `-`/`+` narrow or widen its alpha
+- a control bar fixed to the bottom row (floating, above the veil) with internal
+  padding and a centered label; its translucent background composites over
+  tiles, the reported background, and the veil sliding beneath it
+- `t` toggling the full-bleed fields — bare mode keeps only text and panel
+  content, so the veil composites over the terminal's own background, queried
+  live via OSC 11 (`terminfo.probe`; the reply folds as a `background-color`
+  CapabilityEvent)
 - live terminal resize via a SIGWINCH bridge (`term.update` resize in place)
 - `1`/`2`/`3` folding `colordepth` capability events — truecolor → 256 → 16
   narrowing applied to composited results, live (color-encoding-spec)
-- arrow keys move the active square, `Tab` cycles it, `a` pauses its drift,
-  `q`/`Ctrl+C` quits
+- `q`/`Ctrl+C` quits
 
-`examples/compositing-demo/capture.ts` renders two drift arrangements of the
+`examples/compositing-demo/capture.ts` renders three veil arrangements of the
 same scene headless in each tier and writes `compositing-demo.html` with exact
 CSS colors:
 

@@ -6,13 +6,12 @@
 //
 //   1/2/3   fold a colordepth capability event — truecolor → 256 → 16,
 //           narrowing applied to composited results (color-encoding-spec)
-//   t       toggle the tile backdrop: bare mode draws no explicit
-//           backgrounds, so the squares composite over the terminal's
-//           own background — queried live via OSC 11
-//   resize  the terminal can be resized freely (SIGWINCH → update)
-//   arrows  move the active square
-//   tab     cycle the active square
-//   a       pause/resume the active square's drift
+//   t       toggle the full-bleed backdrop: bare mode keeps only text
+//           and panel content, so the veil composites over the
+//           terminal's own background — queried live via OSC 11
+//   arrows  move the translucent veil over the mixed backdrop
+//   tab     cycle the veil's color
+//   -/+     narrow or widen the veil's alpha
 //   q/Ctrl+C quit
 //
 // Run with: deno run --allow-read --allow-env examples/compositing-demo/index.ts
@@ -40,7 +39,7 @@ import {
 import { alternateBuffer, cursor, settings } from "../../settings.ts";
 import { useInput } from "../use-input.ts";
 import { useStdin } from "../use-stdin.ts";
-import { frame, type Square, SQUARES } from "./scene.ts";
+import { clampVeil, frame, VEIL, VEIL_COLORS } from "./scene.ts";
 
 function terminalSize(): { columns: number; rows: number } {
   return Deno.stdout.isTerminal()
@@ -79,9 +78,10 @@ function merge<A, B, TClose>(
 /** The tier override folded through the 1/2/3 keys. -1 keeps the
  * terminal's own color evidence (color-encoding-spec §6.1). */
 let tier = -1;
-/** Bare mode: no explicit background cells — the squares composite over
- * the terminal's own background via the §7.9 chain. */
-let bare = true;
+/** Bare mode: the full-bleed fields (tiles, gradient) drop out, so the
+ * veil composites over the terminal's own background via the §7.9
+ * chain. Text and panel content stay. */
+let bare = false;
 
 await main(function* () {
   let { columns, rows } = terminalSize();
@@ -135,120 +135,70 @@ await main(function* () {
     return `#${hex(bg.r)}${hex(bg.g)}${hex(bg.b)}`;
   }
 
+  clampVeil(columns, rows);
   writeStdout(term.render(frame(columns, rows, tier, bare)).output);
 
-  let lastAt = performance.now() / 1000;
-  let active = 0;
-
-  let ticker: Stream<number, void> = resource(function* (provide) {
-    let ch = createChannel<number, void>();
-    yield* spawn(function* () {
-      while (true) {
-        yield* sleep(16);
-        yield* ch.send(performance.now());
+  // The scene is fully input-driven (the veil moves on keys, frames
+  // change on resize or probe replies), so there is no render ticker:
+  // the loop renders once per event.
+  for (let event of yield* each(merge(input, resizes))) {
+    if (event.type === "keydown" || event.type === "keyrepeat") {
+      let key = event.key;
+      if (event.ctrl && key === "c") break;
+      if (key === "q") break;
+      if (key === "1" || key === "2" || key === "3") {
+        tier = key === "1" ? -1 : key === "2" ? 0 : 1;
+        let value: "truecolor" | "256" | "16" = tier === -1
+          ? "truecolor"
+          : tier === 0
+          ? "256"
+          : "16";
+        term.update([{ type: "capability", key: "colordepth", value }]);
       }
-    });
-    let sub = yield* ch;
-    yield* provide(sub);
-  });
-
-  for (let event of yield* each(merge(merge(input, ticker), resizes))) {
-    if (typeof event !== "number") {
-      if (event.type === "keydown") {
-        let key = event.key;
-        if (event.ctrl && key === "c") break;
-        if (key === "q") break;
-        if (key === "1" || key === "2" || key === "3") {
-          tier = key === "1" ? -1 : key === "2" ? 0 : 1;
-          let value: "truecolor" | "256" | "16" = tier === -1
-            ? "truecolor"
-            : tier === 0
-            ? "256"
-            : "16";
-          term.update([{ type: "capability", key: "colordepth", value }]);
-        }
-        if (key === "tab") active = (active + 1) % SQUARES.length;
-        if (key === "t") bare = !bare;
-        if (key === "a") {
-          let s = SQUARES[active];
-          let paused = s.vx === 0 && s.vy === 0;
-          s.vx = paused ? s.vx0 : 0;
-          s.vy = paused ? s.vy0 : 0;
-        }
-        if (
-          key === "up" || key === "down" || key === "left" || key === "right"
-        ) {
-          let s = SQUARES[active];
-          s.vx0 = Math.abs(s.vx0) *
-            (key === "left" ? -1 : key === "right" ? 1 : Math.sign(s.vx0 || 1));
-          s.vy0 = Math.abs(s.vy0) *
-            (key === "up" ? -1 : key === "down" ? 1 : Math.sign(s.vy0 || 1));
-          s.vx = key === "left" || key === "right" ? s.vx0 : s.vx;
-          s.vy = key === "up" || key === "down" ? s.vy0 : s.vy;
-        }
+      if (key === "t") bare = !bare;
+      if (key === "Tab") {
+        VEIL.colorIdx = (VEIL.colorIdx + 1) % VEIL_COLORS.length;
       }
-
-      if (event.type === "resize") {
-        // SIGWINCH is only a wake-up: read the live size and update the
-        // term in place (renderer-spec §7.7 keeps the instance and the
-        // color-capability state).
-        let next = terminalSize();
-        if (next.columns !== columns || next.rows !== rows) {
-          columns = next.columns;
-          rows = next.rows;
-          term.update([{ type: "resize", width: columns, height: rows }]);
-        }
+      if (key === "-" || key === "_") {
+        VEIL.alpha = Math.max(16, VEIL.alpha - 16);
       }
+      if (key === "+" || key === "=") {
+        VEIL.alpha = Math.min(240, VEIL.alpha + 16);
+      }
+      if (key === "ArrowUp") VEIL.y -= 1;
+      if (key === "ArrowDown") VEIL.y += 1;
+      if (key === "ArrowLeft") VEIL.x -= 1;
+      if (key === "ArrowRight") VEIL.x += 1;
+      // Arrow handling doubled into keydown and keyrepeat, so holding
+      // an arrow glides the veil.
+    }
 
-      // Fold probe replies (theme colors, colordepth, …). The push
-      // logic inside update() moves the reported background into the
-      // renderer's compositing destinations; a bare-mode frame then
-      // composites over the terminal's real background color.
-      if (event.type === "capability") {
-        term.update([event]);
+    if (event.type === "resize") {
+      // SIGWINCH is only a wake-up: read the live size and update the
+      // term in place (renderer-spec §7.7 keeps the instance and the
+      // color-capability state).
+      let next = terminalSize();
+      if (next.columns !== columns || next.rows !== rows) {
+        columns = next.columns;
+        rows = next.rows;
+        term.update([{ type: "resize", width: columns, height: rows }]);
       }
     }
 
-    // Drift: squares bounce within the terminal bounds. Every frame
-    // recomposites them over the tiles in the current tier's encoding.
-    let now = performance.now() / 1000;
-    let dt = Math.min(now - lastAt, 0.1);
-    lastAt = now;
-    for (let s of SQUARES) {
-      if (s.vx === 0 && s.vy === 0) continue;
-      s.x += s.vx * dt;
-      s.y += s.vy * dt;
-      if (s.x < 0) {
-        s.x = 0;
-        s.vx = Math.abs(s.vx);
-        s.vx0 = Math.abs(s.vx0);
-      }
-      if (s.y < 0) {
-        s.y = 0;
-        s.vy = Math.abs(s.vy);
-        s.vy0 = Math.abs(s.vy0);
-      }
-      if (s.x + s.w > columns) {
-        s.x = columns - s.w;
-        s.vx = -Math.abs(s.vx);
-        s.vx0 = -Math.abs(s.vx0);
-      }
-      // Squares drift over the full height: a square that reaches the
-      // bottom row slides under the floating bar, whose translucent
-      // background composites over it (the bar's zIndex is higher, so
-      // boxes never render on top of the toolbar).
-      if (s.y + s.h > rows) {
-        s.y = rows - s.h;
-        s.vy = -Math.abs(s.vy);
-        s.vy0 = -Math.abs(s.vy0);
-      }
+    // Fold probe replies (theme colors, colordepth, …). The push logic
+    // inside update() moves the reported background into the renderer's
+    // compositing destinations; a bare-mode frame then composites over
+    // the terminal's real background color.
+    if (event.type === "capability") {
+      term.update([event]);
     }
+
+    // Keep the veil inside the bounds and off the bar row (boxes never
+    // render over the toolbar).
+    clampVeil(columns, rows);
 
     let { output } = term.render(
       frame(columns, rows, tier, bare, reportedBgHex()),
-      {
-        deltaTime: dt,
-      },
     );
     writeStdout(output);
 
