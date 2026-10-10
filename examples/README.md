@@ -166,6 +166,9 @@ What it shows (renderer-spec §7.9, color-encoding-spec):
 - bouncing boxes matching the veil's size in different brand colors and
   opacities (`space` pauses/resumes them) — they composite over the backdrop and
   each other
+- a theme-adaptive UI palette: text, panel chrome, and the control-bar strip
+  flip polarity from the reported background's luminance (light terminals get
+  gray-100/90 text on a light strip; dark terminals the inverse)
 - a control bar fixed to the bottom row (floating, above the veil) with internal
   padding and a centered label; its translucent background composites over
   tiles, the reported background, and boxes and the veil sliding beneath it
