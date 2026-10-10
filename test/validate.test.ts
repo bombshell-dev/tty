@@ -321,3 +321,42 @@ describe("validated", () => {
     ).toThrow(TypeError);
   });
 });
+
+describe("color fields", () => {
+  it("accepts hex color strings at every color field", () => {
+    expect(validate([
+      open("x", {
+        bg: "#ff8800",
+        border: {
+          color: "#f80",
+          bg: "#00ff00",
+          top: { width: 1, color: "#ff0000", bg: "#0000ff" },
+          right: 1,
+        },
+      }),
+      text("hi", { color: "#ff8800aa", bg: "#f80a" }),
+      close(),
+    ])).toBe(true);
+  });
+
+  it("rejects malformed hex color strings", () => {
+    for (
+      let spec of [
+        "#f8",
+        "#ff880",
+        "#ff8800a",
+        "#ff88000aa",
+        "#ggg",
+        "f80",
+        "#",
+        "",
+      ]
+    ) {
+      expect(validate([text("hi", { color: spec })])).toBe(false);
+      expect(validate([
+        open("x", { bg: spec, border: { color: spec } }),
+        close(),
+      ])).toBe(false);
+    }
+  });
+});
