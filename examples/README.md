@@ -162,6 +162,9 @@ What it shows (renderer-spec §7.9, color-encoding-spec):
   over them each frame
 - a translucent status bar compositing over whatever the squares leave beneath
   it
+- `t` toggling the tile backdrop — bare mode draws no explicit backgrounds, so
+  the squares composite over the terminal's own background, queried live via OSC
+  11 (`terminfo.probe`; the reply folds as a `background-color` CapabilityEvent)
 - `1`/`2`/`3` folding `colordepth` capability events — truecolor → 256 → 16
   narrowing applied to composited results, live (color-encoding-spec)
 - arrow keys move the active square, `Tab` cycles it, `a` pauses its drift,

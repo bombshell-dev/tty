@@ -6,6 +6,9 @@
 //
 //   1/2/3   fold a colordepth capability event — truecolor → 256 → 16,
 //           narrowing applied to composited results (color-encoding-spec)
+//   t       toggle the tile backdrop: bare mode draws no explicit
+//           backgrounds, so the squares composite over the terminal's
+//           own background — queried live via OSC 11
 //   arrows  move the active square
 //   tab     cycle the active square
 //   a       pause/resume the active square's drift
@@ -77,6 +80,9 @@ function merge<A, B, TClose>(
 /** The tier override folded through the 1/2/3 keys. -1 keeps the
  * terminal's own color evidence (color-encoding-spec §6.1). */
 let tier = -1;
+/** Bare mode: no explicit background cells — the squares composite over
+ * the terminal's own background via the §7.9 chain. */
+let bare = true;
 
 await main(function* () {
   let { columns, rows } = terminalSize();
@@ -103,7 +109,23 @@ await main(function* () {
     writeStdout(tty.revert);
   });
 
-  writeStdout(term.render(frame(columns, rows, tier)).output);
+  // The background color query: ask the terminal for its actual theme
+  // (OSC 10/11/12 + capability probes). Replies arrive as
+  // CapabilityEvent values through scan(); folding them updates
+  // term.capabilities.theme and the compositing destinations
+  // (renderer-spec §7.9).
+  writeStdout(terminfo.probe);
+
+  /** The reported background as a hex label for the bar, or undefined
+   * until the OSC 11 reply arrives. */
+  function reportedBgHex(): string | undefined {
+    let bg = term.capabilities.theme.background;
+    if (!bg) return undefined;
+    let hex = (v: number) => v.toString(16).padStart(2, "0");
+    return `#${hex(bg.r)}${hex(bg.g)}${hex(bg.b)}`;
+  }
+
+  writeStdout(term.render(frame(columns, rows, tier, bare)).output);
 
   let lastAt = performance.now() / 1000;
   let active = 0;
@@ -136,6 +158,7 @@ await main(function* () {
           term.update([{ type: "capability", key: "colordepth", value }]);
         }
         if (key === "tab") active = (active + 1) % SQUARES.length;
+        if (key === "t") bare = !bare;
         if (key === "a") {
           let s = SQUARES[active];
           let paused = s.vx === 0 && s.vy === 0;
@@ -160,6 +183,14 @@ await main(function* () {
         columns = size.width;
         rows = size.height;
         term.update([{ type: "resize", width: columns, height: rows }]);
+      }
+
+      // Fold probe replies (theme colors, colordepth, …). The push
+      // logic inside update() moves the reported background into the
+      // renderer's compositing destinations; a bare-mode frame then
+      // composites over the terminal's real background color.
+      if (event.type === "capability") {
+        term.update([event]);
       }
     }
 
@@ -194,9 +225,12 @@ await main(function* () {
       }
     }
 
-    let { output } = term.render(frame(columns, rows, tier), {
-      deltaTime: dt,
-    });
+    let { output } = term.render(
+      frame(columns, rows, tier, bare, reportedBgHex()),
+      {
+        deltaTime: dt,
+      },
+    );
     writeStdout(output);
 
     // Effection's each protocol: every iteration must end with
