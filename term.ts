@@ -86,7 +86,6 @@ function applyUpdate(
 function runtimeFromStatic(caps: Capabilities): RuntimeCapabilities {
   return Object.freeze<RuntimeCapabilities>({
     ...caps,
-    syncOutput: false,
     kittyKeyboard: false,
     kittyGraphics: false,
     pointerShape: false,
@@ -179,6 +178,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       xenl: true,
       altScreen: true,
       styledUnderline: false,
+      syncOutput: false,
     },
   );
 

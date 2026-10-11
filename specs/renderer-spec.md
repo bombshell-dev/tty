@@ -489,12 +489,18 @@ Update (`CSI ? 2026 l`) after its last. The terminal buffers everything between
 the pair and presents it as one atomic repaint, so a frame never tears
 mid-update.
 
-**Capability evidence.** `syncOutput` originates exclusively from the
-`sync-output` `CapabilityEvent` (input-spec §5), emitted when the input parser
-reads a DECRPM 2026 reply to the probe (`CSI ? 2026 $ p`). Reply values 1, 2,
-and 3 (set, reset, permanently set) report support; 0 and 4 report none. The
-static `Capabilities` never seed this field: it is false until a probe reply is
-folded in through `update()`.
+**Capability evidence.** `syncOutput` is raised only on positive evidence. Two
+runtime channels feed the `sync-output` `CapabilityEvent` (input-spec §5,
+terminfo-spec §6.3): a DECRPM 2026 reply to the probe (`CSI ? 2026 $ p`) —
+values 1, 2, and 3 (set, reset, permanently set) report support, 0 and 4 report
+none — and an XTGETTCAP `Sync` reply, whose sequence value is discarded in favor
+of the mode 2026 form (terminfo-spec §6.3). Detection may also seed the field
+positively: static `Capabilities` carry `syncOutput`, raised by the `Sync`
+extended capability in the parsed terminfo entry and by the `TMUX` environment
+variable (terminfo-spec §7.1, §7.2). Evidence follows TINV-3 precedence: probe
+replies outrank detect-time seeding in both directions, so a DECRPM 0 or 4 reply
+turns the capability off even when detection seeded it. Without positive
+evidence the field stays false and no frame is wrapped.
 
 **Invalidation and timing.** The renderer reads the capability snapshot at each
 render transaction, so a capability flip takes effect on the next rendered
