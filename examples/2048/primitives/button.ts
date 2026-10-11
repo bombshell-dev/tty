@@ -111,7 +111,7 @@ export function button(
       // button shows not-allowed, mirroring CSS `cursor` conventions. Only
       // emitted when the terminal confirmed OSC 22 support (renderer-spec
       // §7.9); otherwise this property is ignored.
-      pointerShape: state.disabled ? "not-allowed" : "pointer",
+      cursor: state.disabled ? "not-allowed" : "pointer",
     }),
     text(label, { color: fg }),
     close(),

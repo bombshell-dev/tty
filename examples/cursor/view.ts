@@ -1,7 +1,7 @@
 /**
  * cursor — the tile grid view for examples/cursor/index.ts.
  *
- * Each tile declares a different `pointerShape` (renderer-spec §7.9), so
+ * Each tile declares a different `cursor` (renderer-spec §7.9), so
  * hovering it asks the terminal to show that exact cursor. Tiles are
  * border-only rounded boxes — no painted fills — with the Bombshell brand
  * hues from bomb.sh. Hovering lights the tile's ring and name in its hue,
@@ -107,7 +107,7 @@ export function withDragShield(
         attachPoints: { element: "left-top", parent: "left-top" },
         pointerCaptureMode: "capture",
       },
-      pointerShape: "grabbing",
+      cursor: "grabbing",
     }),
     close(),
   );
@@ -138,7 +138,7 @@ function tile(ops: Op[], t: Tile, ctx: Ctx): void {
         bottom: 1,
       },
       cornerRadius: { tl: 1, tr: 1, bl: 1, br: 1 },
-      pointerShape: shape,
+      cursor: shape,
     }),
     text(shape, { color: hovered ? t.hue : label }),
     close(),

@@ -44,9 +44,9 @@ node examples/cursor/index.ts
 What it shows:
 
 - a catalog of 9 pointer shapes — the subset confirmed working in ghostty — as
-  border-only rounded tiles in Bombshell brand hues, declaring their
-  `pointerShape` (renderer-spec §7.9); hovering a tile shows that exact cursor
-  in terminals that support OSC 22
+  border-only rounded tiles in Bombshell brand hues, declaring their `cursor`
+  (renderer-spec §7.9); hovering a tile shows that exact cursor in terminals
+  that support OSC 22
 - the grab tile is double-wide: holding the pointer down shows grabbing anywhere
   on screen while held — a capture-mode drag shield (userland drag persistence,
   matching CSS drag behavior); releasing returns to grab

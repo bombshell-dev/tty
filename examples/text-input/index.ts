@@ -143,7 +143,7 @@ function frame(value: string, caret: number): Op[] {
         padding: { left: 1, right: 1 },
       },
       bg: inputBg,
-      pointerShape: "text",
+      cursor: "text",
     }),
     text(value, { color: label, caret }),
     close(),
