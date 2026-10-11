@@ -48,19 +48,19 @@ function over(x: number, y: number) {
 // ││L                    ││               ││
 // │└─────────────────────┘└───────────────┘│
 // └────────────────────────────────────────┘
-function layout(link: { pointerShape?: PointerShape } = {}): Op[] {
+function layout(link: { cursor?: PointerShape } = {}): Op[] {
   return [
     open("root", {
       layout: { width: grow(), height: grow(), direction: "ltr" },
     }),
     open("link", {
       layout: { width: fixed(20), height: fixed(6), direction: "ttb" },
-      pointerShape: "pointer",
+      cursor: "pointer",
       ...link,
     }),
     open("field", {
       layout: { width: fixed(10), height: fixed(2) },
-      pointerShape: "text",
+      cursor: "text",
     }),
     text("F"),
     close(),
@@ -96,12 +96,12 @@ describe("pointer shape", () => {
       );
     });
 
-    it("does not read pointerShape without the capability", async () => {
+    it("does not read cursor without the capability", async () => {
       let unsupported = await createTerm({ width: 40, height: 6 });
       let reads = 0;
       let ops = layout().map((op) =>
-        "pointerShape" in op
-          ? Object.defineProperty({ ...op }, "pointerShape", {
+        "cursor" in op
+          ? Object.defineProperty({ ...op }, "cursor", {
             get: () => (reads++, "pointer"),
           })
           : op
@@ -172,7 +172,7 @@ describe("pointer shape", () => {
       term.render(layout(), LINK);
       expect(
         sequences(
-          term.render(layout({ pointerShape: "progress" }), LINK)
+          term.render(layout({ cursor: "progress" }), LINK)
             .output,
         ),
       ).toEqual([osc22("progress")]);
@@ -180,7 +180,7 @@ describe("pointer shape", () => {
 
     it("ignores values outside the PointerShape vocabulary", () => {
       let bogus = "x\x1b]0;pwned\x07" as PointerShape;
-      let output = term.render(layout({ pointerShape: bogus }), LINK).output;
+      let output = term.render(layout({ cursor: bogus }), LINK).output;
       expect(decode(output)).not.toContain("pwned");
       expect(sequences(output)).toEqual([]);
     });
@@ -200,7 +200,7 @@ describe("pointer shape", () => {
         open("menu", {
           layout: { width: fixed(6), height: fixed(3) },
           floating: { x: 1, y: 3, attachTo: "root" },
-          pointerShape: "grab",
+          cursor: "grab",
         }),
         close(),
       );
@@ -222,7 +222,7 @@ describe("pointer shape", () => {
             attachTo: "root",
             pointerCaptureMode: "passthrough",
           },
-          pointerShape: "help",
+          cursor: "help",
         }),
         close(),
       );

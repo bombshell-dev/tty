@@ -481,9 +481,9 @@ specified.
 
 ### 7.9 Pointer shape
 
-An `open()` directive MAY declare a `pointerShape` property naming the mouse
-pointer shape to show while the pointer is over the element. Values are the
-kitty pointer shape names (the CSS `cursor` keywords): `default`, `none`,
+An `open()` directive MAY declare a `cursor` property naming the mouse pointer
+shape to show while the pointer is over the element. Values are the kitty
+pointer shape names (the CSS `cursor` keywords): `default`, `none`,
 `context-menu`, `help`, `pointer`, `progress`, `wait`, `cell`, `crosshair`,
 `text`, `vertical-text`, `alias`, `copy`, `move`, `no-drop`, `not-allowed`,
 `grab`, `grabbing`, `e-resize`, `n-resize`, `ne-resize`, `nw-resize`,
@@ -494,16 +494,16 @@ layout or cell output.
 
 The gate is `RuntimeCapabilities.pointerShape` (see
 [Terminfo Specification](terminfo-spec.md) §6.3). While it is `false`, the
-renderer MUST NOT read `pointerShape` properties and MUST NOT emit OSC 22.
+renderer MUST NOT read `cursor` properties and MUST NOT emit OSC 22.
 
 **Resolved shape.** While the capability is `true`, each render resolves one
 shape:
 
 - `default` when the render options carry no `pointer`.
-- Otherwise, the `pointerShape` of the last declaring element in hit-test order
-  (the order behind `pointerenter` events, §12.4), or `default` when none
-  declares one. Ancestors precede descendants, so the innermost element wins. A
-  floating element in `"capture"` mode hides the elements beneath it; one in
+- Otherwise, the `cursor` of the last declaring element in hit-test order (the
+  order behind `pointerenter` events, §12.4), or `default` when none declares
+  one. Ancestors precede descendants, so the innermost element wins. A floating
+  element in `"capture"` mode hides the elements beneath it; one in
   `"passthrough"` mode lets them decide.
 
 Elements inside a `snapshot()` participate as direct directives would.
@@ -950,8 +950,8 @@ The `open()` constructor currently accepts the following property groups in its
   reference, attach target, structured attach points, pointer capture mode, clip
   target, z-index)
 - **`scroll`** — scroll container configuration
-- **`pointerShape`** — mouse pointer shape while hovered (§7.9); not transferred
-  to the WASM module
+- **`cursor`** — mouse pointer shape while hovered (§7.9); not transferred to
+  the WASM module
 
 The `floating` object shape is:
 

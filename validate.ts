@@ -195,7 +195,7 @@ const OpenElement = Type.Object({
   clip: Type.Optional(Clip),
   floating: Type.Optional(Floating),
   transition: Type.Optional(Transition),
-  pointerShape: Type.Optional(PointerShape),
+  cursor: Type.Optional(PointerShape),
 });
 
 const TextOp = Type.Object({
