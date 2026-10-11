@@ -151,6 +151,33 @@ describe("transitions", () => {
       // …and must not inherit the stale combining mark.
       expect(out).not.toContain("\u0301");
     });
+
+    it("renders lower-block edges for a fractional rect height", async () => {
+      let W = 14, H = 6;
+      let term = await createTerm({ width: W, height: H });
+      let frame: Op[] = [
+        open("root", { layout: { width: grow(), height: grow() } }),
+        open("box", {
+          layout: { width: fixed(6), height: fixed(3) },
+          bg: rgba(255, 0, 0),
+          floating: { x: 2, y: 1.5, attachTo: "parent" },
+        }),
+        close(),
+        close(),
+      ];
+
+      let grid = print(
+        decode(term.render(frame, { deltaTime: 0 }).output),
+        W,
+        H,
+      )
+        .split("\n");
+      // top edge covers the bottom half of row 1, bottom edge the top half of
+      // row 4; x is integer-aligned so there are no side ramps or corners
+      expect(grid[1].slice(2, 8)).toBe("▄▄▄▄▄▄");
+      expect(grid[4].slice(2, 8)).toBe("▄▄▄▄▄▄");
+      expect(grid[2].slice(1, 9)).toBe("        ");
+    });
   });
 
   describe("line mode", () => {

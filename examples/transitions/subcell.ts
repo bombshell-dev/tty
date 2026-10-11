@@ -1,14 +1,17 @@
 /**
  * Sub-cell rect smoothing demo.
  *
- * A row of filled boxes (no borders) that animate their position. Because the
- * boxes are rectangle fills, their leading/trailing edges land on fractional
- * cell columns mid-transition and render as eighth-block glyphs (▏▎▍▌▋▊▉)
- * instead of snapping column to column.
+ * A 2x3 grid of filled boxes (no borders) that animate between slots. Because
+ * the boxes are rectangle fills, their leading/trailing edges land on
+ * fractional cells mid-transition and render as block glyphs instead of
+ * snapping cell to cell:
  *
- * Press 's' to shuffle (animates position).
- * Press 'w' to toggle wide/narrow (animates width).
- * Press 'q' or Ctrl+C to quit.
+ *   s — shuffle within rows  horizontal: eighth-block columns (▏▎▍▌▋▊▉)
+ *   v — swap each column     vertical:   eighth-block rows (▁▂▃▄▅▆▇)
+ *   d — slide diagonally     diagonal:   both ramps at once (corner cells
+ *                            stay blank — see clayterm.c)
+ *   w — toggle wide/narrow (animates width)
+ *   q or Ctrl+C — quit
  *
  * Filled, border-free boxes are deliberate: a border would emit a separate
  * (still integer-snapped) command that overdraws the fill's fractional edge.
@@ -72,13 +75,41 @@ interface State {
   wide: boolean;
 }
 
-function fisherYates<T>(arr: T[]): T[] {
+const COLS = 3;
+
+function shuffleRows<T>(arr: T[]): T[] {
   let out = arr.slice();
-  for (let i = out.length - 1; i > 0; i--) {
-    let j = Math.floor(Math.random() * (i + 1));
-    let tmp = out[i];
-    out[i] = out[j];
-    out[j] = tmp;
+  for (let lo = 0; lo < out.length; lo += COLS) {
+    let hi = Math.min(lo + COLS, out.length);
+    for (let i = hi - 1; i > lo; i--) {
+      let j = lo + Math.floor(Math.random() * (i - lo + 1));
+      let tmp = out[i];
+      out[i] = out[j];
+      out[j] = tmp;
+    }
+  }
+  return out;
+}
+
+/* Swap the two boxes in every column: vertical movement only. */
+function swapColumns<T>(arr: T[]): T[] {
+  let out = arr.slice();
+  for (let c = 0; c < COLS; c++) {
+    let tmp = out[c];
+    out[c] = out[c + COLS];
+    out[c + COLS] = tmp;
+  }
+  return out;
+}
+
+/* Flip every box to the other row and shift it one column: row and column
+ * both change, so x and y lerp together and the corners composite. */
+function slideDiagonal<T>(arr: T[]): T[] {
+  let out: T[] = new Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    let r = Math.floor(i / COLS);
+    let c = i % COLS;
+    out[(1 - r) * COLS + ((c + 1) % COLS)] = arr[i];
   }
   return out;
 }
@@ -112,40 +143,57 @@ function view(state: State): Op[] {
       bg: HINT_BG,
     }),
     ...hint("s", "shuffle"),
+    ...hint("v", "vertical"),
+    ...hint("d", "diagonal"),
     ...hint("w", "wide/narrow"),
     ...hint("q", "quit"),
     close(),
   );
 
   ops.push(
-    open("row", {
+    open("grid", {
       layout: {
         width: grow(),
         height: grow(),
-        direction: "ltr",
+        direction: "ttb",
         padding: { left: 2, right: 2, top: 1, bottom: 1 },
-        gap: 2,
-        alignY: "center",
+        gap: 1,
       },
     }),
   );
 
-  for (let b of state.boxes) {
+  for (let r = 0; r < 2; r++) {
     ops.push(
-      open(`box:${b.id}`, {
+      open(`row:${r}`, {
         layout: {
-          width: state.wide ? grow() : fixed(7),
-          height: fixed(5),
-        },
-        bg: b.color,
-        transition: {
-          duration: 0.5,
-          easing: "easeInOut",
-          properties: ["width", "position"],
+          width: grow(),
+          height: grow(),
+          direction: "ltr",
+          gap: 2,
+          alignX: "center",
+          alignY: "center",
         },
       }),
-      close(),
     );
+    for (let c = 0; c < COLS; c++) {
+      let b = state.boxes[r * COLS + c];
+      ops.push(
+        open(`box:${b.id}`, {
+          layout: {
+            width: state.wide ? grow() : fixed(7),
+            height: fixed(5),
+          },
+          bg: b.color,
+          transition: {
+            duration: 0.5,
+            easing: "easeInOut",
+            properties: ["width", "position"],
+          },
+        }),
+        close(),
+      );
+    }
+    ops.push(close());
   }
 
   ops.push(close());
@@ -247,7 +295,13 @@ await main(function* () {
           break;
         }
         if (e.key === "s") {
-          state = { ...state, boxes: fisherYates(state.boxes) };
+          state = { ...state, boxes: shuffleRows(state.boxes) };
+        }
+        if (e.key === "v") {
+          state = { ...state, boxes: swapColumns(state.boxes) };
+        }
+        if (e.key === "d") {
+          state = { ...state, boxes: slideDiagonal(state.boxes) };
         }
         if (e.key === "w") {
           state = { ...state, wide: !state.wide };

@@ -439,9 +439,14 @@ static void edge_cell(struct Clayterm *ct, int x, int y, EdgeSide side,
   }
 }
 
-/* Solid interior + four coverage boundary lines. Corners are left empty in v1:
- * both fractions meet in one cell and a single eighth-block can't express an
- * L-corner; the octant path is deferred. */
+/* Solid interior + four coverage boundary lines. Corners are left empty:
+ * both fractions meet in one cell and a single eighth-block can't express
+ * an L-corner, and the quadrant/octant glyphs that could are either too
+ * coarse (quadrant = hard half-by-half paint regardless of sliver size) or
+ * too poorly supported in terminal fonts (Unicode 16 octants) to be safe
+ * mid-animation. A missing corner sliver reads as a faint notch, which is
+ * far less distracting than the over-ink one axis claiming the cell would
+ * produce. */
 static void render_rect_cov(struct Clayterm *ct, Clay_BoundingBox b,
                             uint32_t fill) {
   float l = b.x, r = b.x + b.width;
@@ -463,9 +468,8 @@ static void render_rect_cov(struct Clayterm *ct, Clay_BoundingBox b,
   float tf = (float)yi0 - t;
   float bf = btm - (float)yi1;
 
-  /* edges span the interior extent only; the 4 corner cells are deferred to the
-   * octant path. A missing corner sliver reads as a faint notch, which is far
-   * less distracting than the over-ink you get by letting one axis claim it. */
+  /* edges span the interior extent only; corner cells stay blank (see the
+   * render_rect_cov comment) */
   for (int x = xi0; x < xi1; x++) {
     if (tf > 0.0f)
       edge_cell(ct, x, yi0 - 1, EDGE_TOP, tf, fill);
