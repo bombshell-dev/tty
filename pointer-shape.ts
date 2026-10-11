@@ -62,12 +62,12 @@ export function resolvePointerShape(
           shape = value as PointerShape;
         }
       }
-    } else if ("pointerShape" in op && op.pointerShape !== undefined) {
-      if (!KNOWN.has(op.pointerShape)) continue;
+    } else if ("cursor" in op && op.cursor !== undefined) {
+      if (!KNOWN.has(op.cursor)) continue;
       let i = over.lastIndexOf(op.id);
       if (i > best) {
         best = i;
-        shape = op.pointerShape;
+        shape = op.cursor;
       }
     }
   }

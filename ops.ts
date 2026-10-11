@@ -414,7 +414,7 @@ export interface OpenElement {
     zIndex?: number;
   };
   transition?: Transition;
-  pointerShape?: PointerShape;
+  cursor?: PointerShape;
 }
 
 export type AttachPoint =
@@ -563,9 +563,9 @@ export function snapshot(ops: Op[]): Op {
     if (op.directive === OP_SNAPSHOT) {
       if (op.shapes) shapes.push(...op.shapes);
     } else if (
-      op.directive === OP_OPEN_ELEMENT && op.pointerShape !== undefined
+      op.directive === OP_OPEN_ELEMENT && op.cursor !== undefined
     ) {
-      shapes.push([op.id, op.pointerShape]);
+      shapes.push([op.id, op.cursor]);
     }
   }
   if (shapes.length === 0) return { directive: OP_SNAPSHOT, data };

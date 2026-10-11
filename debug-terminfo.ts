@@ -139,7 +139,7 @@ console.log(
 // as the end-to-end emission check.
 console.log("── pointer shape (renderer-spec §7.9)");
 const result = term.render(
-  [open("box", { pointerShape: "pointer" }), text("hover"), close()],
+  [open("box", { cursor: "pointer" }), text("hover"), close()],
   { pointer: { x: 2, y: 2, down: false } },
 );
 const emitted = decode

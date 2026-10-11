@@ -34,7 +34,7 @@ describe("validate", () => {
   });
 
   it("accepts a pointer shape", () => {
-    expect(validate([open("x", { pointerShape: "pointer" }), close()])).toBe(
+    expect(validate([open("x", { cursor: "pointer" }), close()])).toBe(
       true,
     );
   });
@@ -42,7 +42,7 @@ describe("validate", () => {
   it("rejects a pointer shape outside the vocabulary", () => {
     expect(validate([
       // deno-lint-ignore no-explicit-any
-      open("x", { pointerShape: "hand" as any }),
+      open("x", { cursor: "hand" as any }),
       close(),
     ])).toBe(false);
   });
