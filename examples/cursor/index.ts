@@ -1,7 +1,7 @@
 /**
  * cursor — a shape catalog for the OSC 22 pointer-shape protocol.
  *
- * - Each tile declares a different `pointerShape` (renderer-spec §7.9), so
+ * - Each tile declares a different `cursor` (renderer-spec §7.9), so
  *   hovering it asks the terminal to show that exact cursor. Support comes
  *   from the probe (kitty) or the known-support table (ghostty, foot,
  *   xterm ≥ 367); the status line shows whether it is currently on.

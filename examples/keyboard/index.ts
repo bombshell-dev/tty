@@ -249,7 +249,7 @@ function key(ops: Op[], k: KeyDef, ctx: AppContext): void {
       border: hover
         ? { color: highlight, left: 1, right: 1, top: 1, bottom: 1 }
         : undefined,
-      pointerShape: "pointer",
+      cursor: "pointer",
     }),
     text(k.label, { color: hover ? highlight : label }),
     close(),
