@@ -1,0 +1,19 @@
+diff --git a/clay.h b/clay.h
+index 6452cd6..6b15cb4 100644
+--- a/clay.h
++++ b/clay.h
+@@ -4589,12 +4589,12 @@ Clay_RenderCommandArray Clay_EndLayout(float deltaTime) {
+                     Clay_TransitionProperty properties = currentElement->config.transition.properties;
+                     int32_t activeProperties = CLAY_TRANSITION_PROPERTY_NONE;
+                     if (properties & CLAY_TRANSITION_PROPERTY_X) {
+-                        if (!Clay__FloatEqual(oldTargetState.boundingBox.x, targetState.boundingBox.x) && !(Clay__FloatEqual(oldRelativePosition.x, newRelativePosition.x)) && !context->rootResizedLastFrame) {
++                        if (!Clay__FloatEqual(oldTargetState.boundingBox.x, targetState.boundingBox.x) && (transitionData->reparented || !Clay__FloatEqual(oldRelativePosition.x, newRelativePosition.x)) && !context->rootResizedLastFrame) {
+                             activeProperties |= CLAY_TRANSITION_PROPERTY_X;
+                         }
+                     }
+                     if (properties & CLAY_TRANSITION_PROPERTY_Y) {
+-                        if (!Clay__FloatEqual(oldTargetState.boundingBox.y, targetState.boundingBox.y) && !(Clay__FloatEqual(oldRelativePosition.y, newRelativePosition.y)) && !context->rootResizedLastFrame) {
++                        if (!Clay__FloatEqual(oldTargetState.boundingBox.y, targetState.boundingBox.y) && (transitionData->reparented || !Clay__FloatEqual(oldRelativePosition.y, newRelativePosition.y)) && !context->rootResizedLastFrame) {
+                             activeProperties |= CLAY_TRANSITION_PROPERTY_Y;
+                         }
+                     }
