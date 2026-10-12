@@ -475,10 +475,13 @@ capability-specific output. Protocols that change emitted bytes MUST add their
 own renderer section, capability evidence, invalidation rules, and tests in a
 focused feature specification.
 
-In particular, color encoding, synchronized-output wrapping, pointer-shape
-output, Kitty keyboard mode setup, and Kitty graphics emission are deferred to
-their respective follow-up PRs. The renderer continues to emit its existing
-hardcoded ANSI output until one of those specifications is adopted.
+In particular, synchronized-output wrapping, pointer-shape output, Kitty
+keyboard mode setup, and Kitty graphics emission are deferred to their
+respective follow-up PRs. The renderer continues to emit its existing hardcoded
+ANSI output until one of those specifications is adopted. Color encoding is the
+exception: it is specified in the
+[Color Encoding Specification](color-encoding-spec.md), which the renderer
+follows once adopted.
 
 ---
 
@@ -504,7 +507,9 @@ parameters specify the terminal dimensions in character cells.
 The optional `terminfo` value (from `detectTerminal()`; see
 [Terminfo Specification](terminfo-spec.md) §10.1) initializes the Term's private
 `RuntimeCapabilities` from the static `Capabilities` it carries. When omitted,
-the Term uses the §7.1 baseline.
+the Term uses the §7.1 baseline. The renderer resolves its color encoding from
+this capability snapshot; the derivation rule and downmapping behavior are
+specified in the [Color Encoding Specification](color-encoding-spec.md).
 
 ### 8.2 Render invocation
 

@@ -164,23 +164,23 @@ export interface Term {
 export async function createTerm(options: TermOptions): Promise<Term> {
   let { width, height, terminfo } = options;
 
-  let native = await createTermNative(
-    width,
-    height,
-  );
+  let seed = terminfo?.capabilities ?? {
+    colors: 256,
+    trueColor: false,
+    bce: true,
+    autoMargin: true,
+    xenl: true,
+    altScreen: true,
+    styledUnderline: false,
+  };
+
+  let native = await createTermNative(width, height, {
+    colors: seed.colors,
+    trueColor: seed.trueColor,
+  });
   let { memory } = native;
 
-  let currentCaps: RuntimeCapabilities = runtimeFromStatic(
-    terminfo?.capabilities ?? {
-      colors: 256,
-      trueColor: false,
-      bce: true,
-      autoMargin: true,
-      xenl: true,
-      altScreen: true,
-      styledUnderline: false,
-    },
-  );
+  let currentCaps: RuntimeCapabilities = runtimeFromStatic(seed);
 
   let prev = new Set<string>();
   let pressed = new Set<string>();
@@ -310,6 +310,16 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         }
 
         currentCaps = next;
+        // Folded evidence changed the renderer's color capabilities:
+        // push it so the next render resolves the new tier
+        // (color-encoding-spec §4.2). The tier change itself forces a
+        // complete redraw on the next transaction (§6.4).
+        if (
+          next.colors !== native.caps.colors ||
+          next.trueColor !== native.caps.trueColor
+        ) {
+          native.setCapabilities(next.colors, next.trueColor);
+        }
         if (bytes.length) out.push(bytes);
       }
 
