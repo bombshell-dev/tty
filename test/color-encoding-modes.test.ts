@@ -1,6 +1,6 @@
+// deno-lint-ignore-file no-control-regex
 import { describe, expect, it } from "./suite.ts";
 import { createTerm } from "../term.ts";
-import type { InputEvent } from "../input.ts";
 import type { TerminalInfo } from "../terminfo.ts";
 import { close, fixed, grow, type Op, open, rgba, text } from "../ops.ts";
 
