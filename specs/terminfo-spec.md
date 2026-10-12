@@ -403,25 +403,25 @@ _This section is normative._
 `TerminalInfo.probe` contains the following queries as one `Uint8Array`, in
 order:
 
-| #  | Query               | Bytes                                                | `CapabilityEvent` key |
-| -- | ------------------- | ---------------------------------------------------- | --------------------- |
-| 1  | Foreground color    | `OSC 10 ; ? BEL`                                     | `foreground-color`    |
-| 2  | Background color    | `OSC 11 ; ? BEL`                                     | `background-color`    |
-| 3  | Cursor color        | `OSC 12 ; ? BEL`                                     | `cursor-color`        |
-| 4  | Kitty color         | `OSC 21 ; foreground=? ; background=? ; cursor=? ST` | (per field, see §6.3) |
-| 5  | Pointer shape       | `OSC 22 ; ?__current__ ST`                           | `pointer-shape`       |
-| 6  | Truecolor caps      | `DCS + q 524742 ; 5463 ST` (XTGETTCAP `RGB;Tc`)      | `colordepth`          |
-| 7  | Synchronized output | `CSI ? 2026 $ p` (DECRQM)                            | `sync-output`         |
-| 8  | Kitty keyboard      | `CSI ? u`                                            | `kitty-keyboard`      |
-| 9  | Kitty graphics      | `APC _G i=31,s=1,v=1,a=q,t=d,f=24 ; AAAA ST`         | `kitty-graphics`      |
+| #  | Query               | Bytes                                                | `CapabilityEvent` key   |
+| -- | ------------------- | ---------------------------------------------------- | ----------------------- |
+| 1  | Foreground color    | `OSC 10 ; ? BEL`                                     | `foreground-color`      |
+| 2  | Background color    | `OSC 11 ; ? BEL`                                     | `background-color`      |
+| 3  | Cursor color        | `OSC 12 ; ? BEL`                                     | `cursor-color`          |
+| 4  | Kitty color         | `OSC 21 ; foreground=? ; background=? ; cursor=? ST` | (per field, see §6.3)   |
+| 5  | Pointer shape       | `OSC 22 ; ?__current__ ST`                           | `pointer-shape`         |
+| 6  | Truecolor caps      | `DCS + q 524742 ; 5463 ST` (XTGETTCAP `RGB;Tc`)      | `colordepth`            |
+| 7  | Synchronized output | `CSI ? 2026 $ p` (DECRQM)                            | `sync-output`           |
+| 8  | Kitty keyboard      | `CSI ? u`                                            | `kitty-keyboard`        |
+| 9  | Kitty graphics      | `APC _G i=31,s=1,v=1,a=q,t=d,f=24 ; AAAA ST`         | `kitty-graphics`        |
 | 10 | Scheme subscribe    | `CSI ? 2031 h` (DECSET)                              | (none — enables pushes) |
-| 11 | Color scheme        | `CSI ? 996 n` (DECDSR)                               | `color-scheme`        |
-| 12 | **Fence:** DA1      | `CSI c`                                              | (internal only)       |
+| 11 | Color scheme        | `CSI ? 996 n` (DECDSR)                               | `color-scheme`          |
+| 12 | **Fence:** DA1      | `CSI c`                                              | (internal only)         |
 
-Terminals answer queries in order and ignore queries they do not understand.
-DA1 is answered by every terminal, so its response marks the probe complete. Any
-of queries 1–11 not yet answered when the DA1 reply arrives will never be
-answered, and the renderer keeps their current values.
+Terminals answer queries in order and ignore queries they do not understand. DA1
+is answered by every terminal, so its response marks the probe complete. Any of
+queries 1–11 not yet answered when the DA1 reply arrives will never be answered,
+and the renderer keeps their current values.
 
 The batch is safe to emit unconditionally: every query is either answered or
 ignored; none changes terminal state destructively. Query 10 does change

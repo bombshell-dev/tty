@@ -7,8 +7,9 @@
 // compositing-demo.html for viewing.
 //
 // Run with: deno run --allow-read --allow-write examples/compositing-demo/capture.ts
-import { createTerm, type TerminalInfo } from "../../mod.ts";
-import { clampVeil, frame, type Rgb, VEIL, VEIL_COLORS } from "./scene.ts";
+import { createTerm } from "../../mod.ts";
+import type { TerminalInfo } from "../../mod.ts";
+import { clampVeil, frame, type Rgb, VEIL } from "./scene.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -46,7 +47,7 @@ const escapeHtml = (s: string) =>
 /** The 256-color palette (indices 0-15 nominal, 16-231 cube, 232-255
  * grayscale ramp) as RGB — mirrors the renderer's mapping. */
 function paletteRgb(i: number): [number, number, number] {
-  const NOMINAL = [
+  let NOMINAL = [
     0x000000,
     0xff0000,
     0x00ff00,
@@ -64,7 +65,7 @@ function paletteRgb(i: number): [number, number, number] {
     0x55ffff,
     0xffffff,
   ];
-  const CUBE = [0, 95, 135, 175, 215, 255];
+  let CUBE = [0, 95, 135, 175, 215, 255];
   if (i < 16) {
     return [
       (NOMINAL[i] >> 16) & 255,

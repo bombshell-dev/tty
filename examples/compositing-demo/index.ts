@@ -1,4 +1,3 @@
-// deno-lint-ignore-file no-fallthrough
 // Compositing demo — renderer-spec §7.9.
 //
 // A mixed backdrop — alpha scrim tiles over your terminal's reported
@@ -34,12 +33,7 @@ import {
   type Stream,
   until,
 } from "effection";
-import {
-  createTerm,
-  detectTerminal,
-  type InputEvent,
-  type KeyEvent,
-} from "../../mod.ts";
+import { createTerm, detectTerminal } from "../../mod.ts";
 import { alternateBuffer, cursor, settings } from "../../settings.ts";
 import { useInput } from "../use-input.ts";
 import { useStdin } from "../use-stdin.ts";

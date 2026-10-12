@@ -761,7 +761,7 @@ hi
       }
     });
 
-    it("folds a color-scheme event into the theme", async () => {
+    it("folds a color-scheme event into the theme", () => {
       expect(term.capabilities.theme.scheme).toBeUndefined();
       term.update([{
         type: "capability",

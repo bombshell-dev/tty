@@ -506,7 +506,9 @@ export function frame(
   // polarity with the theme.
   let bgLabel = bare ? `bg ${hexOf(reported) ?? "fallback"}` : "scrim+grad";
   let label =
-    ` §7.9 · α${VEIL.alpha} · q quit · space pause · ⇧jump · tab · -/+ · ${bgLabel} · 1/2/3 tier`;
+    ` §7.9 · α${VEIL.alpha} · q quit · space pause · ⇧jump · tab · -/+ · ${bgLabel} · tier: ${
+      TIER_LABELS[tier + 1]
+    }`;
   ops.push(
     open("bar", {
       layout: {
