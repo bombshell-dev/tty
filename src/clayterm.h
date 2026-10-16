@@ -10,7 +10,7 @@
 struct Clayterm;
 
 /* Capability bits for set_capabilities(). */
-#define CAP_SYNC_OUTPUT (1u << 0)
+#define RENDER_CAP_SYNC_OUTPUT (1u << 0)
 
 /* WASM exports */
 int clayterm_size(int w, int h);

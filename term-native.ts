@@ -30,7 +30,7 @@ export interface RenderCapabilities {
   syncOutput: boolean;
 }
 
-const CAP_SYNC_OUTPUT = 1 << 0;
+const RENDER_CAP_SYNC_OUTPUT = 1 << 0;
 
 export interface Native {
   memory: WebAssembly.Memory;
@@ -144,7 +144,7 @@ export async function createTermNative(
   }
 
   function setCaps(next: RenderCapabilities): void {
-    capFlags = next.syncOutput ? CAP_SYNC_OUTPUT : 0;
+    capFlags = next.syncOutput ? RENDER_CAP_SYNC_OUTPUT : 0;
   }
 
   // Renderer state and the fixed transfer buffer share linear memory as

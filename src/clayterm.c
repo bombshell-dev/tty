@@ -275,7 +275,7 @@ static void present_cups(struct Clayterm *ct, int row) {
    * never tears mid-update. Unsupported terminals ignore the private mode;
    * whether we emit the wrap at all is decided by the sync-output
    * capability. */
-  int sync = ct->caps & CAP_SYNC_OUTPUT;
+  int sync = ct->caps & RENDER_CAP_SYNC_OUTPUT;
   int start = ct->out.length;
   if (sync)
     buf_str(&ct->out, "\x1b[?2026h");
