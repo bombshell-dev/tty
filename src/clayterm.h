@@ -9,11 +9,15 @@
 
 struct Clayterm;
 
+/* Capability bits for set_capabilities(). */
+#define CAP_SYNC_OUTPUT (1u << 0)
+
 /* WASM exports */
 int clayterm_size(int w, int h);
 struct Clayterm *init(void *mem, int w, int h);
+void set_capabilities(struct Clayterm *ct, uint32_t caps);
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
-            float deltaTime, int sync);
+            float deltaTime);
 char *output(struct Clayterm *ct);
 int length(struct Clayterm *ct);
 int animating(struct Clayterm *ct);

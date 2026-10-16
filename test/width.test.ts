@@ -57,7 +57,7 @@ describe("width", () => {
   });
 
   it("replaces surrogate codepoints from malformed UTF-8 with U+FFFD", async () => {
-    let native = await createTermNative(10, 3);
+    let native = await createTermNative(10, 3, { syncOutput: false });
 
     // TextEncoder never produces surrogate bytes, so pack a placeholder
     // (U+1234 = E1 88 B4) and patch it to CESU-8 U+D800 (ED A0 80) to
@@ -83,7 +83,7 @@ describe("width", () => {
     buf[at + 1] = 0xa0;
     buf[at + 2] = 0x80;
 
-    native.reduce(native.statePtr, native.opsBuf, len, 0, 1, 0, 0);
+    native.reduce(native.statePtr, native.opsBuf, len, 0, 1, 0);
     let out = new Uint8Array(
       native.memory.buffer,
       native.output(native.statePtr),

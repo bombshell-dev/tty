@@ -979,6 +979,14 @@ hi
       expect(out).not.toContain("\x1b[?2026");
     });
 
+    it("keeps wrapping after a resize update", () => {
+      term.update([syncOn]);
+      term.update([{ type: "resize", width: 50, height: 12 }]);
+      let out = decode(term.render(frame).output);
+      expect(out.startsWith("\x1b[?2026h")).toBe(true);
+      expect(out.endsWith("\x1b[?2026l")).toBe(true);
+    });
+
     it("never wraps line mode output", () => {
       term.update([syncOn]);
       let out = decode(

@@ -14,6 +14,7 @@ EXPORTS = \
   -Wl,--export=__heap_base \
   -Wl,--export=clayterm_size \
   -Wl,--export=init \
+  -Wl,--export=set_capabilities \
   -Wl,--export=reduce \
   -Wl,--export=output \
   -Wl,--export=length \
