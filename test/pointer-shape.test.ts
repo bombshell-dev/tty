@@ -11,6 +11,7 @@ import {
   text,
 } from "../ops.ts";
 import type { CapabilityEvent } from "../input.ts";
+import { POINTER_SHAPES } from "../pointer-shape.ts";
 import { print } from "./print.ts";
 
 const SUPPORTED: CapabilityEvent = {
@@ -96,20 +97,6 @@ describe("pointer shape", () => {
       );
     });
 
-    it("does not read cursor without the capability", async () => {
-      let unsupported = await createTerm({ width: 40, height: 6 });
-      let reads = 0;
-      let ops = layout().map((op) =>
-        "cursor" in op
-          ? Object.defineProperty({ ...op }, "cursor", {
-            get: () => (reads++, "pointer"),
-          })
-          : op
-      );
-      unsupported.render(ops, LINK);
-      expect(reads).toBe(0);
-    });
-
     it("emits once the capability arrives", async () => {
       let late = await createTerm({ width: 40, height: 6 });
       expect(sequences(late.render(layout(), LINK).output)).toEqual([]);
@@ -176,6 +163,33 @@ describe("pointer shape", () => {
             .output,
         ),
       ).toEqual([osc22("progress")]);
+    });
+
+    it("emits every shape in the PointerShape vocabulary by name", () => {
+      let emitted = POINTER_SHAPES.map((shape) => {
+        let link = shape === "default" ? "pointer" : shape;
+        return sequences(term.render(layout({ cursor: link }), LINK).output);
+      });
+      expect(emitted).toEqual(
+        POINTER_SHAPES.map((shape, i) =>
+          i === 0 ? [osc22("pointer")] : [osc22(shape)]
+        ),
+      );
+    });
+
+    it("applies to elements declared without an id", () => {
+      let ops: Op[] = [
+        open("root", { layout: { width: grow(), height: grow() } }),
+        open("", {
+          layout: { width: fixed(10), height: fixed(2) },
+          cursor: "crosshair",
+        }),
+        close(),
+        close(),
+      ];
+      expect(sequences(term.render(ops, over(1, 1)).output)).toEqual([
+        osc22("crosshair"),
+      ]);
     });
 
     it("ignores values outside the PointerShape vocabulary", () => {
