@@ -137,7 +137,7 @@ console.log(
 
 // Pointer shape is the one capability render() consumes today, so it doubles
 // as the end-to-end emission check.
-console.log("── pointer shape (renderer-spec §7.9)");
+console.log("── pointer shape (renderer-spec §7.10)");
 const result = term.render(
   [open("box", { cursor: "pointer" }), text("hover"), close()],
   { pointer: { x: 2, y: 2, down: false } },

@@ -202,7 +202,7 @@ them directly from the raw terminfo bytes in `TerminalInfo.keys` at
 initialization time.
 
 **Known OSC 22 support.** Some terminals implement OSC 22 pointer shape setting
-but never answer its support query (Renderer Specification §7.9); silence must
+but never answer its support query (Renderer Specification §7.10); silence must
 not count as denial, so `detectTerminal()` seeds `pointerShape: true` when the
 environment identifies a terminal in this table. Entries require primary
 evidence from the terminal's own documentation or specification.
@@ -324,9 +324,9 @@ not merge; each response yields its own event.
 **OSC 22.** An OSC 22 reply sets `key: "pointer-shape", value: true`. The shape
 name in the reply is discarded in v1; only protocol support is recorded. The
 renderer emits pointer shapes only while `pointerShape` is `true` (Renderer
-Specification §7.9). Terminals that implement OSC 22 set but not its query never
-reply; `detectTerminal()` supplies that evidence itself from the known-support
-table (§6.1), and a caller may still override it with
+Specification §7.10). Terminals that implement OSC 22 set but not its query
+never reply; `detectTerminal()` supplies that evidence itself from the
+known-support table (§6.1), and a caller may still override it with
 `term.update([{ type: "capability", key: "pointer-shape", value: true }])`.
 
 **DA1.** The DA1 reply is recognized internally as the probe fence and MUST NOT
