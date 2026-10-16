@@ -23,6 +23,9 @@
 
 ## Commit and PR conventions
 
+Before opening a PR, check the change against `docs/review-patterns.md` and run
+`deno task fmt`.
+
 Do not include any agent marketing material (e.g. "Generated with...",
 "Co-Authored-By: \<agent>") in commits, pull requests, issues, or comments.
 
