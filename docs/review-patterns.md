@@ -1,16 +1,11 @@
 # Review patterns
 
-Recurring maintainer review feedback, distilled from past PRs. Check a change
-against this list before opening a PR. PR numbers point at the original
-discussion.
+Recurring maintainer review feedback, distilled from past PRs. Hard rules live
+in `AGENTS.md`; these are the judgment calls. Check a change against this list
+before opening a PR. PR numbers point at the original discussion.
 
 ## Specs
 
-- Specs describe what _is_. No "current", "earlier", "now extends", or "planned
-  transition" language. Version-to-version differences go in commits and PR
-  descriptions (#29).
-- A code change that touches spec'd behavior updates the spec in the same PR,
-  including stale parentheticals elsewhere in the doc (#42).
 - Specify edge-case policy (timeouts, capacity exhaustion, overflow) before
   writing tests that prescribe an outcome (#85, #132).
 - Use the spec's vocabulary: directives (`open`/`close`/`text`), not
@@ -24,8 +19,6 @@ discussion.
 
 ## Native first
 
-- Renderer state lives in C/WASM. Store it once in native state; don't copy it
-  across the boundary on every call (#133, #139).
 - Prefer encoding new declarations in the binary format and resolving them
   during rendering, as `text({ caret })` does, over re-scanning ops in
   TypeScript. A snapshot stays a snapshot (#137).
@@ -37,9 +30,6 @@ discussion.
 
 ## API shape
 
-- String literals over numeric constants or TS enums (`"center-center"`, not
-  `ATTACH_POINT.CENTER_CENTER`). Use functions when a value is parameterized
-  (#29, #42).
 - Collapse type variants: one event union, one array-taking signature, no
   overloads that only tests use (#133).
 - Names carry constraints: `id` when it must be unique, not `name` (#5).
@@ -56,11 +46,6 @@ discussion.
 - When growing WASM memory, account for every region (parser state, transfer
   buffer, tables). Keep a comment describing the memory layout (#132).
 - Check return values (e.g. `trie_add()` exhaustion) (#132).
-- On overflow, keep structures balanced and report through the error channel.
-  Never silently corrupt or truncate; warn once if it's user-visible (#85,
-  #114).
-- Never fabricate a default for unknown input: an unknown capability code must
-  not become a plausible-looking event (#132).
 - Preserve signals in public functions (`wcwidth()` returns `-1` for
   unprintable) (#49).
 - Prefix C constants and put them in the header (`TERMINFO_*` in `terminfo.h`)
@@ -68,9 +53,6 @@ discussion.
 
 ## Tests
 
-- Assert layout as ASCII pictures:
-  `expect(trim(print(ansi, w, h))).toEqual(...)` (see `test/print.ts`). Extend
-  `print()` rather than asserting raw bytes (#85, #114).
 - One spec per test file; put tests in the matching file (e.g. color behavior in
   `test/color.test.ts`) (#93).
 - Build input with named helpers (`arrowUp()`, `mousePress()`) instead of byte
