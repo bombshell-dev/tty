@@ -8,6 +8,7 @@ import { detectTerminal } from "../terminfo.ts";
 import {
   CLAYTERM_16,
   CLAYTERM_DIRECT,
+  CLAYTERM_SYNC,
   CLAYTERM_TC,
   XTERM_256COLOR,
 } from "./fixtures.ts";
@@ -23,6 +24,7 @@ const BASELINE = {
   xenl: true,
   altScreen: true,
   styledUnderline: false,
+  syncOutput: false,
   pointerShape: false,
 };
 
@@ -92,6 +94,14 @@ describe("terminfo parsing", () => {
     expect(caps.bce).toBe(true);
     expect(caps.autoMargin).toBe(true);
     expect(caps.altScreen).toBe(true);
+    expect(caps.syncOutput).toBe(false);
+  });
+
+  it("reads Sync from the extended capability table", async () => {
+    let d = await detectTerminal({ env: {}, entry: CLAYTERM_SYNC });
+    let caps = d.capabilities;
+    expect(caps.syncOutput).toBe(true);
+    expect(caps.trueColor).toBe(false);
   });
 
   it("reads Tc / Su / Smulx from the extended capability table", async () => {
@@ -158,6 +168,26 @@ describe("environment evidence", () => {
   it("ignores other COLORTERM values", async () => {
     let d = await detectTerminal({ env: { COLORTERM: "yes" } });
     expect(d.capabilities.trueColor).toBe(false);
+  });
+
+  it("grants syncOutput from TMUX", async () => {
+    let d = await detectTerminal({
+      env: { TMUX: "/tmp/tmux-1000/default,12345,0" },
+    });
+    expect(d.capabilities.syncOutput).toBe(true);
+  });
+
+  it("ignores an empty TMUX", async () => {
+    let d = await detectTerminal({ env: { TMUX: "" } });
+    expect(d.capabilities.syncOutput).toBe(false);
+  });
+
+  it("TMUX evidence applies even when the entry lacks Sync", async () => {
+    let d = await detectTerminal({
+      env: { TMUX: "/tmp/tmux-1000/default,12345,0" },
+      entry: XTERM_256COLOR,
+    });
+    expect(d.capabilities.syncOutput).toBe(true);
   });
 });
 
@@ -230,6 +260,7 @@ const PROBE = "\x1b]10;?\x07" +
   "\x1b]22;?__current__\x1b\\" +
   "\x1bP+q524742;5463\x1b\\" +
   "\x1b[?2026$p" +
+  "\x1bP+q53796e63\x1b\\" +
   "\x1b[?u" +
   "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\" +
   "\x1b[c";

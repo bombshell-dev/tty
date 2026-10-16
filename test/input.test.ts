@@ -1151,6 +1151,59 @@ describe("terminfo integration", () => {
       ]);
     });
 
+    it("surfaces sync-output=true from a value-carrying XTGETTCAP Sync reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bP1+r53796e63=1b5b3f3230323668\x1b\\"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: true },
+      ]);
+    });
+
+    it("surfaces sync-output=false from an invalid XTGETTCAP Sync reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bP0+r53796e63\x1b\\"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: false },
+      ]);
+    });
+
+    it("surfaces sync-output=false from a Sync reply without a value", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bP1+r53796e63\x1b\\"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: false },
+      ]);
+    });
+
+    it("accepts a BEL-terminated XTGETTCAP Sync reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bP1+r53796e63=31\x07"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: true },
+      ]);
+    });
+
+    it("does not let a Sync denial disturb the colordepth tally", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(
+        str("\x1bP0+r524742\x1b\\\x1bP0+r53796e63\x1b\\"),
+      );
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: false },
+      ]);
+    });
+
+    it("keeps the colordepth denial working after a Sync reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(
+        str("\x1bP1+r53796e63=31\x1b\\\x1bP0+r\x1b\\"),
+      );
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: true },
+        { type: "capability", key: "colordepth", value: "256" },
+      ]);
+    });
+
     it("surfaces synchronized output from a DECRPM confirm report", async () => {
       let { input } = await withTerminfo();
       let result = input.scan(str("\x1b[?2026;2$y"));
@@ -1258,6 +1311,11 @@ describe("terminfo integration", () => {
         ["\x1b]22;default\x1b\\", [cap("pointer-shape", true)]],
         ["\x1bP1+r524742=382F382F38\x1b\\", [cap("colordepth", "truecolor")]],
         ["\x1bP0+r\x1b\\", [cap("colordepth", "256")]],
+        [
+          "\x1bP1+r53796e63=1b5b3f3230323668\x1b\\",
+          [cap("sync-output", true)],
+        ],
+        ["\x1bP0+r53796e63\x1b\\", [cap("sync-output", false)]],
         ["\x1b[?2026;2$y", [cap("sync-output", true)]],
         ["\x1b[?1u", [cap("kitty-keyboard", true)]],
         ["\x1b_Gi=31;OK\x1b\\", [cap("kitty-graphics", true)]],

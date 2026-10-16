@@ -25,6 +25,13 @@ const CLAY_DEFAULT_MAX_ELEMENT_COUNT = 8192;
 // and snapshot payload bytes live in TEXT_TRANSFER_BUFFER_BYTES.
 const MAX_FIXED_ELEMENT_WIRE_BYTES = 116;
 
+/** Capability evidence the renderer consumes for emission. */
+export interface RenderCapabilities {
+  syncOutput: boolean;
+}
+
+const RENDER_CAP_SYNC_OUTPUT = 1 << 0;
+
 export interface Native {
   memory: WebAssembly.Memory;
   statePtr: number;
@@ -35,6 +42,12 @@ export interface Native {
    * opsBuf may change. Growing memory detaches prior buffer views.
    */
   update(w: number, h: number): void;
+  /**
+   * Push capability evidence into the renderer. The renderer holds it across
+   * frames; it is re-pushed internally after any re-init so it survives
+   * resize updates.
+   */
+  setCapabilities(caps: RenderCapabilities): void;
   reduce(
     ct: number,
     buf: number,
@@ -59,6 +72,7 @@ import { compiled } from "./wasm.ts";
 export async function createTermNative(
   w: number,
   h: number,
+  caps: RenderCapabilities,
 ): Promise<Native> {
   let memory = new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
@@ -102,6 +116,7 @@ export async function createTermNative(
     ): void;
     output(ct: number): number;
     length(ct: number): number;
+    set_capabilities(ct: number, caps: number): void;
     Clay_SetPointerState(vec: number, down: number): void;
     pointer_over_count(): number;
     pointer_over_id_string_length(index: number): number;
@@ -122,6 +137,15 @@ export async function createTermNative(
 
   let statePtr!: number;
   let opsBuf = 0;
+  let capFlags = 0;
+
+  function pushCaps(): void {
+    ct.set_capabilities(statePtr, capFlags);
+  }
+
+  function setCaps(next: RenderCapabilities): void {
+    capFlags = next.syncOutput ? RENDER_CAP_SYNC_OUTPUT : 0;
+  }
 
   // Renderer state and the fixed transfer buffer share linear memory as
   // [heap: state][opsBuf]; opsBuf moves when the state size changes. Memory is
@@ -138,7 +162,9 @@ export async function createTermNative(
     }
     statePtr = ct.init(heap, lw, lh);
     opsBuf = (heap + size + 3) & ~3;
+    pushCaps();
   }
+  setCaps(caps);
   layout(w, h);
 
   return {
@@ -151,6 +177,10 @@ export async function createTermNative(
     },
     update(uw: number, uh: number): void {
       layout(uw, uh);
+    },
+    setCapabilities(next: RenderCapabilities): void {
+      setCaps(next);
+      pushCaps();
     },
     reduce: ct.reduce,
     output: ct.output,
