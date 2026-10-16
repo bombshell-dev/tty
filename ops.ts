@@ -1,4 +1,4 @@
-import type { PointerShape } from "./pointer-shape.ts";
+import { type PointerShape, pointerShapeIndex } from "./pointer-shape.ts";
 
 export type { PointerShape };
 
@@ -38,6 +38,7 @@ const PROP_BORDER = 0x08;
 const PROP_CLIP = 0x10;
 const PROP_FLOATING = 0x20;
 const PROP_TRANSITION = 0x40;
+const PROP_CURSOR = 0x80;
 
 const encoder = new TextEncoder();
 
@@ -156,6 +157,8 @@ export function pack(
         if (op.clip) mask |= PROP_CLIP;
         if (op.floating) mask |= PROP_FLOATING;
         if (op.transition) mask |= PROP_TRANSITION;
+        let cursor = pointerShapeIndex(op.cursor);
+        if (cursor !== undefined) mask |= PROP_CURSOR;
         view.setUint32(o, mask, true);
         o += 4;
 
@@ -282,6 +285,11 @@ export function pack(
           o += 1;
           view.setUint8(o, t.interactive ? 1 : 0);
           o += 1;
+        }
+
+        if (cursor !== undefined) {
+          view.setUint32(o, cursor, true);
+          o += 4;
         }
         break;
       }
@@ -496,7 +504,6 @@ export interface Text {
 interface Snapshot {
   directive: typeof OP_SNAPSHOT;
   data: Uint8Array;
-  shapes?: readonly (readonly [id: string, shape: string])[];
 }
 
 export type Op = OpenElement | Text | CloseElement | Snapshot;
@@ -541,6 +548,7 @@ function packSize(ops: Op[]): number {
         // x, y, expand width/height, parent, attach/pointer, clip/z
         if (op.floating) n += 7 * 4;
         if (op.transition) n += 8;
+        if (pointerShapeIndex(op.cursor) !== undefined) n += 4;
         break;
       }
       case OP_TEXT: {
@@ -557,19 +565,7 @@ export function snapshot(ops: Op[]): Op {
   let size = packSize(ops);
   let buf = new ArrayBuffer(size);
   let words = pack(ops, buf, 0, size);
-  let data = new Uint8Array(buf, 0, words * 4);
-  let shapes: (readonly [string, string])[] = [];
-  for (let op of ops) {
-    if (op.directive === OP_SNAPSHOT) {
-      if (op.shapes) shapes.push(...op.shapes);
-    } else if (
-      op.directive === OP_OPEN_ELEMENT && op.cursor !== undefined
-    ) {
-      shapes.push([op.id, op.cursor]);
-    }
-  }
-  if (shapes.length === 0) return { directive: OP_SNAPSHOT, data };
-  return { directive: OP_SNAPSHOT, data, shapes };
+  return { directive: OP_SNAPSHOT, data: new Uint8Array(buf, 0, words * 4) };
 }
 
 const TP_X = 1;

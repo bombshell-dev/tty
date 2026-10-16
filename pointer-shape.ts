@@ -1,5 +1,3 @@
-import type { Op } from "./ops.ts";
-
 export const POINTER_SHAPES = [
   "default",
   "none",
@@ -43,39 +41,14 @@ export const POINTER_SHAPES = [
  */
 export type PointerShape = typeof POINTER_SHAPES[number];
 
-const KNOWN: ReadonlySet<string> = new Set(POINTER_SHAPES);
+const INDEX: ReadonlyMap<unknown, number> = new Map(
+  POINTER_SHAPES.map((shape, i) => [shape, i]),
+);
 
-export function resolvePointerShape(
-  ops: readonly Op[],
-  over: readonly string[],
-): PointerShape {
-  let best = -1;
-  let shape: PointerShape = "default";
-  for (let op of ops) {
-    if ("data" in op) {
-      if (!op.shapes) continue;
-      for (let [id, value] of op.shapes) {
-        if (!KNOWN.has(value)) continue;
-        let i = over.lastIndexOf(id);
-        if (i > best) {
-          best = i;
-          shape = value as PointerShape;
-        }
-      }
-    } else if ("cursor" in op && op.cursor !== undefined) {
-      if (!KNOWN.has(op.cursor)) continue;
-      let i = over.lastIndexOf(op.id);
-      if (i > best) {
-        best = i;
-        shape = op.cursor;
-      }
-    }
-  }
-  return shape;
+export function pointerShapeIndex(shape: unknown): number | undefined {
+  return INDEX.get(shape);
 }
 
-const encoder = new TextEncoder();
-
-export function osc22(shape: PointerShape): Uint8Array {
-  return encoder.encode(`\x1b]22;${shape}\x1b\\`);
-}
+export const POINTER_SHAPE_RESET: Uint8Array = new TextEncoder().encode(
+  "\x1b]22;default\x1b\\",
+);

@@ -1,12 +1,14 @@
 import { type Op, pack } from "./ops.ts";
-import { type BoundingBox, createTermNative } from "./term-native.ts";
+import {
+  type BoundingBox,
+  createTermNative,
+  POINTER_ABSENT,
+  POINTER_DOWN,
+  POINTER_UP,
+} from "./term-native.ts";
 import type { InputEvent } from "./input.ts";
 import type { Capabilities, Rgb, TerminalInfo } from "./terminfo.ts";
-import {
-  osc22,
-  type PointerShape,
-  resolvePointerShape,
-} from "./pointer-shape.ts";
+import { POINTER_SHAPE_RESET } from "./pointer-shape.ts";
 
 export type { BoundingBox };
 
@@ -165,7 +167,6 @@ export interface Term {
 
 export async function createTerm(options: TermOptions): Promise<Term> {
   let { width, height, terminfo } = options;
-  let emittedShape: PointerShape = "default";
 
   let currentCaps: RuntimeCapabilities = runtimeFromStatic(
     terminfo?.capabilities ?? {
@@ -183,6 +184,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
 
   let native = await createTermNative(width, height, {
     syncOutput: currentCaps.syncOutput,
+    pointerShape: currentCaps.pointerShape,
   });
   let { memory } = native;
 
@@ -216,12 +218,18 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         dt = now - lastRenderAt;
       }
       lastRenderAt = now;
-      native.reduce(native.statePtr, native.opsBuf, len, mode, row, dt);
-
-      if (options?.pointer) {
-        let { x, y, down } = options.pointer;
-        native.setPointer(x, y, down);
-      }
+      let pointer = options?.pointer;
+      native.reduce(
+        native.statePtr,
+        native.opsBuf,
+        len,
+        mode,
+        row,
+        dt,
+        pointer?.x ?? 0,
+        pointer?.y ?? 0,
+        pointer ? (pointer.down ? POINTER_DOWN : POINTER_UP) : POINTER_ABSENT,
+      );
 
       let output = new Uint8Array(
         memory.buffer,
@@ -229,22 +237,10 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         native.length(native.statePtr),
       );
 
-      let overIds = options?.pointer ? native.getPointerOverIds() : [];
-      let current = new Set(overIds);
+      let current = new Set(
+        options?.pointer ? native.getPointerOverIds() : [],
+      );
 
-      if (currentCaps.pointerShape) {
-        let shape: PointerShape = overIds.length > 0
-          ? resolvePointerShape(ops, overIds)
-          : "default";
-        if (shape !== emittedShape) {
-          emittedShape = shape;
-          let seq = osc22(shape);
-          let joined = new Uint8Array(output.length + seq.length);
-          joined.set(output);
-          joined.set(seq, output.length);
-          output = joined;
-        }
-      }
       let down = options?.pointer?.down ?? false;
       let events: PointerEvent[] = [];
 
@@ -326,17 +322,16 @@ export async function createTerm(options: TermOptions): Promise<Term> {
           }
         }
 
-        if (next.syncOutput !== currentCaps.syncOutput) {
-          native.setCapabilities({ syncOutput: next.syncOutput });
-        }
         if (
-          currentCaps.pointerShape && !next.pointerShape &&
-          emittedShape !== "default"
+          next.syncOutput !== currentCaps.syncOutput ||
+          next.pointerShape !== currentCaps.pointerShape
         ) {
-          emittedShape = "default";
-          out.push(osc22("default"));
+          let reset = native.setCapabilities({
+            syncOutput: next.syncOutput,
+            pointerShape: next.pointerShape,
+          });
+          if (reset) out.push(POINTER_SHAPE_RESET.slice());
         }
-
         currentCaps = next;
         if (bytes.length) out.push(bytes);
       }
