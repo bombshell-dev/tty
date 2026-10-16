@@ -94,7 +94,8 @@ static int name_is(const uint8_t *table, int table_len, int off,
 
 /* Extended capability block (after the standard sections). Returns 0 on
  * success, nonzero when the declared structure runs out of bounds.
- * Grants flag bits into *flags for RGB/Tc/Su booleans and Smulx. */
+ * Grants flag bits into *flags for RGB/Tc/Su booleans and Smulx/Sync
+ * strings. */
 static int parse_ext(const uint8_t *b, int len, int off, int numw,
                      uint32_t *flags) {
   if (off & 1)
@@ -158,6 +159,8 @@ static int parse_ext(const uint8_t *b, int len, int off, int numw,
         continue;
       if (name_is(table, table_len, noff, "Smulx")) {
         *flags |= TERMINFO_STYLED_UNDERLINE;
+      } else if (name_is(table, table_len, noff, "Sync")) {
+        *flags |= TERMINFO_SYNC;
       }
     }
   }
@@ -273,9 +276,10 @@ int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *ti) {
 
   /* The entry describes the terminal completely for the capabilities it
    * owns: replace them, leave probe-only flags and theme fields alone. */
-  uint32_t keep = ~(TERMINFO_TRUECOLOR | TERMINFO_BACK_COLOR_ERASE |
-                    TERMINFO_AUTO_RIGHT_MARGIN | TERMINFO_EAT_NEWLINE_GLITCH |
-                    TERMINFO_ALTSCREEN | TERMINFO_STYLED_UNDERLINE);
+  uint32_t keep =
+      ~(TERMINFO_TRUECOLOR | TERMINFO_BACK_COLOR_ERASE |
+        TERMINFO_AUTO_RIGHT_MARGIN | TERMINFO_EAT_NEWLINE_GLITCH |
+        TERMINFO_ALTSCREEN | TERMINFO_STYLED_UNDERLINE | TERMINFO_SYNC);
   ti->flags = (ti->flags & keep) | flags;
   ti->colors = (uint32_t)colors;
   ti->generation++;
