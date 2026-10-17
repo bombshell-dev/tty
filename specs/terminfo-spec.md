@@ -180,18 +180,20 @@ interface Capabilities {
   readonly xenl: boolean;
   readonly altScreen: boolean;
   readonly styledUnderline: boolean;
+  readonly syncOutput: boolean;
 }
 ```
 
-| Field             | Source                                                              |
-| ----------------- | ------------------------------------------------------------------- |
-| `colors`          | `max_colors` from terminfo; 256 at baseline                         |
-| `trueColor`       | `RGB`/`Tc` extended caps; `COLORTERM` env evidence; probe overrides |
-| `bce`             | `bce` boolean cap                                                   |
-| `autoMargin`      | `am` boolean cap                                                    |
-| `xenl`            | `xenl` boolean cap                                                  |
-| `altScreen`       | `smcup` string present                                              |
-| `styledUnderline` | `Su` boolean or `Smulx` string                                      |
+| Field             | Source                                                                  |
+| ----------------- | ----------------------------------------------------------------------- |
+| `colors`          | `max_colors` from terminfo; 256 at baseline                             |
+| `trueColor`       | `RGB`/`Tc` extended caps; `COLORTERM` env evidence; probe overrides     |
+| `bce`             | `bce` boolean cap                                                       |
+| `autoMargin`      | `am` boolean cap                                                        |
+| `xenl`            | `xenl` boolean cap                                                      |
+| `altScreen`       | `smcup` string present                                                  |
+| `styledUnderline` | `Su` boolean or `Smulx` string                                          |
+| `syncOutput`      | `Sync` extended cap; `TMUX` env evidence (§7.2); probe overrides (§6.3) |
 
 Key sequences (`key_*` capabilities) are not stored here. The input parser reads
 them directly from the raw terminfo bytes in `TerminalInfo.keys` at
@@ -252,20 +254,20 @@ type CapabilityEvent =
   };
 ```
 
-Each variant maps to one probe query. The `key` identifies the capability; the
-`value` is the terminal's answer. Capability references per
+Each variant maps to at least one probe query. The `key` identifies the
+capability; the `value` is the terminal's answer. Capability references per
 [terminfo.dev](https://terminfo.dev):
 
-| `key`              | Query                | terminfo.dev slug                                                                               |
-| ------------------ | -------------------- | ----------------------------------------------------------------------------------------------- |
-| `foreground-color` | OSC 10               | [`osc-10-fg-color-query`](https://terminfo.dev/extensions/osc-10-fg-color-query)                |
-| `background-color` | OSC 11               | [`osc-11-bg-color-query`](https://terminfo.dev/extensions/osc-11-bg-color-query)                |
-| `cursor-color`     | OSC 12 or OSC 21     | [`osc-12-cursor-color`](https://terminfo.dev/extensions/osc-12-cursor-color)                    |
-| `colordepth`       | XTGETTCAP `RGB`/`Tc` | [`24-bit-truecolor`](https://terminfo.dev/extensions/24-bit-truecolor)                          |
-| `sync-output`      | DECRPM mode 2026     | [`decset-2026-synchronized-output`](https://terminfo.dev/modes/decset-2026-synchronized-output) |
-| `kitty-keyboard`   | `CSI ? u`            | [`kitty-keyboard-protocol`](https://terminfo.dev/extensions/kitty-keyboard-protocol)            |
-| `kitty-graphics`   | APC `_G…`            | [`kitty-graphics-protocol`](https://terminfo.dev/extensions/kitty-graphics-protocol)            |
-| `pointer-shape`    | OSC 22               | [`osc-22-pointer-shape`](https://terminfo.dev/extensions/osc-22-pointer-shape)                  |
+| `key`              | Query                              | terminfo.dev slug                                                                               |
+| ------------------ | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `foreground-color` | OSC 10                             | [`osc-10-fg-color-query`](https://terminfo.dev/extensions/osc-10-fg-color-query)                |
+| `background-color` | OSC 11                             | [`osc-11-bg-color-query`](https://terminfo.dev/extensions/osc-11-bg-color-query)                |
+| `cursor-color`     | OSC 12 or OSC 21                   | [`osc-12-cursor-color`](https://terminfo.dev/extensions/osc-12-cursor-color)                    |
+| `colordepth`       | XTGETTCAP `RGB`/`Tc`               | [`24-bit-truecolor`](https://terminfo.dev/extensions/24-bit-truecolor)                          |
+| `sync-output`      | DECRPM mode 2026; XTGETTCAP `Sync` | [`decset-2026-synchronized-output`](https://terminfo.dev/modes/decset-2026-synchronized-output) |
+| `kitty-keyboard`   | `CSI ? u`                          | [`kitty-keyboard-protocol`](https://terminfo.dev/extensions/kitty-keyboard-protocol)            |
+| `kitty-graphics`   | APC `_G…`                          | [`kitty-graphics-protocol`](https://terminfo.dev/extensions/kitty-graphics-protocol)            |
+| `pointer-shape`    | OSC 22                             | [`osc-22-pointer-shape`](https://terminfo.dev/extensions/osc-22-pointer-shape)                  |
 
 **Color values.** `Rgb` values in probe responses MUST be recognized in at least
 the `rgb:RR/GG/BB` (1–4 hex digits per channel) and `#`-hash forms.
@@ -277,6 +279,16 @@ D }` where `D` is derived from the static
 `Capabilities.colors` field: `"16"` when `colors <= 16`, `"256"` otherwise. This
 preserves TINV-3: the probe response takes precedence over static evidence,
 including in the negative direction.
+
+**XTGETTCAP `Sync`.** A reply carrying a value for `Sync` emits
+`{ key: "sync-output", value: true }`. An invalid-capability reply for `Sync`
+emits `{ key: "sync-output", value: false }`. The value carried by a positive
+reply is the terminal's own synchronization sequence — the iTerm2 DCS form
+(`DCS = 1 s` / `DCS = 2 s`) for some terminals, `CSI ? 2026 h`/`l` for others.
+The value is discarded in v1: only support is recorded, and the renderer emits
+the DEC mode 2026 form (renderer-spec §7.9). A terminal that advertises only the
+DCS form therefore receives 2026-form bytes it ignores; this bounded cost is
+accepted.
 
 **OSC 21.** An OSC 21 reply may supply any subset of `foreground-color`,
 `background-color`, and `cursor-color`. The parser emits one `CapabilityEvent`
@@ -331,8 +343,12 @@ With no terminfo bytes, no environment evidence, and no probe responses,
 | `xenl`            | `true`  |
 | `altScreen`       | `true`  |
 | `styledUnderline` | `false` |
+| `syncOutput`      | `false` |
 
 Truecolor is not assumed at baseline. Per TINV-3, it requires positive evidence.
+The same holds for synchronized output: no frame is wrapped until a `Sync`
+extended capability, `TMUX` environment evidence, or a probe response raises it
+(§7.2, §6.3).
 
 ### 7.2 Environment evidence
 
@@ -340,6 +356,11 @@ Truecolor is not assumed at baseline. Per TINV-3, it requires positive evidence.
 entry:
 
 - `COLORTERM` equal to `truecolor` or `24bit` sets `trueColor: true`.
+- `TMUX` set to a non-empty value sets `syncOutput: true`. A running tmux
+  consumes DEC mode 2026 from applications running inside it and translates it
+  to the outer terminal's synchronization mechanism (the tmux `Sync` terminfo
+  capability and `sync` terminal feature), so its presence is positive evidence
+  even for tmux releases that do not themselves answer the DECRPM 2026 probe.
 
 Environment evidence outranks the terminfo entry and is outranked by probe
 responses (TINV-3).
@@ -368,7 +389,7 @@ observe only the resulting `Capabilities`.
 - Both storage formats MUST be supported: legacy (magic `0432`, 16-bit numbers)
   and extended number format (magic `01036`, 32-bit numbers).
 - The extended-capability string table MUST be parsed for the user-defined
-  capabilities `RGB`, `Tc`, `Su`, and `Smulx`.
+  capabilities `RGB`, `Tc`, `Su`, `Smulx`, and `Sync`.
 - All reads are bounds-checked against `len`. Out-of-range offsets, truncated
   sections, and odd-length string tables yield the parse failure path (TINV-2).
 - The maximum accepted size is 32 768 bytes, the extended ncurses format limit.
@@ -398,13 +419,14 @@ order:
 | 5  | Pointer shape       | `OSC 22 ; ?__current__ ST`                           | `pointer-shape`       |
 | 6  | Truecolor caps      | `DCS + q 524742 ; 5463 ST` (XTGETTCAP `RGB;Tc`)      | `colordepth`          |
 | 7  | Synchronized output | `CSI ? 2026 $ p` (DECRQM)                            | `sync-output`         |
-| 8  | Kitty keyboard      | `CSI ? u`                                            | `kitty-keyboard`      |
-| 9  | Kitty graphics      | `APC _G i=31,s=1,v=1,a=q,t=d,f=24 ; AAAA ST`         | `kitty-graphics`      |
-| 10 | **Fence:** DA1      | `CSI c`                                              | (internal only)       |
+| 8  | Sync terminfo cap   | `DCS + q 53796e63 ST` (XTGETTCAP `Sync`)             | `sync-output`         |
+| 9  | Kitty keyboard      | `CSI ? u`                                            | `kitty-keyboard`      |
+| 10 | Kitty graphics      | `APC _G i=31,s=1,v=1,a=q,t=d,f=24 ; AAAA ST`         | `kitty-graphics`      |
+| 11 | **Fence:** DA1      | `CSI c`                                              | (internal only)       |
 
 Terminals answer queries in order and ignore queries they do not understand. DA1
 is answered by every terminal, so its response marks the probe complete. Any of
-queries 1–9 not yet answered when the DA1 reply arrives will never be answered,
+queries 1–10 not yet answered when the DA1 reply arrives will never be answered,
 and the renderer keeps their current values.
 
 The batch is safe to emit unconditionally: every query is either answered or

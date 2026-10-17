@@ -86,7 +86,6 @@ function applyUpdate(
 function runtimeFromStatic(caps: Capabilities): RuntimeCapabilities {
   return Object.freeze<RuntimeCapabilities>({
     ...caps,
-    syncOutput: false,
     kittyKeyboard: false,
     kittyGraphics: false,
     pointerShape: false,
@@ -164,12 +163,6 @@ export interface Term {
 export async function createTerm(options: TermOptions): Promise<Term> {
   let { width, height, terminfo } = options;
 
-  let native = await createTermNative(
-    width,
-    height,
-  );
-  let { memory } = native;
-
   let currentCaps: RuntimeCapabilities = runtimeFromStatic(
     terminfo?.capabilities ?? {
       colors: 256,
@@ -179,8 +172,14 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       xenl: true,
       altScreen: true,
       styledUnderline: false,
+      syncOutput: false,
     },
   );
+
+  let native = await createTermNative(width, height, {
+    syncOutput: currentCaps.syncOutput,
+  });
+  let { memory } = native;
 
   let prev = new Set<string>();
   let pressed = new Set<string>();
@@ -309,6 +308,9 @@ export async function createTerm(options: TermOptions): Promise<Term> {
           }
         }
 
+        if (next.syncOutput !== currentCaps.syncOutput) {
+          native.setCapabilities({ syncOutput: next.syncOutput });
+        }
         currentCaps = next;
         if (bytes.length) out.push(bytes);
       }
