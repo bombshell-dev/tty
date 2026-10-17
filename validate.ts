@@ -14,6 +14,15 @@ const i16 = Type.Integer({ minimum: -32768, maximum: 32767 });
  * Accept both signed and unsigned representations of the same bit pattern. */
 const rgba = Type.Integer({ minimum: -0x80000000, maximum: 0xFFFFFFFF });
 
+/* §8.5 hex color string: "#" followed by exactly 3, 4, 6, or 8 hex digits.
+ * Mirrors the HEX_COLOR grammar in ops.ts. */
+const hexColor = Type.String({
+  pattern: "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+});
+
+/* A §8.5 color value: packed ARGB number or a hex color string. */
+const color = Type.Union([rgba, hexColor]);
+
 /* ── Sizing axis (discriminated union) ────────────────────────────── */
 
 const Fit = Type.Object({
@@ -84,14 +93,14 @@ const BorderSide = Type.Union([
   u8,
   Type.Object({
     width: u8,
-    color: Type.Optional(rgba),
-    bg: Type.Optional(rgba),
+    color: Type.Optional(color),
+    bg: Type.Optional(color),
   }),
 ]);
 
 const Border = Type.Object({
-  color: rgba,
-  bg: Type.Optional(rgba),
+  color,
+  bg: Type.Optional(color),
   left: Type.Optional(BorderSide),
   right: Type.Optional(BorderSide),
   top: Type.Optional(BorderSide),
@@ -186,7 +195,7 @@ const OpenElement = Type.Object({
   directive: Type.Literal(0x02),
   id: Type.String(),
   layout: Type.Optional(Layout),
-  bg: Type.Optional(rgba),
+  bg: Type.Optional(color),
   cornerRadius: Type.Optional(CornerRadius),
   border: Type.Optional(Border),
   clip: Type.Optional(Clip),
@@ -197,8 +206,8 @@ const OpenElement = Type.Object({
 const TextOp = Type.Object({
   directive: Type.Literal(0x03),
   content: Type.String(),
-  color: Type.Optional(rgba),
-  bg: Type.Optional(rgba),
+  color: Type.Optional(color),
+  bg: Type.Optional(color),
   fontSize: Type.Optional(u8),
   fontId: Type.Optional(u8),
   wrap: Type.Optional(u8),

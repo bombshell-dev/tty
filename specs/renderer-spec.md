@@ -703,7 +703,7 @@ fit(min?: number, max?: number): SizingAxis
 The element sizes to fit its content, optionally constrained by minimum and
 maximum bounds.
 
-### 8.5 Color helper
+### 8.5 Color values
 
 ```
 rgba(r: number, g: number, b: number, a?: number): number
@@ -712,6 +712,41 @@ rgba(r: number, g: number, b: number, a?: number): number
 Packs color channel values (each 0–255) into a single 32-bit integer in ARGB
 format. Alpha defaults to 255 (fully opaque). The returned value is used
 wherever the directive model expects a color.
+
+**Color values.** A color value is either a packed ARGB `number`, as
+produced by `rgba()`, or a hexadecimal color `string`. Every directive field
+described as a color — `open({ bg })`, `border.color`, `border.bg`, the
+`color` and `bg` fields of structured border sides, and
+`text({ color, bg })` — accepts both forms. The forms are exactly
+equivalent: each hex string is converted to its packed ARGB value at the
+transfer-encoding boundary (§9.2), so hex strings MUST NOT appear in the
+transfer encoding. The wire format, snapshot encoding, and cell
+representation are unchanged by this acceptance, and the numeric and string
+forms of the same color produce bit-identical packed values.
+
+**Hex grammar.** A hex color string is `#` followed by exactly 3, 4, 6, or 8
+hexadecimal digits, case-insensitive. The `#` is required. The 3- and
+4-digit forms expand by doubling each digit: `#f80` is `#ff8800`, and
+`#f80a` is `#ff8800aa`. The 6- and 8-digit forms are taken literally. Alpha
+defaults to 255 in the 3- and 6-digit forms; the 4- and 8-digit forms supply
+alpha as their final digit pair (or digit, doubled).
+
+**Invalid hex.** A string that does not match the hex grammar is invalid
+directive input (§9.1). `validate()` reports it as an invalid field value.
+The packer MUST reject a directive array containing an invalid hex color
+string by throwing a `TypeError` before producing any bytes, rather than
+emitting a partially decoded or garbage color value.
+
+**Static checking.** In TypeScript, color fields are typed `number | string`.
+The directive constructors check string literals against the hex grammar at
+compile time — the type-level equivalent of `#${string{3,4,6,8}}` — so an
+invalid hex literal is a type error at the call site. Strings whose value is
+only known at runtime (colors read from a theme or configuration, for
+example) pass the type check as `string` and are checked by `validate()`
+and the packer at render time. The string form is deliberately restricted
+to the hex grammar for now: a future version may accept the broader CSS
+Color 4 syntax, which is why the static type remains the plain
+`number | string` shape rather than a narrower prefix-pattern type.
 
 ### 8.6 Term update
 
@@ -936,7 +971,8 @@ The `open()` constructor currently accepts the following property groups in its
   `bottom`, `left`) accepts either a scalar width or a structured object
   `{ width, color?, bg? }`. The shared `color` field is required and is the
   fallback foreground for every side; the optional shared `bg` field is the
-  fallback border-cell background for every side
+  fallback border-cell background for every side. Color fields accept the
+  color values of §8.5 (packed ARGB number or hex string)
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
 - **`clip`** — Declares the element as a clip region (see §7.5). Currently
@@ -998,7 +1034,8 @@ input or lets it pass through, `clipTo` controls inherited clipping, and
 
 The `text()` constructor accepts: `color`, `bg`, `fontSize`, `letterSpacing`,
 `lineHeight`, and attribute flags (`bold`, `italic`, `underline`,
-`strikethrough`).
+`strikethrough`). The `color` and `bg` fields accept the color values of
+§8.5 (packed ARGB number or hex string).
 
 These property groups represent the current implementation surface. New groups
 and fields have been added incrementally and more may follow.
@@ -1157,8 +1194,9 @@ acknowledged gaps, and the approach may evolve.
 ### 12.5 Validation and packing
 
 **`validate(ops)`** — A public API function that checks a directive array for
-structural errors (unbalanced open/close pairs, invalid field types). Exported
-and used in tests.
+structural errors (unbalanced open/close pairs, invalid field types —
+including color fields, which must be a packed ARGB number or a §8.5 hex color string).
+Exported and used in tests.
 
 **`pack(ops, mem, offset)`** — An internal function that serializes a directive
 array into the transfer encoding described in Section 12.1. Currently exported
