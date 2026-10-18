@@ -197,8 +197,6 @@ describe("CSS color strings", () => {
         "color-mix(in srgb, red, blue)",
         "rgb(from red r g b)",
         "device-cmyk(0 0 0 1)",
-        "Canvas",
-        "CanvasText",
         "currentcolor",
         " red",
         "red ",
@@ -215,5 +213,63 @@ describe("CSS color strings", () => {
       expect([color, error instanceof TypeError]).toEqual([color, true]);
       expect((error as Error).message).toContain(color);
     }
+  });
+});
+
+describe("system colors", () => {
+  function packed(ops: Parameters<typeof pack>[0]): Uint8Array {
+    let memory = new ArrayBuffer(512);
+    let n = pack(ops, memory, 0);
+    return new Uint8Array(memory, 0, n * 4);
+  }
+
+  let box = (bg: string | number) => [open("box", { bg }), close()];
+  let border = (color: string | number, bg?: string | number) => [
+    open("box", { border: { color, bg, top: 1 } }),
+    close(),
+  ];
+
+  it("packs keywords case-insensitively and aliases identically", () => {
+    expect(packed([text("Hi", { color: "linktext", bg: "MARK" })])).toEqual(
+      packed([text("Hi", { color: "LinkText", bg: "Mark" })]),
+    );
+    expect(packed(box("Highlight"))).toEqual(packed(box("SelectedItem")));
+    expect(packed(border("GrayText"))).toEqual(packed(border("ButtonBorder")));
+  });
+
+  it("packs a default keyword in a text fg like an omitted color", () => {
+    for (let color of ["Canvas", "CanvasText", "Field"]) {
+      expect([color, packed([text("Hi", { color })])]).toEqual([
+        color,
+        packed([text("Hi")]),
+      ]);
+    }
+  });
+
+  it("packs a default keyword in a bg differently from an omitted bg", () => {
+    expect(packed([text("Hi", { bg: "Canvas" })])).not.toEqual(
+      packed([text("Hi")]),
+    );
+    expect(packed(border("red", "CanvasText"))).not.toEqual(
+      packed(border("red")),
+    );
+  });
+
+  it("never collides with an sRGB color", () => {
+    expect(packed([text("Hi", { color: "LinkText" })])).not.toEqual(
+      packed([text("Hi", { color: rgba(0, 1, 4) })]),
+    );
+    expect(packed(box("Canvas"))).not.toEqual(packed(box(rgba(0, 0, 0, 128))));
+    expect(packed(box("LinkText"))).not.toEqual(
+      packed(box(rgba(0, 1, 4, 128))),
+    );
+    expect(packed(border("LinkText", "Mark"))).not.toEqual(
+      packed(border(rgba(0, 1, 4), rgba(0, 1, 3))),
+    );
+  });
+
+  it("snapshots system colors like the directives they came from", () => {
+    let ops = [open("box", { bg: "Mark" }), text("Hi", { color: "Mark" })];
+    expect((snapshot(ops) as { data: Uint8Array }).data).toEqual(packed(ops));
   });
 });

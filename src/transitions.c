@@ -32,6 +32,8 @@ static float ease_in_out(float t) {
 static float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
 static Clay_Color lerp_color(Clay_Color a, Clay_Color b, float t) {
+  if (ct_color_is_terminal(a) || ct_color_is_terminal(b))
+    return t < 0.5f ? a : b;
   Clay_Color out;
   out.r = lerpf(a.r, b.r, t);
   out.g = lerpf(a.g, b.g, t);

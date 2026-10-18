@@ -1,5 +1,9 @@
 import type { names } from "hueful";
-import { resolveColor } from "./color.ts";
+import {
+  resolveColor,
+  type systemColors,
+  type TerminalColor,
+} from "./color.ts";
 import { type PointerShape, pointerShapeIndex } from "./pointer-shape.ts";
 
 export type { PointerShape };
@@ -41,6 +45,13 @@ const PROP_CLIP = 0x10;
 const PROP_FLOATING = 0x20;
 const PROP_TRANSITION = 0x40;
 const PROP_CURSOR = 0x80;
+const PROP_BG_TERMINAL = 0x100;
+
+/* Color words (§12.1): bit 31 marks a terminal-themed color, either the
+ * default (no low bits) or a palette entry (PALETTE | index). */
+const TERMINAL = 0x80000000;
+const PALETTE = 0x100;
+const BG_KEEP = 0x40000000;
 
 const encoder = new TextEncoder();
 
@@ -91,7 +102,7 @@ function sideFg(side: BorderSide | undefined, shared: Color): number {
   let color = typeof side === "object" && side.color !== undefined
     ? side.color
     : shared;
-  return colorValue(color) & 0x00FFFFFF;
+  return colorWord(color);
 }
 
 function sideBg(
@@ -99,8 +110,7 @@ function sideBg(
   shared: Color | undefined,
 ): number {
   let bg = typeof side === "object" && side.bg !== undefined ? side.bg : shared;
-  // ATTR_DEFAULT sentinel (bit 31 set) means "keep the existing cell bg"
-  return bg === undefined ? 0x80000000 : colorValue(bg) & 0x00FFFFFF;
+  return bg === undefined ? BG_KEEP : colorWord(bg);
 }
 
 function packString(
@@ -151,9 +161,11 @@ export function pack(
         let bytes = encoder.encode(op.id);
         o = packString(view, bytes, o, end, "element id");
 
+        let bg = op.bg === undefined ? undefined : colorValue(op.bg);
         let mask = 0;
         if (op.layout) mask |= PROP_LAYOUT;
-        if (op.bg !== undefined) mask |= PROP_BG_COLOR;
+        if (typeof bg === "number") mask |= PROP_BG_COLOR;
+        if (typeof bg === "object") mask |= PROP_BG_COLOR | PROP_BG_TERMINAL;
         if (op.cornerRadius) mask |= PROP_CORNER_RADIUS;
         if (op.border) mask |= PROP_BORDER;
         if (op.clip) mask |= PROP_CLIP;
@@ -197,8 +209,12 @@ export function pack(
           o += 4;
         }
 
-        if (op.bg !== undefined) {
-          view.setUint32(o, colorValue(op.bg), true);
+        if (bg !== undefined) {
+          view.setUint32(
+            o,
+            typeof bg === "number" ? bg : terminalWord(bg),
+            true,
+          );
           o += 4;
         }
 
@@ -305,23 +321,25 @@ export function pack(
       case OP_TEXT: {
         view.setUint32(o, OP_TEXT, true);
         o += 4;
-        // No explicit color: leave the terminal default foreground by writing
-        // 0 and setting ATTR_DEFAULT (0x80 in the attrs byte). The C path ORs
-        // it into fg and emit_attr skips the foreground SGR (mirrors unset bg).
-        let textDefault = op.color === undefined;
+        // The fg word's bit 31 travels in the attrs byte (0x80); the C path
+        // ORs the attrs byte back over the high byte. No color is the
+        // terminal default.
+        let color = op.color === undefined
+          ? { ansi: "default" as const }
+          : colorValue(op.color);
+        let terminal = typeof color === "object";
         view.setUint32(
           o,
-          op.color === undefined ? 0 : colorValue(op.color),
+          typeof color === "number" ? color : terminalWord(color) & 0x00FFFFFF,
           true,
         );
         o += 4;
 
-        // No explicit bg: leave the terminal default bg by writing
-        // 0 and setting ATTR_DEFAULT (0x80 in the attrs byte). The C path ORs
-        // it into bg and emit_attr skips the background SGR
-        let bg = op.bg === undefined ? 0x80000000 : colorValue(op.bg) &
-          0x00FFFFFF;
-        view.setUint32(o, bg, true);
+        view.setUint32(
+          o,
+          op.bg === undefined ? BG_KEEP : colorWord(op.bg),
+          true,
+        );
         o += 4;
 
         view.setUint32(
@@ -329,7 +347,7 @@ export function pack(
           (op.fontSize ?? 1) |
             ((op.fontId ?? 0) << 8) |
             ((op.wrap ?? 0) << 16) |
-            (((op.attrs ?? 0) | (textDefault ? 0x80 : 0)) << 24),
+            (((op.attrs ?? 0) | (terminal ? 0x80 : 0)) << 24),
           true,
         );
         o += 4;
@@ -368,16 +386,25 @@ export function rgba(r: number, g: number, b: number, a = 255): number {
 export type Color = number | string;
 
 /**
- * Resolves a color value to the packed ARGB number the transfer encoding
- * carries (§8.5). Numbers pass through; strings resolve through the CSS
- * color grammar. Invalid strings throw rather than decoding to a garbage
- * color.
+ * Resolves a color value to a packed ARGB number or a terminal-themed color
+ * (§8.5). Numbers pass through; strings resolve through the CSS color
+ * grammar. Invalid strings throw rather than decoding to a garbage color.
  */
-function colorValue(color: Color): number {
+function colorValue(color: Color): number | TerminalColor {
   if (typeof color === "number") return color;
   let value = resolveColor(color);
   if (value === undefined) throw new TypeError(`invalid color: "${color}"`);
   return value;
+}
+
+function terminalWord(color: TerminalColor): number {
+  return color.ansi === "default" ? TERMINAL : TERMINAL | PALETTE | color.ansi;
+}
+
+/* The color word text bg and border attributes carry; alpha is dropped. */
+function colorWord(color: Color): number {
+  let value = colorValue(color);
+  return typeof value === "number" ? value & 0x00FFFFFF : terminalWord(value);
 }
 
 export type SizingAxis =
@@ -539,9 +566,9 @@ export type Op = OpenElement | Text | CloseElement | Snapshot;
  * Compile-time color checking (§8.5). A string literal assigned to a color
  * field must be a hex color (the type-level equivalent of
  * `#${string{3,4,6,8}}`), start with a supported color function, or be a
- * named color. Strings that are not literals (computed colors) and values
- * already narrowed to `#${string}` pass through; the runtime grammar check
- * in validate()/pack() is normative for them. Plain unions like
+ * named or system color. Strings that are not literals (computed colors) and
+ * values already narrowed to `#${string}` pass through; the runtime grammar
+ * check in validate()/pack() is normative for them. Plain unions like
  * `HexRun<string>` would need ~16^6 union members, which TypeScript cannot
  * represent (TS2590), so hex checking runs per-character via recursion.
  */
@@ -586,7 +613,10 @@ type ColorFunction =
   | "oklab"
   | "oklch";
 
-type NamedColor = keyof typeof names | "transparent";
+type NamedColor =
+  | keyof typeof names
+  | keyof typeof systemColors
+  | "transparent";
 
 type CheckedColor<T> = T extends number ? T
   : T extends string ? string extends T ? T
