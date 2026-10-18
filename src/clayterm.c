@@ -1135,3 +1135,21 @@ void measure(int ret, int txt) {
   dims[0] = (float)w;
   dims[1] = 1.0f;
 }
+
+#ifdef CLAYTERM_OWN_MEMORY
+/* Own-memory builds define the linear memory this module runs in and share it
+ * with a wasi app that imports it (bento multi-module payloads). The app owns
+ * the low addresses (its data and stack land below this module's
+ * --global-base), so these exports hand out this module's own region:
+ * [heap, heap + clayterm_size) for state, the next aligned word for the ops
+ * transfer buffer. */
+extern unsigned char __heap_base[];
+
+struct Clayterm *clayterm_init(int w, int h) {
+  return init((void *)__heap_base, w, h);
+}
+
+int clayterm_ops_buf(int w, int h) {
+  return (int)((uintptr_t)__heap_base + clayterm_size(w, h) + 3) & ~3;
+}
+#endif

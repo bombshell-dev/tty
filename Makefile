@@ -1,5 +1,6 @@
 CC = clang
 TARGET = clayterm.wasm
+OWN_TARGET = clayterm-own.wasm
 SRC = src/module.c
 CLAY_PATCHES = $(sort $(wildcard patches/*.patch))
 
@@ -9,6 +10,15 @@ CFLAGS = --target=wasm32 -nostdlib -O2 \
          -DCLAY_IMPLEMENTATION -DCLAY_WASM \
          -DCLAY_DEBUG_MODE_ENABLED=0 \
          -Isrc -I.
+
+# Own-memory: the module defines and exports its own linear memory instead of
+# importing env.memory, sized so a wasi app compiled --import-memory can live
+# in the same memory (bento multi-module payloads share one linear memory).
+# The app owns the low addresses, so this module's data/stack/heap move above
+# GLOBAL_BASE (64 MiB) inside an initial 4096 pages (256 MiB), no max.
+OWN_MEMORY_FLAGS = -DCLAYTERM_OWN_MEMORY \
+                   -Wl,--initial-memory=268435456 \
+                   -Wl,--global-base=67108864
 
 EXPORTS = \
   -Wl,--export=__heap_base \
@@ -41,6 +51,13 @@ EXPORTS = \
   -Wl,--export=terminfo_grant \
   -Wl,--export=terminfo_confirm
 
+# Own-memory-only exports: they route the shared-memory layout (state region,
+# ops transfer buffer) to the importing app, which cannot read this module's
+# __heap_base global through a plain import.
+OWN_EXPORTS = \
+  -Wl,--export=clayterm_init \
+  -Wl,--export=clayterm_ops_buf
+
 LDFLAGS = -Wl,--no-entry \
           -Wl,--import-memory \
           -Wl,--stack-first \
@@ -50,10 +67,25 @@ LDFLAGS = -Wl,--no-entry \
           -Wl,--undefined=Clay__QueryScrollOffset \
           $(EXPORTS)
 
+OWN_LDFLAGS = -Wl,--no-entry \
+          -Wl,--strip-all \
+          -Wl,--gc-sections \
+          -Wl,--undefined=Clay__MeasureText \
+          -Wl,--undefined=Clay__QueryScrollOffset \
+          $(EXPORTS) $(OWN_EXPORTS)
+
 all: $(TARGET) wasm.ts
 	@echo "Built $(TARGET) ($$(wc -c < $(TARGET)) bytes raw, $$(gzip -c $(TARGET) | wc -c) bytes gzip)"
 
 DEPS = $(wildcard src/*.c src/*.h)
+
+define compile_rule
+@git -C clay checkout -- clay.h
+@for p in $(CLAY_PATCHES); do \
+  git -C clay apply ../$$p || { echo "ERROR: failed to apply $$p to clay/clay.h" >&2; exit 1; }; \
+done
+$(CC) $(CFLAGS) $(2) $(3) -o $1 $(SRC)
+endef
 
 # Apply every patch in patches/ to the clay submodule before compiling. clay.h
 # is reset to pristine first, so the applied set always matches patches/*.patch
@@ -61,17 +93,19 @@ DEPS = $(wildcard src/*.c src/*.h)
 # Opt-outs like CLAY_DEBUG_MODE_ENABLED=0 are selected via CFLAGS above.
 # Drop individual patches as their changes ship in upstream clay.
 $(TARGET): $(DEPS) $(CLAY_PATCHES)
-	@git -C clay checkout -- clay.h
-	@for p in $(CLAY_PATCHES); do \
-	  git -C clay apply ../$$p || { echo "ERROR: failed to apply $$p to clay/clay.h" >&2; exit 1; }; \
-	done
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC)
+	$(call compile_rule,$(TARGET),$(LDFLAGS),)
+
+# Same module, but defining (not importing) its own linear memory, for engines
+# that instantiate modules without a host memory to hand over (bento
+# multi-module: the app imports this memory). Not used by the npm artifact.
+$(OWN_TARGET): $(DEPS) $(CLAY_PATCHES)
+	$(call compile_rule,$(OWN_TARGET),$(OWN_LDFLAGS),$(OWN_MEMORY_FLAGS))
 
 wasm.ts: $(TARGET)
 	deno run --allow-read --allow-write tasks/bundle-wasm.ts
 
 clean:
-	rm -f $(TARGET) wasm.ts
+	rm -f $(TARGET) $(OWN_TARGET) wasm.ts
 	-git -C clay checkout -- clay.h
 
 .PHONY: all clean

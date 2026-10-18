@@ -29,4 +29,11 @@ int pointer_over_count(void);
 int pointer_over_id_string_length(int index);
 int pointer_over_id_string_ptr(int index);
 
+/* Own-memory builds only: the module defines its linear memory, so these
+ * exports route the shared-memory layout to the importing app. */
+#ifdef CLAYTERM_OWN_MEMORY
+struct Clayterm *clayterm_init(int w, int h);
+int clayterm_ops_buf(int w, int h);
+#endif
+
 #endif
