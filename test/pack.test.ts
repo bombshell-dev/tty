@@ -150,3 +150,70 @@ describe("hex colors", () => {
     expect((error as Error).message).toContain("#ggg");
   });
 });
+
+describe("CSS color strings", () => {
+  function packed(color: string | number): Uint8Array {
+    let memory = new ArrayBuffer(256);
+    let n = pack([text("Hi", { color })], memory, 0);
+    return new Uint8Array(memory, 0, n * 4);
+  }
+
+  it("packs each CSS Color 4 form identically to its rgba() equivalent", () => {
+    let cases: [string, number][] = [
+      ["rgb(255 136 0)", rgba(255, 136, 0)],
+      ["rgb(255 136 0 / 50%)", rgba(255, 136, 0, 128)],
+      ["rgba(255, 136, 0, 0.5)", rgba(255, 136, 0, 128)],
+      ["rgb(100% 0% 0%)", rgba(255, 0, 0)],
+      ["hsl(120 100% 50%)", rgba(0, 255, 0)],
+      ["hsla(240, 100%, 50%, 0.25)", rgba(0, 0, 255, 64)],
+      ["hsl(0.5turn 100% 50%)", rgba(0, 255, 255)],
+      ["hwb(0 0% 0%)", rgba(255, 0, 0)],
+      ["lab(100 0 0)", rgba(255, 255, 255)],
+      ["lch(0 0 0)", rgba(0, 0, 0)],
+      ["oklab(1 0 0)", rgba(255, 255, 255)],
+      ["oklch(0 0 none)", rgba(0, 0, 0)],
+      ["rebeccapurple", rgba(102, 51, 153)],
+      ["RebeccaPurple", rgba(102, 51, 153)],
+      ["RGB(255 136 0)", rgba(255, 136, 0)],
+      ["transparent", rgba(0, 0, 0, 0)],
+    ];
+    for (let [color, value] of cases) {
+      expect([color, packed(color)]).toEqual([color, packed(value)]);
+    }
+  });
+
+  it("clamps channels and alpha to the packable range", () => {
+    expect(packed("rgb(300 -20 0 / 2)")).toEqual(packed(rgba(255, 0, 0)));
+  });
+
+  it("clips out-of-gamut colors per channel", () => {
+    expect(packed("oklch(0.6 0.4 30)")).toEqual(packed(rgba(255, 0, 0)));
+  });
+
+  it("throws a TypeError on unsupported and reserved forms", () => {
+    for (
+      let color of [
+        "color(srgb 1 0 0)",
+        "color-mix(in srgb, red, blue)",
+        "rgb(from red r g b)",
+        "device-cmyk(0 0 0 1)",
+        "Canvas",
+        "CanvasText",
+        "currentcolor",
+        " red",
+        "red ",
+        "rgb(1 2)",
+        "notacolor",
+      ]
+    ) {
+      let error: unknown;
+      try {
+        packed(color);
+      } catch (caught) {
+        error = caught;
+      }
+      expect([color, error instanceof TypeError]).toEqual([color, true]);
+      expect((error as Error).message).toContain(color);
+    }
+  });
+});

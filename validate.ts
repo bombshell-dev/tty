@@ -1,5 +1,6 @@
-import { Type } from "@sinclair/typebox";
+import { FormatRegistry, Type } from "@sinclair/typebox";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
+import { resolveColor } from "./color.ts";
 import type { Op } from "./ops.ts";
 import { POINTER_SHAPES } from "./pointer-shape.ts";
 import type { RenderOptions, RenderResult, Term } from "./term.ts";
@@ -15,14 +16,12 @@ const i16 = Type.Integer({ minimum: -32768, maximum: 32767 });
  * Accept both signed and unsigned representations of the same bit pattern. */
 const rgba = Type.Integer({ minimum: -0x80000000, maximum: 0xFFFFFFFF });
 
-/* §8.5 hex color string: "#" followed by exactly 3, 4, 6, or 8 hex digits.
- * Mirrors the HEX_COLOR grammar in ops.ts. */
-const hexColor = Type.String({
-  pattern: "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
-});
+/* §8.5 CSS color string, checked by the same resolver the packer uses. */
+FormatRegistry.Set("css-color", (value) => resolveColor(value) !== undefined);
+const cssColor = Type.String({ format: "css-color" });
 
-/* A §8.5 color value: packed ARGB number or a hex color string. */
-const color = Type.Union([rgba, hexColor]);
+/* A §8.5 color value: packed ARGB number or a CSS color string. */
+const color = Type.Union([rgba, cssColor]);
 
 /* ── Sizing axis (discriminated union) ────────────────────────────── */
 

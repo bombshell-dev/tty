@@ -1,3 +1,5 @@
+import type { names } from "hueful";
+import { resolveColor } from "./color.ts";
 import { type PointerShape, pointerShapeIndex } from "./pointer-shape.ts";
 
 export type { PointerShape };
@@ -359,35 +361,23 @@ export function rgba(r: number, g: number, b: number, a = 255): number {
 }
 
 /**
- * A color value: a packed ARGB `number` as produced by `rgba()`, or a hex
- * color `string` (§8.5). Strings are expanded to the packed value at the
+ * A color value: a packed ARGB `number` as produced by `rgba()`, or a CSS
+ * color `string` (§8.5). Strings are resolved to the packed value at the
  * transfer-encoding boundary; only numbers reach the wire.
  */
 export type Color = number | string;
 
-/* §8.5 hex grammar: "#" followed by exactly 3, 4, 6, or 8 hex digits. */
-const HEX_COLOR =
-  /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
-
 /**
  * Resolves a color value to the packed ARGB number the transfer encoding
- * carries (§8.5). Numbers pass through; hex strings expand — 3/4-digit
- * forms double each digit, 6-digit forms gain alpha 255 — from the
- * string's RRGGBBAA digit order into the word's AARRGGBB layout. Invalid
- * hex throws rather than decoding to a garbage color.
+ * carries (§8.5). Numbers pass through; strings resolve through the CSS
+ * color grammar. Invalid strings throw rather than decoding to a garbage
+ * color.
  */
 function colorValue(color: Color): number {
   if (typeof color === "number") return color;
-  if (!HEX_COLOR.test(color)) {
-    throw new TypeError(`invalid hex color: "${color}"`);
-  }
-  let body = color.slice(1);
-  if (body.length === 3 || body.length === 4) {
-    body = body.replace(/./g, "$&$&");
-  }
-  if (body.length === 6) body += "ff";
-  let value = parseInt(body, 16);
-  return (value >>> 8) | ((value & 0xFF) << 24);
+  let value = resolveColor(color);
+  if (value === undefined) throw new TypeError(`invalid color: "${color}"`);
+  return value;
 }
 
 export type SizingAxis =
@@ -547,12 +537,13 @@ export type Op = OpenElement | Text | CloseElement | Snapshot;
 
 /*
  * Compile-time color checking (§8.5). A string literal assigned to a color
- * field must match the hex grammar — the type-level equivalent of
- * `#${string{3,4,6,8}}`. Strings that are not literals (computed colors) and
- * values already narrowed to `#${string}` pass through; the runtime grammar
- * check in validate()/pack() is normative for them. Plain unions like
+ * field must be a hex color (the type-level equivalent of
+ * `#${string{3,4,6,8}}`), start with a supported color function, or be a
+ * named color. Strings that are not literals (computed colors) and values
+ * already narrowed to `#${string}` pass through; the runtime grammar check
+ * in validate()/pack() is normative for them. Plain unions like
  * `HexRun<string>` would need ~16^6 union members, which TypeScript cannot
- * represent (TS2590), so checking runs per-character via recursion instead.
+ * represent (TS2590), so hex checking runs per-character via recursion.
  */
 
 type HexDigit =
@@ -584,10 +575,26 @@ type HexRun<S extends string, C extends readonly 0[] = []> = S extends ""
   : S extends `${HexDigit}${infer Rest}` ? HexRun<Rest, [...C, 0]>
   : false;
 
+type ColorFunction =
+  | "rgb"
+  | "rgba"
+  | "hsl"
+  | "hsla"
+  | "hwb"
+  | "lab"
+  | "lch"
+  | "oklab"
+  | "oklch";
+
+type NamedColor = keyof typeof names | "transparent";
+
 type CheckedColor<T> = T extends number ? T
   : T extends string ? string extends T ? T
     : `#${string}` extends T ? T
     : T extends `#${infer Body}` ? (HexRun<Body> extends true ? T : never)
+    : T extends `${string}(${string}`
+      ? (Lowercase<T> extends `${ColorFunction}(${string})` ? T : never)
+    : Lowercase<T> extends NamedColor ? T
     : never
   : T;
 

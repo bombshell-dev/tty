@@ -374,3 +374,39 @@ describe("color fields", () => {
     }
   });
 });
+
+describe("CSS color fields", () => {
+  it("accepts CSS color strings at every color field", () => {
+    expect(validate([
+      open("x", {
+        bg: "oklch(0.7 0.1 30)",
+        border: {
+          color: "rebeccapurple",
+          bg: "hsl(120 100% 50%)",
+          top: { width: 1, color: "rgb(255 0 0)", bg: "transparent" },
+          right: 1,
+        },
+      }),
+      text("hi", { color: "lab(50 20 -30)", bg: "rgba(0, 0, 255, 0.5)" }),
+      close(),
+    ])).toBe(true);
+  });
+
+  it("rejects unsupported and reserved color strings", () => {
+    for (
+      let spec of [
+        "color(srgb 1 0 0)",
+        "device-cmyk(0 0 0 1)",
+        "Canvas",
+        "currentcolor",
+        " red",
+        "rgb(1 2)",
+      ]
+    ) {
+      expect([spec, validate([text("hi", { color: spec })])]).toEqual([
+        spec,
+        false,
+      ]);
+    }
+  });
+});
