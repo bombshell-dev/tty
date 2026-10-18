@@ -798,38 +798,65 @@ format. Alpha defaults to 255 (fully opaque). The returned value is used
 wherever the directive model expects a color.
 
 **Color values.** A color value is either a packed ARGB `number`, as produced by
-`rgba()`, or a hexadecimal color `string`. Every directive field described as a
-color — `open({ bg })`, `border.color`, `border.bg`, the `color` and `bg` fields
-of structured border sides, and `text({ color, bg })` — accepts both forms. The
-forms are exactly equivalent: each hex string is converted to its packed ARGB
-value at the transfer-encoding boundary (§9.2), so hex strings MUST NOT appear
-in the transfer encoding. The wire format, snapshot encoding, and cell
-representation are unchanged by this acceptance, and the numeric and string
-forms of the same color produce bit-identical packed values.
+`rgba()`, or a CSS color `string`. Every directive field described as a color —
+`open({ bg })`, `border.color`, `border.bg`, the `color` and `bg` fields of
+structured border sides, and `text({ color, bg })` — accepts both forms. Each
+color string is resolved to a packed ARGB value at the transfer-encoding
+boundary (§9.2), so color strings MUST NOT appear in the transfer encoding. The
+wire format, snapshot encoding, and cell representation are unchanged by this
+acceptance: packed sRGB ARGB remains the only color representation the renderer
+sees.
 
-**Hex grammar.** A hex color string is `#` followed by exactly 3, 4, 6, or 8
-hexadecimal digits, case-insensitive. The `#` is required. The 3- and 4-digit
-forms expand by doubling each digit: `#f80` is `#ff8800`, and `#f80a` is
-`#ff8800aa`. The 6- and 8-digit forms are taken literally. Alpha defaults to 255
-in the 3- and 6-digit forms; the 4- and 8-digit forms supply alpha as their
-final digit pair (or digit, doubled).
+**Color string grammar.** A color string is one of the following CSS Color
+Module Level 4 forms. Function names and keywords are case-insensitive. Leading
+or trailing whitespace is not permitted.
 
-**Invalid hex.** A string that does not match the hex grammar is invalid
-directive input (§9.1). `validate()` reports it as an invalid field value. The
-packer MUST reject a directive array containing an invalid hex color string by
-throwing a `TypeError` before producing any bytes, rather than emitting a
-partially decoded or garbage color value.
+- **Hex.** `#` followed by exactly 3, 4, 6, or 8 hexadecimal digits. The 3- and
+  4-digit forms expand by doubling each digit: `#f80` is `#ff8800`, and `#f80a`
+  is `#ff8800aa`. The 4- and 8-digit forms supply alpha as their final digit
+  pair (or digit, doubled).
+- **Named colors.** The CSS named color keywords (`red`, `rebeccapurple`, ...),
+  and `transparent`, which is black with alpha 0.
+- **`rgb()` / `rgba()`.** Modern space-separated syntax with optional `/ alpha`,
+  and the legacy comma-separated syntax.
+- **`hsl()` / `hsla()`.** Modern and legacy syntax.
+- **`hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`.** Modern syntax.
+
+Channel and alpha arguments follow CSS Color 4: numbers, percentages where the
+channel permits them, angles (`deg`, `rad`, `grad`, `turn`) for hues, and the
+`none` keyword, which resolves to 0. The `color()` function, `color-mix()`,
+relative color syntax, and `device-cmyk()` are not supported and are invalid
+color strings.
+
+CSS system colors (`Canvas`, `CanvasText`, `LinkText`, ...) and `currentcolor`
+are reserved. They are invalid color strings in this version. System colors are
+reserved for mapping to the terminal's themable ANSI 16-color palette, which a
+packed sRGB value cannot express; that mapping, and `currentcolor`, will be
+specified separately.
+
+**Resolution.** A color string resolves to sRGB, then to a packed ARGB value:
+each of R, G, B is clamped to [0, 255] and rounded to the nearest integer; alpha
+is clamped to [0, 1], multiplied by 255, and rounded. Colors outside the sRGB
+gamut (common for `lab()`, `lch()`, `oklab()`, and `oklch()`) are therefore
+clipped per channel; no perceptual gamut mapping is performed. Alpha defaults to
+255 when a form does not supply it. A hex string and the equivalent `rgba()`
+call produce bit-identical packed values.
+
+**Invalid color strings.** A string that does not match the color string grammar
+is invalid directive input (§9.1). `validate()` reports it as an invalid field
+value. The packer MUST reject a directive array containing an invalid color
+string by throwing a `TypeError` before producing any bytes, rather than
+emitting a partially decoded or garbage color value.
 
 **Static checking.** In TypeScript, color fields are typed `number | string`.
-The directive constructors check string literals against the hex grammar at
-compile time — the type-level equivalent of `#${string{3,4,6,8}}` — so an
-invalid hex literal is a type error at the call site. Strings whose value is
-only known at runtime (colors read from a theme or configuration, for example)
-pass the type check as `string` and are checked by `validate()` and the packer
-at render time. The string form is deliberately restricted to the hex grammar
-for now: a future version may accept the broader CSS Color 4 syntax, which is
-why the static type remains the plain `number | string` shape rather than a
-narrower prefix-pattern type.
+The directive constructors check string literals at compile time: a literal
+beginning with `#` must match the hex form (the type-level equivalent of
+`#${string{3,4,6,8}}`); a literal containing `(` must begin with a supported
+function name; any other literal must be a named color keyword or `transparent`.
+Function arguments are not checked statically. Strings whose value is only known
+at runtime (colors read from a theme or configuration, for example) pass the
+type check as `string` and are checked by `validate()` and the packer at render
+time.
 
 ### 8.6 Term update
 
@@ -1056,7 +1083,7 @@ The `open()` constructor currently accepts the following property groups in its
   `{ width, color?, bg? }`. The shared `color` field is required and is the
   fallback foreground for every side; the optional shared `bg` field is the
   fallback border-cell background for every side. Color fields accept the color
-  values of §8.5 (packed ARGB number or hex string)
+  values of §8.5 (packed ARGB number or CSS color string)
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
 - **`clip`** — Declares the element as a clip region (see §7.5). Currently
@@ -1120,7 +1147,7 @@ input or lets it pass through, `clipTo` controls inherited clipping, and
 The `text()` constructor accepts: `color`, `bg`, `fontSize`, `letterSpacing`,
 `lineHeight`, and attribute flags (`bold`, `italic`, `underline`,
 `strikethrough`). The `color` and `bg` fields accept the color values of §8.5
-(packed ARGB number or hex string).
+(packed ARGB number or CSS color string).
 
 These property groups represent the current implementation surface. New groups
 and fields have been added incrementally and more may follow.
@@ -1280,7 +1307,7 @@ acknowledged gaps, and the approach may evolve.
 
 **`validate(ops)`** — A public API function that checks a directive array for
 structural errors (unbalanced open/close pairs, invalid field types — including
-color fields, which must be a packed ARGB number or a §8.5 hex color string).
+color fields, which must be a packed ARGB number or a §8.5 CSS color string).
 Exported and used in tests.
 
 **`pack(ops, mem, offset)`** — An internal function that serializes a directive
