@@ -1136,6 +1136,33 @@ void measure(int ret, int txt) {
   dims[1] = 1.0f;
 }
 
+#ifdef CLAYTERM_OWN_MEASURE
+/* Clay__MeasureText is defined here instead of imported: the width logic above
+ * is the whole implementation, so the JS trampoline through
+ * clay.measureTextFunction (JS -> C measure -> back) is pure overhead. Must
+ * measure exactly as measure() does; the spec tests are the oracle. */
+Clay_Dimensions Clay__MeasureText(Clay_StringSlice text,
+                                  Clay_TextElementConfig *config,
+                                  void *userData) {
+  (void)config;
+  (void)userData;
+  Clay_Dimensions out;
+  measure((int)&out, (int)&text);
+  return out;
+}
+#endif
+
+#ifdef CLAYTERM_OWN_SCROLL
+/* Own builds have no host to answer the scroll-offset callback; Clay only
+ * calls it for scrollable elements, and the JS host answers the constant
+ * (0, 0) — the same value here, so scrollables behave as unscrolled. */
+Clay_Vector2 Clay__QueryScrollOffset(uint32_t elementId, void *userData) {
+  (void)elementId;
+  (void)userData;
+  return (Clay_Vector2){0};
+}
+#endif
+
 #ifdef CLAYTERM_OWN_MEMORY
 /* Own-memory builds define the linear memory this module runs in and share it
  * with a wasi app that imports it (bento multi-module payloads). The app owns

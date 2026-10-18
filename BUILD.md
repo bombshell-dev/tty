@@ -20,6 +20,12 @@ It generates:
 
 - `clayterm.wasm` — the compiled WebAssembly module built from the C sources
 - `wasm.ts` — a generated TypeScript file derived from `clayterm.wasm`
+- `clayterm-own.wasm` — an alternate build (`make clayterm-own.wasm`) that
+  defines and exports its own 256 MiB linear memory instead of importing
+  `env.memory`, and answers Clay's measurement and scroll-offset callbacks in
+  C instead of importing them. For engines that instantiate modules without a
+  host memory or callback namespace (multi-module runtimes); the npm artifact
+  stays in import mode.
 
 `wasm.ts` is generated output, not hand-maintained source.
 

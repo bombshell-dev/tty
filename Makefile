@@ -11,12 +11,19 @@ CFLAGS = --target=wasm32 -nostdlib -O2 \
          -DCLAY_DEBUG_MODE_ENABLED=0 \
          -Isrc -I.
 
+# Own-measure: Clay__MeasureText is defined in C (clayterm.c) instead of
+# imported through clay.measureTextFunction. The width logic already lived in
+# measure(), so the JS<->C trampoline was pure overhead. Both builds get it.
+MEASURE_FLAGS = -DCLAYTERM_OWN_MEASURE
+
 # Own-memory: the module defines and exports its own linear memory instead of
 # importing env.memory, sized so a wasi app compiled --import-memory can live
 # in the same memory (bento multi-module payloads share one linear memory).
 # The app owns the low addresses, so this module's data/stack/heap move above
-# GLOBAL_BASE (64 MiB) inside an initial 4096 pages (256 MiB), no max.
-OWN_MEMORY_FLAGS = -DCLAYTERM_OWN_MEMORY \
+# GLOBAL_BASE (64 MiB) inside an initial 4096 pages (256 MiB), no max. Own
+# builds also answer Clay's scroll-offset callback in C: no engine hosts the
+# clay.* import namespace for them, and the host's answer is (0, 0) anyway.
+OWN_MEMORY_FLAGS = -DCLAYTERM_OWN_MEMORY -DCLAYTERM_OWN_SCROLL \
                    -Wl,--initial-memory=268435456 \
                    -Wl,--global-base=67108864
 
@@ -84,7 +91,7 @@ define compile_rule
 @for p in $(CLAY_PATCHES); do \
   git -C clay apply ../$$p || { echo "ERROR: failed to apply $$p to clay/clay.h" >&2; exit 1; }; \
 done
-$(CC) $(CFLAGS) $(2) $(3) -o $1 $(SRC)
+$(CC) $(CFLAGS) $(MEASURE_FLAGS) $(2) $(3) -o $1 $(SRC)
 endef
 
 # Apply every patch in patches/ to the clay submodule before compiling. clay.h

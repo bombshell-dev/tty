@@ -1,0 +1,27 @@
+diff --git a/clay.h b/clay.h
+index 7c967bb..f358840 100644
+--- a/clay.h
++++ b/clay.h
+@@ -1394,8 +1398,22 @@ Clay_String Clay__WriteStringToCharBuffer(Clay__charArray *buffer, Clay_String s
+ }
+ 
+ #ifdef CLAY_WASM
++    #ifdef CLAYTERM_OWN_MEASURE
++    /* Own-measure builds define Clay__MeasureText in C (clayterm.c) instead of
++     * importing it: the width logic already lives in measure(), so the JS
++     * trampoline through clay.measureTextFunction disappears. */
++    Clay_Dimensions Clay__MeasureText(Clay_StringSlice text, Clay_TextElementConfig *config, void *userData);
++    #else
+     __attribute__((import_module("clay"), import_name("measureTextFunction"))) Clay_Dimensions Clay__MeasureText(Clay_StringSlice text, Clay_TextElementConfig *config, void *userData);
++    #endif
++    #ifdef CLAYTERM_OWN_SCROLL
++    /* Own builds define Clay__QueryScrollOffset in C as well: nothing hosts
++     * the clay.* import namespace there, and the JS host's answer is the
++     * constant (0, 0) anyway. */
++    Clay_Vector2 Clay__QueryScrollOffset(uint32_t elementId, void *userData);
++    #else
+     __attribute__((import_module("clay"), import_name("queryScrollOffsetFunction"))) Clay_Vector2 Clay__QueryScrollOffset(uint32_t elementId, void *userData);
++    #endif
+ #else
+     Clay_Dimensions (*Clay__MeasureText)(Clay_StringSlice text, Clay_TextElementConfig *config, void *userData);
+     Clay_Vector2 (*Clay__QueryScrollOffset)(uint32_t elementId, void *userData);
