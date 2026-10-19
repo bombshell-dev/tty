@@ -909,6 +909,57 @@ hi
       expect(out).not.toContain("\x1b[?2026");
     });
 
+    it("wraps frames when seeded from terminfo capabilities", async () => {
+      let t = await createTerm({
+        width: 40,
+        height: 10,
+        terminfo: {
+          capabilities: {
+            colors: 256,
+            trueColor: false,
+            bce: true,
+            autoMargin: true,
+            xenl: true,
+            altScreen: true,
+            styledUnderline: false,
+            syncOutput: true,
+            pointerShape: false,
+          },
+          probe: new Uint8Array(0),
+          keys: new Uint8Array(0),
+        },
+      });
+      expect(t.capabilities.syncOutput).toBe(true);
+      let out = decode(t.render(frame).output);
+      expect(out.startsWith("\x1b[?2026h")).toBe(true);
+      expect(out.endsWith("\x1b[?2026l")).toBe(true);
+    });
+
+    it("stops wrapping when a probe reply refutes seeded evidence", async () => {
+      let t = await createTerm({
+        width: 40,
+        height: 10,
+        terminfo: {
+          capabilities: {
+            colors: 256,
+            trueColor: false,
+            bce: true,
+            autoMargin: true,
+            xenl: true,
+            altScreen: true,
+            styledUnderline: false,
+            syncOutput: true,
+            pointerShape: false,
+          },
+          probe: new Uint8Array(0),
+          keys: new Uint8Array(0),
+        },
+      });
+      t.update([syncOff]);
+      let out = decode(t.render(frame).output);
+      expect(out).not.toContain("\x1b[?2026");
+    });
+
     it("wraps full-screen frames when the capability is on", () => {
       term.update([syncOn]);
       let out = decode(term.render(frame).output);
@@ -928,6 +979,14 @@ hi
       term.update([syncOff]);
       let out = decode(term.render(frame).output);
       expect(out).not.toContain("\x1b[?2026");
+    });
+
+    it("keeps wrapping after a resize update", () => {
+      term.update([syncOn]);
+      term.update([{ type: "resize", width: 50, height: 12 }]);
+      let out = decode(term.render(frame).output);
+      expect(out.startsWith("\x1b[?2026h")).toBe(true);
+      expect(out.endsWith("\x1b[?2026l")).toBe(true);
     });
 
     it("never wraps line mode output", () => {

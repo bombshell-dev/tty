@@ -9,6 +9,10 @@ export const CLAYTERM_TC: Uint8Array = decodeBase64(
   "GgE4AB0ADwBYAC0AY2xheXRlcm0tdGN8Y2xheXRlcm0gdHJ1ZWNvbG9yIGV4dGVuZGVkLWNhcHMgdGVzdCBlbnRyeQAAAQAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQBQAP//GAD//////////////////////////wAB/3///////////////////////////wAA/////////////////////////////////////////////xEA/////////////////////////////xoA////////////////////////////////////////////////////////////////////////////////IwD///////////////////////////////////////8pABtbJWklcDElZDslcDIlZEgAG1s/MTA0OWgAG1s/MTA0OWwAG1s5OX4AG09aAAACAAAAAQAEABcAAQEAAAAAAwAGABtbNDolcDElZG0AU3UAVGMAU211bHgA",
 );
 
+export const CLAYTERM_SYNC: Uint8Array = decodeBase64(
+  "GgE1AB0ADwApACMAY2xheXRlcm0tc3luY3xjbGF5dGVybSBzeW5jIGV4dGVuZGVkLWNhcHMgdGVzdCBlbnRyeQAAAQAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVAA//8YAP//////////////////////////AAH/f///////////////////////////AAD/////////////////////////////////////////////EQD/////////////////////////////GgAbWyVpJXAxJWQ7JXAyJWRIABtbPzEwNDloABtbPzEwNDlsAAAAAAAAAQACABMAAAAAABtbPzIwMjYlcDElZGgAU3luYwA=",
+);
+
 export const CLAYTERM_16: Uint8Array = decodeBase64(
   "GgEuAAUADwALABEAY2xheXRlcm0tMTZ8Y2xheXRlcm0gc2l4dGVlbiBjb2xvciB0ZXN0IGVudHJ5AAABAAABAFAA//8YAP//////////////////////////EAAAAf//////////////////////////AAAbWyVpJXAxJWQ7JXAyJWRIAA==",
 );

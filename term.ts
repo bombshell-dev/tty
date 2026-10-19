@@ -1,7 +1,14 @@
 import { type Op, pack } from "./ops.ts";
-import { type BoundingBox, createTermNative } from "./term-native.ts";
+import {
+  type BoundingBox,
+  createTermNative,
+  POINTER_ABSENT,
+  POINTER_DOWN,
+  POINTER_UP,
+} from "./term-native.ts";
 import type { InputEvent } from "./input.ts";
 import type { Capabilities, Rgb, TerminalInfo } from "./terminfo.ts";
+import { POINTER_SHAPE_RESET } from "./pointer-shape.ts";
 
 export type { BoundingBox };
 
@@ -24,7 +31,6 @@ export interface RuntimeCapabilities extends Capabilities {
   readonly syncOutput: boolean;
   readonly kittyKeyboard: boolean;
   readonly kittyGraphics: boolean;
-  readonly pointerShape: boolean;
   readonly theme: {
     readonly foreground?: Rgb;
     readonly background?: Rgb;
@@ -86,10 +92,8 @@ function applyUpdate(
 function runtimeFromStatic(caps: Capabilities): RuntimeCapabilities {
   return Object.freeze<RuntimeCapabilities>({
     ...caps,
-    syncOutput: false,
     kittyKeyboard: false,
     kittyGraphics: false,
-    pointerShape: false,
     theme: Object.freeze({}),
   });
 }
@@ -164,12 +168,6 @@ export interface Term {
 export async function createTerm(options: TermOptions): Promise<Term> {
   let { width, height, terminfo } = options;
 
-  let native = await createTermNative(
-    width,
-    height,
-  );
-  let { memory } = native;
-
   let currentCaps: RuntimeCapabilities = runtimeFromStatic(
     terminfo?.capabilities ?? {
       colors: 256,
@@ -179,8 +177,16 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       xenl: true,
       altScreen: true,
       styledUnderline: false,
+      syncOutput: false,
+      pointerShape: false,
     },
   );
+
+  let native = await createTermNative(width, height, {
+    syncOutput: currentCaps.syncOutput,
+    pointerShape: currentCaps.pointerShape,
+  });
+  let { memory } = native;
 
   let prev = new Set<string>();
   let pressed = new Set<string>();
@@ -212,6 +218,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         dt = now - lastRenderAt;
       }
       lastRenderAt = now;
+      let pointer = options?.pointer;
       native.reduce(
         native.statePtr,
         native.opsBuf,
@@ -219,13 +226,10 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         mode,
         row,
         dt,
-        currentCaps.syncOutput ? 1 : 0,
+        pointer?.x ?? 0,
+        pointer?.y ?? 0,
+        pointer ? (pointer.down ? POINTER_DOWN : POINTER_UP) : POINTER_ABSENT,
       );
-
-      if (options?.pointer) {
-        let { x, y, down } = options.pointer;
-        native.setPointer(x, y, down);
-      }
 
       let output = new Uint8Array(
         memory.buffer,
@@ -236,6 +240,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       let current = new Set(
         options?.pointer ? native.getPointerOverIds() : [],
       );
+
       let down = options?.pointer?.down ?? false;
       let events: PointerEvent[] = [];
 
@@ -317,6 +322,16 @@ export async function createTerm(options: TermOptions): Promise<Term> {
           }
         }
 
+        if (
+          next.syncOutput !== currentCaps.syncOutput ||
+          next.pointerShape !== currentCaps.pointerShape
+        ) {
+          let reset = native.setCapabilities({
+            syncOutput: next.syncOutput,
+            pointerShape: next.pointerShape,
+          });
+          if (reset) out.push(POINTER_SHAPE_RESET.slice());
+        }
         currentCaps = next;
         if (bytes.length) out.push(bytes);
       }

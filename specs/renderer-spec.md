@@ -449,9 +449,9 @@ be a no-op for that step.
 
 **Capability semantics.** A `CapabilityEvent` step folds the event's `key` and
 `value` into the Term's private `RuntimeCapabilities`. The foundation update
-transaction does not emit bytes or alter renderer output as a consequence of a
-capability event. A focused capability specification MUST define any output
-invalidation or immediate bytes required by its consumer.
+transaction emits bytes or alters renderer output as a consequence of a
+capability event only where a capability section of this specification says so
+(§7.10).
 
 **Return value.** `update()` returns a `Uint8Array` of bytes to write to the
 terminal immediately. An empty array is valid when the update changes no
@@ -469,52 +469,142 @@ is valid until the next `render()` **or** `update()` call).
 
 ### 7.8 Capability consumption
 
-The renderer may consume the read-only capability snapshot maintained by
-`Term.update()`, but this foundation specification does not define any
-capability-specific output. Protocols that change emitted bytes MUST add their
-own renderer section, capability evidence, invalidation rules, and tests in a
-focused feature specification.
+The renderer consumes the read-only capability snapshot maintained by
+`Term.update()`. A protocol that changes emitted bytes MUST define its gating
+capability, output, and invalidation rules in its own section of this
+specification. Synchronized output (§7.9) and pointer shape (§7.10) are
+specified so far.
 
-In particular, color encoding, synchronized-output wrapping, pointer-shape
-output, Kitty keyboard mode setup, and Kitty graphics emission are deferred to
-their respective follow-up PRs. The renderer continues to emit its existing
-hardcoded ANSI output until one of those specifications is adopted.
+Color encoding, Kitty keyboard mode setup, and Kitty graphics emission are
+deferred to their respective follow-up PRs. The renderer continues to emit its
+existing hardcoded ANSI output until each is specified.
 
 ### 7.9 Synchronized output (DEC mode 2026)
 
 When the `syncOutput` runtime capability is true, each full-screen frame
-(§8.2.1) is wrapped in Synchronized Output mode 2026 — Begin Synchronized
-Update (`CSI ? 2026 h`) before the frame's first emitted byte and End
-Synchronized Update (`CSI ? 2026 l`) after its last. The terminal buffers
-everything between the pair and presents it as one atomic repaint, so a frame
-never tears mid-update.
+(§8.2.1) is wrapped in Synchronized Output mode 2026 — Begin Synchronized Update
+(`CSI ? 2026 h`) before the frame's first emitted byte and End Synchronized
+Update (`CSI ? 2026 l`) after its last. The terminal buffers everything between
+the pair and presents it as one atomic repaint, so a frame never tears
+mid-update.
 
-**Capability evidence.** `syncOutput` originates exclusively from the
-`sync-output` `CapabilityEvent` (input-spec §5), emitted when the input parser
-reads a DECRPM 2026 reply to the probe (`CSI ? 2026 $ p`). Reply values 1, 2,
-and 3 (set, reset, permanently set) report support; 0 and 4 report none. The
-static `Capabilities` never seed this field: it is false until a probe reply
-is folded in through `update()`.
+**Capability evidence.** `syncOutput` is raised only on positive evidence. Two
+runtime channels feed the `sync-output` `CapabilityEvent` (input-spec §5,
+terminfo-spec §6.3): a DECRPM 2026 reply to the probe (`CSI ? 2026 $ p`) —
+values 1, 2, and 3 (set, reset, permanently set) report support, 0 and 4 report
+none — and an XTGETTCAP `Sync` reply, whose sequence value is discarded in favor
+of the mode 2026 form (terminfo-spec §6.3). Detection may also seed the field
+positively: static `Capabilities` carry `syncOutput`, raised by the `Sync`
+extended capability in the parsed terminfo entry and by the `TMUX` environment
+variable (terminfo-spec §7.1, §7.2). Evidence follows TINV-3 precedence: probe
+replies outrank detect-time seeding in both directions, so a DECRPM 0 or 4 reply
+turns the capability off even when detection seeded it. Without positive
+evidence the field stays false and no frame is wrapped.
 
-**Invalidation and timing.** The renderer reads the capability snapshot at
-each render transaction, so a capability flip takes effect on the next
-rendered frame. No invalidation signal exists, and none is required: a flip
-between frames changes only whether the next frame is wrapped.
+**Invalidation and timing.** The renderer reads the capability snapshot at each
+render transaction, so a capability flip takes effect on the next rendered
+frame. No invalidation signal exists, and none is required: a flip between
+frames changes only whether the next frame is wrapped.
 
 **Normative rules:**
 
 - When `syncOutput` is false, the renderer MUST NOT emit `?2026h` or `?2026l`.
 - When `syncOutput` is true, the renderer MUST wrap each full-screen frame in
   the BSU/ESU pair. Line mode (§8.2.2) is never wrapped: inline output may be
-  interleaved with foreign content, and an unterminated synchronized block
-  would suppress it.
+  interleaved with foreign content, and an unterminated synchronized block would
+  suppress it.
 - A full-screen render whose diff produces no cell changes and no caret
-  transition MUST emit zero bytes, even when `syncOutput` is true. The
-  renderer decides after the diff, so no-op frames carry neither the wrap
-  prefix nor the suffix.
-- Terminals that receive the sequences without supporting the mode ignore it
-  by design; the probe still refines behavior for terminals that report mode
-  0 or 4.
+  transition MUST emit zero bytes, even when `syncOutput` is true. The renderer
+  decides after the diff, so no-op frames carry neither the wrap prefix nor the
+  suffix.
+- Terminals that receive the sequences without supporting the mode ignore it by
+  design; the probe still refines behavior for terminals that report mode 0
+  or 4.
+
+This section discharges the synchronized-output deferral recorded in §7.8.
+
+### 7.10 Pointer shape
+
+An `open()` directive MAY declare a `cursor` property naming the mouse pointer
+shape to show while the pointer is over the element. Values are the kitty
+pointer shape names (the CSS `cursor` keywords): `default`, `none`,
+`context-menu`, `help`, `pointer`, `progress`, `wait`, `cell`, `crosshair`,
+`text`, `vertical-text`, `alias`, `copy`, `move`, `no-drop`, `not-allowed`,
+`grab`, `grabbing`, `e-resize`, `n-resize`, `ne-resize`, `nw-resize`,
+`s-resize`, `se-resize`, `sw-resize`, `w-resize`, `ew-resize`, `ns-resize`,
+`nesw-resize`, `nwse-resize`, `zoom-in`, `zoom-out`. Any other value MUST be
+treated as absent and MUST NOT reach the output. The property does not affect
+layout or cell output.
+
+The gate is `RuntimeCapabilities.pointerShape` (see
+[Terminfo Specification](terminfo-spec.md) §6.3). While it is `false`, the
+renderer MUST NOT emit OSC 22.
+
+**Resolved shape.** While the capability is `true`, each render resolves one
+shape:
+
+- `default` when the render options carry no `pointer`.
+- Otherwise, the `cursor` of the last declaring element in hit-test order (the
+  order behind `pointerenter` events, §12.4), or `default` when none declares
+  one. Ancestors precede descendants, so the innermost element wins. A floating
+  element in `"capture"` mode hides the elements beneath it; one in
+  `"passthrough"` mode lets them decide.
+
+Elements inside a `snapshot()` participate as direct directives would.
+Resolution and output are identical in line mode (§8.2.2).
+
+**Output.** The Term tracks the shape it last emitted, starting at `default`.
+When the resolved shape differs, the render MUST append `ESC ] 22 ; <shape> ST`
+to `output` after the frame's cell bytes and record the new shape. Otherwise it
+MUST NOT emit OSC 22.
+
+**Restore.** OSC 22 set cannot pop, so the Term restores by setting `default`:
+
+- A render that resolves `default` emits it per **Output** above.
+- An update step that changes `pointerShape` from `true` to `false` while the
+  emitted shape is not `default` MUST return `ESC ] 22 ; default ST` and record
+  `default`.
+- A resize step leaves the emitted shape unchanged.
+
+To restore before exit, the caller renders a frame without `pointer`, or passes
+`{ type: "capability", key: "pointer-shape", value: false }` to `update()`, and
+writes the result.
+
+### 7.9 Synchronized output (DEC mode 2026)
+
+When the `syncOutput` runtime capability is true, each full-screen frame
+(§8.2.1) is wrapped in Synchronized Output mode 2026 — Begin Synchronized Update
+(`CSI ? 2026 h`) before the frame's first emitted byte and End Synchronized
+Update (`CSI ? 2026 l`) after its last. The terminal buffers everything between
+the pair and presents it as one atomic repaint, so a frame never tears
+mid-update.
+
+**Capability evidence.** `syncOutput` originates exclusively from the
+`sync-output` `CapabilityEvent` (input-spec §5), emitted when the input parser
+reads a DECRPM 2026 reply to the probe (`CSI ? 2026 $ p`). Reply values 1, 2,
+and 3 (set, reset, permanently set) report support; 0 and 4 report none. The
+static `Capabilities` never seed this field: it is false until a probe reply is
+folded in through `update()`.
+
+**Invalidation and timing.** The renderer reads the capability snapshot at each
+render transaction, so a capability flip takes effect on the next rendered
+frame. No invalidation signal exists, and none is required: a flip between
+frames changes only whether the next frame is wrapped.
+
+**Normative rules:**
+
+- When `syncOutput` is false, the renderer MUST NOT emit `?2026h` or `?2026l`.
+- When `syncOutput` is true, the renderer MUST wrap each full-screen frame in
+  the BSU/ESU pair. Line mode (§8.2.2) is never wrapped: inline output may be
+  interleaved with foreign content, and an unterminated synchronized block would
+  suppress it.
+- A full-screen render whose diff produces no cell changes and no caret
+  transition MUST emit zero bytes, even when `syncOutput` is true. The renderer
+  decides after the diff, so no-op frames carry neither the wrap prefix nor the
+  suffix.
+- Terminals that receive the sequences without supporting the mode ignore it by
+  design; the probe still refines behavior for terminals that report mode 0
+  or 4.
 
 This section discharges the synchronized-output deferral recorded in §7.8.
 
@@ -707,40 +797,39 @@ Packs color channel values (each 0–255) into a single 32-bit integer in ARGB
 format. Alpha defaults to 255 (fully opaque). The returned value is used
 wherever the directive model expects a color.
 
-**Color values.** A color value is either a packed ARGB `number`, as
-produced by `rgba()`, or a hexadecimal color `string`. Every directive field
-described as a color — `open({ bg })`, `border.color`, `border.bg`, the
-`color` and `bg` fields of structured border sides, and
-`text({ color, bg })` — accepts both forms. The forms are exactly
-equivalent: each hex string is converted to its packed ARGB value at the
-transfer-encoding boundary (§9.2), so hex strings MUST NOT appear in the
-transfer encoding. The wire format, snapshot encoding, and cell
+**Color values.** A color value is either a packed ARGB `number`, as produced by
+`rgba()`, or a hexadecimal color `string`. Every directive field described as a
+color — `open({ bg })`, `border.color`, `border.bg`, the `color` and `bg` fields
+of structured border sides, and `text({ color, bg })` — accepts both forms. The
+forms are exactly equivalent: each hex string is converted to its packed ARGB
+value at the transfer-encoding boundary (§9.2), so hex strings MUST NOT appear
+in the transfer encoding. The wire format, snapshot encoding, and cell
 representation are unchanged by this acceptance, and the numeric and string
 forms of the same color produce bit-identical packed values.
 
 **Hex grammar.** A hex color string is `#` followed by exactly 3, 4, 6, or 8
-hexadecimal digits, case-insensitive. The `#` is required. The 3- and
-4-digit forms expand by doubling each digit: `#f80` is `#ff8800`, and
-`#f80a` is `#ff8800aa`. The 6- and 8-digit forms are taken literally. Alpha
-defaults to 255 in the 3- and 6-digit forms; the 4- and 8-digit forms supply
-alpha as their final digit pair (or digit, doubled).
+hexadecimal digits, case-insensitive. The `#` is required. The 3- and 4-digit
+forms expand by doubling each digit: `#f80` is `#ff8800`, and `#f80a` is
+`#ff8800aa`. The 6- and 8-digit forms are taken literally. Alpha defaults to 255
+in the 3- and 6-digit forms; the 4- and 8-digit forms supply alpha as their
+final digit pair (or digit, doubled).
 
 **Invalid hex.** A string that does not match the hex grammar is invalid
-directive input (§9.1). `validate()` reports it as an invalid field value.
-The packer MUST reject a directive array containing an invalid hex color
-string by throwing a `TypeError` before producing any bytes, rather than
-emitting a partially decoded or garbage color value.
+directive input (§9.1). `validate()` reports it as an invalid field value. The
+packer MUST reject a directive array containing an invalid hex color string by
+throwing a `TypeError` before producing any bytes, rather than emitting a
+partially decoded or garbage color value.
 
 **Static checking.** In TypeScript, color fields are typed `number | string`.
 The directive constructors check string literals against the hex grammar at
 compile time — the type-level equivalent of `#${string{3,4,6,8}}` — so an
 invalid hex literal is a type error at the call site. Strings whose value is
-only known at runtime (colors read from a theme or configuration, for
-example) pass the type check as `string` and are checked by `validate()`
-and the packer at render time. The string form is deliberately restricted
-to the hex grammar for now: a future version may accept the broader CSS
-Color 4 syntax, which is why the static type remains the plain
-`number | string` shape rather than a narrower prefix-pattern type.
+only known at runtime (colors read from a theme or configuration, for example)
+pass the type check as `string` and are checked by `validate()` and the packer
+at render time. The string form is deliberately restricted to the hex grammar
+for now: a future version may accept the broader CSS Color 4 syntax, which is
+why the static type remains the plain `number | string` shape rather than a
+narrower prefix-pattern type.
 
 ### 8.6 Term update
 
@@ -889,8 +978,9 @@ declaration is present, the cursor-positioning and cursor-visibility sequences
 specified in §7.6.
 
 Capability-specific output modes are not terminal-state management owned by the
-foundation renderer. A focused feature specification must define their state
-boundaries separately.
+foundation renderer. Each capability section of §7 defines its own state
+boundary. The mouse pointer shape (§7.10) is distinct from the cursor shape
+above, which remains caller-managed.
 
 ### 11.3 The renderer does not own application lifecycle
 
@@ -965,8 +1055,8 @@ The `open()` constructor currently accepts the following property groups in its
   `bottom`, `left`) accepts either a scalar width or a structured object
   `{ width, color?, bg? }`. The shared `color` field is required and is the
   fallback foreground for every side; the optional shared `bg` field is the
-  fallback border-cell background for every side. Color fields accept the
-  color values of §8.5 (packed ARGB number or hex string)
+  fallback border-cell background for every side. Color fields accept the color
+  values of §8.5 (packed ARGB number or hex string)
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
 - **`clip`** — Declares the element as a clip region (see §7.5). Currently
@@ -977,6 +1067,7 @@ The `open()` constructor currently accepts the following property groups in its
   reference, attach target, structured attach points, pointer capture mode, clip
   target, z-index)
 - **`scroll`** — scroll container configuration
+- **`cursor`** — mouse pointer shape while hovered (§7.10)
 
 The `floating` object shape is:
 
@@ -1028,8 +1119,8 @@ input or lets it pass through, `clipTo` controls inherited clipping, and
 
 The `text()` constructor accepts: `color`, `bg`, `fontSize`, `letterSpacing`,
 `lineHeight`, and attribute flags (`bold`, `italic`, `underline`,
-`strikethrough`). The `color` and `bg` fields accept the color values of
-§8.5 (packed ARGB number or hex string).
+`strikethrough`). The `color` and `bg` fields accept the color values of §8.5
+(packed ARGB number or hex string).
 
 These property groups represent the current implementation surface. New groups
 and fields have been added incrementally and more may follow.
@@ -1188,8 +1279,8 @@ acknowledged gaps, and the approach may evolve.
 ### 12.5 Validation and packing
 
 **`validate(ops)`** — A public API function that checks a directive array for
-structural errors (unbalanced open/close pairs, invalid field types —
-including color fields, which must be a packed ARGB number or a §8.5 hex color string).
+structural errors (unbalanced open/close pairs, invalid field types — including
+color fields, which must be a packed ARGB number or a §8.5 hex color string).
 Exported and used in tests.
 
 **`pack(ops, mem, offset)`** — An internal function that serializes a directive

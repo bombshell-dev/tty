@@ -23,7 +23,21 @@ const CLAY_DEFAULT_MAX_ELEMENT_COUNT = 8192;
 // Conservative fixed wire-format budget per element. This covers the largest
 // non-text open/close element encoding we currently support; text, element id,
 // and snapshot payload bytes live in TEXT_TRANSFER_BUFFER_BYTES.
-const MAX_FIXED_ELEMENT_WIRE_BYTES = 116;
+const MAX_FIXED_ELEMENT_WIRE_BYTES = 120;
+
+/** Capability evidence the renderer consumes for emission. */
+export interface RenderCapabilities {
+  syncOutput: boolean;
+  pointerShape: boolean;
+}
+
+const RENDER_CAP_SYNC_OUTPUT = 1 << 0;
+const RENDER_CAP_POINTER_SHAPE = 1 << 1;
+
+/** Pointer passed to reduce(): absent, up, or down. */
+export const POINTER_ABSENT = 0;
+export const POINTER_UP = 1;
+export const POINTER_DOWN = 2;
 
 export interface Native {
   memory: WebAssembly.Memory;
@@ -35,6 +49,13 @@ export interface Native {
    * opsBuf may change. Growing memory detaches prior buffer views.
    */
   update(w: number, h: number): void;
+  /**
+   * Push capability evidence into the renderer. The renderer holds it across
+   * frames; it is re-pushed internally after any re-init so it survives
+   * resize updates. Returns true when withdrawing pointerShape leaves a
+   * non-default shape on screen that the caller must reset.
+   */
+  setCapabilities(caps: RenderCapabilities): boolean;
   reduce(
     ct: number,
     buf: number,
@@ -42,11 +63,12 @@ export interface Native {
     mode: number,
     row: number,
     deltaTime: number,
-    sync: number,
+    px: number,
+    py: number,
+    pointer: number,
   ): void;
   output(ct: number): number;
   length(ct: number): number;
-  setPointer(x: number, y: number, down: boolean): void;
   getPointerOverIds(): string[];
   getElementBounds(id: string): BoundingBox | undefined;
   animating(ct: number): number;
@@ -60,6 +82,7 @@ import { compiled } from "./wasm.ts";
 export async function createTermNative(
   w: number,
   h: number,
+  caps: RenderCapabilities,
 ): Promise<Native> {
   let memory = new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
@@ -100,11 +123,15 @@ export async function createTermNative(
       mode: number,
       row: number,
       deltaTime: number,
-      sync: number,
+      px: number,
+      py: number,
+      pointer: number,
     ): void;
     output(ct: number): number;
     length(ct: number): number;
-    Clay_SetPointerState(vec: number, down: number): void;
+    set_capabilities(ct: number, caps: number): number;
+    pointer_shape(ct: number): number;
+    set_pointer_shape(ct: number, shape: number): void;
     pointer_over_count(): number;
     pointer_over_id_string_length(index: number): number;
     pointer_over_id_string_ptr(index: number): number;
@@ -122,8 +149,18 @@ export async function createTermNative(
   let transferBytes = TEXT_TRANSFER_BUFFER_BYTES +
     CLAY_DEFAULT_MAX_ELEMENT_COUNT * MAX_FIXED_ELEMENT_WIRE_BYTES;
 
-  let statePtr!: number;
+  let statePtr: number | undefined;
   let opsBuf = 0;
+  let capFlags = 0;
+
+  function pushCaps(ptr: number): boolean {
+    return ct.set_capabilities(ptr, capFlags) !== 0;
+  }
+
+  function setCaps(next: RenderCapabilities): void {
+    capFlags = (next.syncOutput ? RENDER_CAP_SYNC_OUTPUT : 0) |
+      (next.pointerShape ? RENDER_CAP_POINTER_SHAPE : 0);
+  }
 
   // Renderer state and the fixed transfer buffer share linear memory as
   // [heap: state][opsBuf]; opsBuf moves when the state size changes. Memory is
@@ -138,15 +175,20 @@ export async function createTermNative(
     if (pages > current) {
       memory.grow(pages - current);
     }
-    statePtr = ct.init(heap, lw, lh);
+    let shape = statePtr === undefined ? 0 : ct.pointer_shape(statePtr);
+    let ptr = ct.init(heap, lw, lh);
     opsBuf = (heap + size + 3) & ~3;
+    pushCaps(ptr);
+    ct.set_pointer_shape(ptr, shape);
+    statePtr = ptr;
   }
+  setCaps(caps);
   layout(w, h);
 
   return {
     memory,
     get statePtr() {
-      return statePtr;
+      return statePtr!;
     },
     get opsBuf() {
       return opsBuf;
@@ -154,16 +196,14 @@ export async function createTermNative(
     update(uw: number, uh: number): void {
       layout(uw, uh);
     },
+    setCapabilities(next: RenderCapabilities): boolean {
+      setCaps(next);
+      return pushCaps(statePtr!);
+    },
     reduce: ct.reduce,
     output: ct.output,
     length: ct.length,
     animating: ct.animating,
-    setPointer(x: number, y: number, down: boolean) {
-      let view = new DataView(memory.buffer);
-      view.setFloat32(opsBuf, x, true);
-      view.setFloat32(opsBuf + 4, y, true);
-      ct.Clay_SetPointerState(opsBuf, down ? 1 : 0);
-    },
     getPointerOverIds(): string[] {
       let decoder = new TextDecoder();
       let count = ct.pointer_over_count();
