@@ -43,6 +43,7 @@ struct Clayterm *ct_active_context = NULL;
 #define PROP_CLIP 0x10
 #define PROP_FLOATING 0x20
 #define PROP_TRANSITION 0x40
+#define PROP_CURSOR 0x80
 
 /* ── Instance state ───────────────────────────────────────────────── */
 
@@ -51,9 +52,10 @@ struct Clayterm *ct_active_context = NULL;
 /* clip stack depth: nesting beyond this clamps to the deepest rect */
 #define CLIP_STACK_MAX 16
 
-/* Clayterm-specific error code, numbered past Clay's error enum (0..8).
+/* Clayterm-specific error codes, numbered past Clay's error enum (0..8).
  * Mirrored by ERROR_TYPES in term.ts. */
 #define CLAYTERM_ERR_CLIP_DEPTH_EXCEEDED 9
+#define CLAYTERM_ERR_COMBINING_MARKS_EXCEEDED 10
 
 #define CLAYTERM_STR_(x) #x
 #define CLAYTERM_STR(x) CLAYTERM_STR_(x)
@@ -80,10 +82,37 @@ struct Clayterm {
   int clipoverflow;
   /* set once per frame when nesting first exceeds the tracked depth */
   int clip_depth_exceeded;
+  /* set once per frame when a cell first runs out of combining-mark slots */
+  int combining_exceeded;
   /* error collection */
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
   int animating_count;
+  /* CAP_* bits pushed by the host via set_capabilities(); init() zeroes
+   * them, so the host re-pushes after every re-init */
+  uint32_t caps;
+  /* Pointer shape (renderer-spec 7.10): hover_shape is what this frame's
+   * hit test resolved, pointer_shape is what was last emitted. Both index
+   * POINTER_SHAPES; 0 is "default". */
+  int hover_shape;
+  int pointer_shape;
+  /* Caret state for hardware-cursor management. The renderer records the
+   * first text node carrying a caret declaration per frame, precomputes the
+   * caret's byte offset into that node's content, then places the cell as
+   * a side effect of render_text's walk. had_caret_last_frame is the only
+   * cross-frame bit retained. */
+  const char
+      *caret_text_chars; /* start of caret-bearing text node's bytes, or NULL */
+  int caret_text_length; /* byte length of that text node */
+  uint32_t caret_offset_bytes; /* target byte offset within that text node */
+  int caret_placed;            /* 1 once the render walk has recorded a cell */
+  int caret_tail_valid;        /* 1 when caret_tail_x/y hold a fallback cell */
+  int caret_tail_x,
+      caret_tail_y; /* trailing cell of the most recently walked caret slice */
+  int caret_x,
+      caret_y;   /* resolved cell (column, row); -1 sentinel until placed */
+  int has_caret; /* 1 when the current frame will emit a cursor */
+  int had_caret_last_frame; /* 1 when the previous frame emitted a cursor */
 };
 
 /* Memory layout inside the arena provided by the host:
@@ -92,7 +121,38 @@ struct Clayterm {
  * Output buffer is sized at 64 bytes per cell — enough for worst-case
  * full-screen redraws with truecolor SGR sequences on every cell.
  */
-#define OUT_BYTES_PER_CELL 64
+/* 128 bytes per cell: ~84 bytes worst-case for CUP + SGR sequences, plus up
+ * to 4 (base SMP char) + 8×4 (combining marks) = 36 bytes of cluster text. */
+#define OUT_BYTES_PER_CELL 128
+
+/* Fixed per-frame slack on top of the per-cell budget, for output emitted
+ * once per frame rather than per cell: the BSU/ESU synchronized-output pair
+ * and one OSC 22 pointer shape. Keeps them from being dropped on tiny grids
+ * where the per-cell budget alone is tight. */
+#define OUT_FRAME_OVERHEAD 64
+
+/* Pointer shape names in wire-index order; mirrors POINTER_SHAPES in
+ * pointer-shape.ts. */
+static const char *const POINTER_SHAPES[] = {
+    "default",       "none",      "context-menu", "help",        "pointer",
+    "progress",      "wait",      "cell",         "crosshair",   "text",
+    "vertical-text", "alias",     "copy",         "move",        "no-drop",
+    "not-allowed",   "grab",      "grabbing",     "e-resize",    "n-resize",
+    "ne-resize",     "nw-resize", "s-resize",     "se-resize",   "sw-resize",
+    "w-resize",      "ew-resize", "ns-resize",    "nesw-resize", "nwse-resize",
+    "zoom-in",       "zoom-out",
+};
+#define POINTER_SHAPE_COUNT                                                    \
+  ((int)(sizeof(POINTER_SHAPES) / sizeof(POINTER_SHAPES[0])))
+
+/* Clay calls hover functions in hit-test order, ancestors first, so the
+ * last call is the innermost declaring element. */
+static void cursor_hover(Clay_ElementId id, Clay_PointerData pointer,
+                         void *shape) {
+  (void)id;
+  (void)pointer;
+  ct_active_context->hover_shape = (int)(uintptr_t)shape;
+}
 
 /* ── Cell buffer ops ──────────────────────────────────────────────── */
 
@@ -100,15 +160,15 @@ static Cell *cell_at(struct Clayterm *ct, Cell *buf, int x, int y) {
   return &buf[y * ct->w + x];
 }
 
-static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
-                    uint32_t bg) {
+static int setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
+                   uint32_t bg) {
   if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
-    return;
+    return 0;
   if (ct->clipping) {
     if (x < ct->clipx || x >= ct->clipx + ct->clipw)
-      return;
+      return 0;
     if (y < ct->clipy || y >= ct->clipy + ct->cliph)
-      return;
+      return 0;
   }
   Cell *c = cell_at(ct, ct->back, x, y);
   c->ch = ch;
@@ -116,6 +176,45 @@ static void setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
   if (!(bg & ATTR_DEFAULT)) {
     c->bg = bg;
   }
+  for (int i = 0; i < CELL_MAX_COMBINING; i++)
+    c->combining[i] = 0;
+  return 1;
+}
+
+/* Surface a COMBINING_MARKS_EXCEEDED error once per frame. */
+static void report_combining_exceeded(struct Clayterm *ct) {
+  if (ct->combining_exceeded)
+    return;
+  ct->combining_exceeded = 1;
+  if (ct->error_count >= MAX_ERRORS)
+    return;
+  static const char msg[] =
+      "cell exceeds combining-mark limit of " CLAYTERM_STR(
+          CELL_MAX_COMBINING) "; excess marks truncated";
+  ct->errors[ct->error_count++] = (Clay_ErrorData){
+      .errorType = (Clay_ErrorType)CLAYTERM_ERR_COMBINING_MARKS_EXCEEDED,
+      .errorText = {.isStaticallyAllocated = true,
+                    .length = (int32_t)(sizeof(msg) - 1),
+                    .chars = msg},
+      .userData = ct,
+  };
+}
+
+/* Append a combining-mark codepoint to the cell at (x, y) in the back buffer.
+ * Marks beyond CELL_MAX_COMBINING are dropped (truncation from end) and
+ * reported once per frame.
+ */
+static void append_combining(struct Clayterm *ct, int x, int y, uint32_t cp) {
+  if (x < 0 || x >= ct->w || y < 0 || y >= ct->h)
+    return;
+  Cell *c = cell_at(ct, ct->back, x, y);
+  for (int i = 0; i < CELL_MAX_COMBINING; i++) {
+    if (c->combining[i] == 0) {
+      c->combining[i] = cp;
+      return;
+    }
+  }
+  report_combining_exceeded(ct);
 }
 
 /* ── Escape sequence generation ───────────────────────────────────── */
@@ -200,6 +299,19 @@ static void present_cups(struct Clayterm *ct, int row) {
   ct->lastx = -1;
   ct->lasty = -1;
 
+  /* Synchronized Output (DEC mode 2026): the terminal buffers everything
+   * between BSU and ESU and presents it in one atomic repaint, so a frame
+   * never tears mid-update. Unsupported terminals ignore the private mode;
+   * whether we emit the wrap at all is decided by the sync-output
+   * capability. */
+  int sync = ct->caps & RENDER_CAP_SYNC_OUTPUT;
+  int start = ct->out.length;
+  if (sync)
+    buf_str(&ct->out, "\x1b[?2026h");
+  /* Body start: the no-op check below compares against this so the BSU
+   * itself never counts as frame content. */
+  int body = ct->out.length;
+
   for (int y = 0; y < ct->h; y++) {
     for (int x = 0; x < ct->w;) {
       Cell *back = cell_at(ct, ct->back, x, y);
@@ -221,6 +333,8 @@ static void present_cups(struct Clayterm *ct, int row) {
             emit_ch(ct, i, y, row, ' ');
         } else {
           emit_ch(ct, x, y, row, back->ch);
+          for (int ci = 0; ci < CELL_MAX_COMBINING && back->combining[ci]; ci++)
+            buf_char(&ct->out, back->combining[ci]);
           /* mark trailing cells of wide char as invalid in front
            * so they'll diff when overwritten by narrow chars */
           for (int i = 1; i < w; i++) {
@@ -233,6 +347,27 @@ static void present_cups(struct Clayterm *ct, int row) {
       }
       x += w;
     }
+  }
+
+  /* Hardware cursor management: per the spec's outcome contract,
+   * leave the cursor visible at the caret cell if a caret was declared
+   * this frame; otherwise hide it if and only if a caret was declared
+   * last frame. When neither this frame nor any prior frame declared
+   * a caret, emit nothing. */
+  if (ct->has_caret) {
+    emit_cursor(ct, ct->caret_x, ct->caret_y, row);
+    buf_str(&ct->out, "\x1b[?25h");
+  } else if (ct->had_caret_last_frame) {
+    buf_str(&ct->out, "\x1b[?25l");
+  }
+  ct->had_caret_last_frame = ct->has_caret;
+
+  if (ct->out.length == body) {
+    /* Nothing was emitted — no cell changes and no caret transition.
+     * Rewind the BSU so a no-op frame still produces zero bytes. */
+    ct->out.length = start;
+  } else if (sync) {
+    buf_str(&ct->out, "\x1b[?2026l"); /* ESU: end synchronized update */
   }
 }
 
@@ -268,6 +403,8 @@ static void present_lines(struct Clayterm *ct) {
         if (!iswprint(ch))
           ch = 0xfffd;
         buf_char(&ct->out, ch);
+        for (int ci = 0; ci < CELL_MAX_COMBINING && back->combining[ci]; ci++)
+          buf_char(&ct->out, back->combining[ci]);
         for (int i = 1; i < w; i++) {
           Cell *fw = cell_at(ct, ct->front, x + i, y);
           fw->ch = 0xffffffff;
@@ -299,6 +436,30 @@ static void render_rect(struct Clayterm *ct, int x0, int y0, int x1, int y1,
       setcell(ct, x, y, ' ', ATTR_DEFAULT, bg);
 }
 
+/* Return the byte length of the first `cps` code points of `start`,
+ * clamped to at most `max_bytes`. Used at decode time to convert the
+ * caller's code-point caret offset into a stable byte offset. */
+static uint32_t utf8_bytes_for_cps(const char *start, uint32_t cps,
+                                   uint32_t max_bytes) {
+  uint32_t consumed = 0;
+  const char *p = start;
+  int rem = (int)max_bytes;
+  for (uint32_t k = 0; k < cps && rem > 0; k++) {
+    uint32_t cp;
+    int n = utf8_decode(&cp, p);
+    if (n <= 0) {
+      n = 1;
+    }
+    if (n > rem) {
+      n = rem;
+    }
+    consumed += (uint32_t)n;
+    p += n;
+    rem -= n;
+  }
+  return consumed;
+}
+
 static void render_text(struct Clayterm *ct, int x0, int y0,
                         Clay_RenderCommand *cmd) {
 
@@ -310,11 +471,47 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
   uint32_t attrs = ((uint32_t)(uint8_t)t->textColor.a) << 24;
   fg |= attrs;
 
-  const char *p = t->stringContents.chars;
-  int rem = t->stringContents.length;
+  const char *slice = t->stringContents.chars;
+  int slice_len = t->stringContents.length;
+
+  /* Determine whether this slice belongs to the caret's text node and
+   * whether the caret still needs to be placed. If so, resolve the cell
+   * as a side effect of the walk instead of doing a separate pass. */
+  const char *node_start = ct->caret_text_chars;
+  const char *node_end = node_start ? node_start + ct->caret_text_length : NULL;
+  int caret_relevant = (node_start != NULL && !ct->caret_placed &&
+                        slice >= node_start && slice < node_end);
+
+  /* Pre-check: if the slice's first byte is already past the target,
+   * whitespace at the wrap seam was dropped by the layout engine. Snap
+   * the caret to this slice's origin. */
+  if (caret_relevant) {
+    uint32_t slice_start_bytes = (uint32_t)(slice - node_start);
+    if (slice_start_bytes > ct->caret_offset_bytes) {
+      ct->caret_x = x0;
+      ct->caret_y = y0;
+      ct->caret_placed = 1;
+      caret_relevant = 0;
+    }
+  }
+
+  const char *p = slice;
+  int rem = slice_len;
   int x = x0;
+  int last_x = -1; /* column of the most-recently written base cell */
 
   while (rem > 0) {
+    /* Check at the top of each iteration: if the pointer we are about to
+     * consume matches the target byte offset, the caret sits at the
+     * current cell — right before this code point. */
+    if (caret_relevant &&
+        (uint32_t)(p - node_start) == ct->caret_offset_bytes) {
+      ct->caret_x = x;
+      ct->caret_y = y0;
+      ct->caret_placed = 1;
+      caret_relevant = 0;
+    }
+
     uint32_t cp;
     int n = utf8_decode(&cp, p);
     if (n <= 0) {
@@ -325,11 +522,24 @@ static void render_text(struct Clayterm *ct, int x0, int y0,
     if (cw < 0)
       cw = 1;
     if (cw > 0) {
-      setcell(ct, x, y0, cp, fg, bg);
+      last_x = setcell(ct, x, y0, cp, fg, bg) ? x : -1;
       x += cw;
+    } else if (last_x >= 0) {
+      /* combining mark: attach to the preceding base cell */
+      append_combining(ct, last_x, y0, cp);
     }
     p += n;
     rem -= n;
+  }
+
+  /* Remember the trailing cell of this slice as the end-of-content
+   * fallback. If no later slice claims the target and the caret still
+   * hasn't been placed by the end of the render command loop, this cell
+   * is where a caret at offset == content-length lands. */
+  if (caret_relevant) {
+    ct->caret_tail_x = x;
+    ct->caret_tail_y = y0;
+    ct->caret_tail_valid = 1;
   }
 }
 
@@ -453,10 +663,27 @@ static Clay_SizingAxis decode_axis(uint32_t *buf, int len, int *i) {
 
 static int align64(int n) { return (n + 63) & ~63; }
 
+/* Clay's element capacity drives nearly all of Clay_MinMemorySize, so scale it
+ * with the grid instead of shipping Clay's fixed 8192-element default. 2x cells
+ * bounds sane trees (leaves >= 1 cell, branching >= 2); the ceiling preserves
+ * today's capacity for large grids, the floor keeps headroom on tiny ones.
+ * Must run before Clay_MinMemorySize in both clayterm_size and init so the
+ * size the host queries always matches the arena init consumes. */
+static void set_clay_capacity(int w, int h) {
+  int elems = w * h * 2;
+  if (elems < 2048)
+    elems = 2048;
+  if (elems > 8192)
+    elems = 8192;
+  Clay_SetMaxElementCount(elems);
+  Clay_SetMaxMeasureTextCacheWordCount(elems * 2);
+}
+
 int clayterm_size(int w, int h) {
+  set_clay_capacity(w, h);
   int cell_count = w * h;
   int cell_bytes = cell_count * (int)sizeof(Cell);
-  int out_bytes = cell_count * OUT_BYTES_PER_CELL;
+  int out_bytes = cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD;
   int clay_bytes = (int)Clay_MinMemorySize();
   return align8((int)sizeof(struct Clayterm)) + align8(cell_bytes) /* front */
          + align8(cell_bytes)                                      /* back */
@@ -514,10 +741,11 @@ int error_message_ptr(struct Clayterm *ct, int index) {
 }
 
 struct Clayterm *init(void *mem, int w, int h) {
+  set_clay_capacity(w, h);
   struct Clayterm *ct = (struct Clayterm *)mem;
   int cell_count = w * h;
   int cell_bytes = align8(cell_count * (int)sizeof(Cell));
-  int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL);
+  int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD);
   char *base = (char *)mem + align8((int)sizeof(struct Clayterm));
 
   char *clay_mem = base + cell_bytes * 2 + out_bytes;
@@ -532,7 +760,8 @@ struct Clayterm *init(void *mem, int w, int h) {
       .h = h,
       .front = (Cell *)base,
       .back = (Cell *)(base + cell_bytes),
-      .out = {base + cell_bytes * 2, 0, cell_count * OUT_BYTES_PER_CELL},
+      .out = {base + cell_bytes * 2, 0,
+              cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD},
       .lastfg = 0xffffffff,
       .lastbg = 0xffffffff,
       .lastx = -1,
@@ -547,12 +776,38 @@ struct Clayterm *init(void *mem, int w, int h) {
   return ct;
 }
 
+int set_capabilities(struct Clayterm *ct, uint32_t caps) {
+  int withdrawn = (ct->caps & RENDER_CAP_POINTER_SHAPE) &&
+                  !(caps & RENDER_CAP_POINTER_SHAPE);
+  int restore = withdrawn && ct->pointer_shape != 0;
+  if (restore)
+    ct->pointer_shape = 0;
+  ct->caps = caps;
+  return restore;
+}
+
+int pointer_shape(struct Clayterm *ct) { return ct->pointer_shape; }
+
+void set_pointer_shape(struct Clayterm *ct, int shape) {
+  ct->pointer_shape = shape;
+}
+
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
-            float deltaTime) {
+            float deltaTime, float px, float py, int pointer) {
   int i = 0;
   ct_active_context = ct;
   ct->error_count = 0;
   ct->animating_count = 0;
+  ct->caret_text_chars = NULL;
+  ct->caret_text_length = 0;
+  ct->caret_offset_bytes = 0;
+  ct->caret_placed = 0;
+  ct->caret_tail_valid = 0;
+  ct->caret_tail_x = -1;
+  ct->caret_tail_y = -1;
+  ct->caret_x = -1;
+  ct->caret_y = -1;
+  ct->has_caret = 0;
 
   Clay_BeginLayout();
 
@@ -617,6 +872,13 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
         decl.border.width.top = (bw >> 16) & 0xff;
         decl.border.width.bottom = (bw >> 24) & 0xff;
 
+        /* Border sides reserve layout space additively: effective padding
+         * is userPadding + borderWidth per side (renderer-spec 12.2). */
+        decl.layout.padding.left += decl.border.width.left;
+        decl.layout.padding.right += decl.border.width.right;
+        decl.layout.padding.top += decl.border.width.top;
+        decl.layout.padding.bottom += decl.border.width.bottom;
+
         /* Resolved per-side fg/bg attribute words (top, right, bottom,
          * left). Routed to render_border via userData; the command buffer
          * remains valid for the whole render pass. */
@@ -665,7 +927,14 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
                 : CLAY_TRANSITION_DISABLE_INTERACTIONS_WHILE_TRANSITIONING_POSITION;
       }
 
+      uint32_t cursor = POINTER_SHAPE_COUNT;
+      if (mask & PROP_CURSOR)
+        cursor = rd(buf, len, &i);
+
       Clay__ConfigureOpenElement(decl);
+
+      if (cursor < POINTER_SHAPE_COUNT && (ct->caps & RENDER_CAP_POINTER_SHAPE))
+        Clay_OnHover(cursor_hover, (void *)(uintptr_t)cursor);
       break;
     }
 
@@ -673,10 +942,35 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       uint32_t col = rd(buf, len, &i);
       uint32_t bg = rd(buf, len, &i);
       uint32_t cfg = rd(buf, len, &i);
+      uint32_t caret = rd(buf, len, &i);
       uint32_t str_len = rd(buf, len, &i);
       int str_words = (str_len + 3) / 4;
       char *str_chars = (char *)&buf[i];
       i += str_words;
+
+      /* A caret on empty content is a rendering commitment the layout
+       * engine cannot satisfy on its own — zero cells give render_text
+       * nothing to attach the cursor to. Substitute a single space so
+       * the caret lands at the text element's origin, per the spec's
+       * "as if the content were a single space" outcome. */
+      if (caret != 0xFFFFFFFF && str_len == 0) {
+        str_chars = (char *)" ";
+        str_len = 1;
+      }
+
+      /* Record the FIRST caret declaration per frame for the
+       * single-hardware-cursor contract; later declarations are
+       * intentionally ignored (multi-cursor is unspecified).
+       *
+       * Convert the caller's code-point offset into a byte offset once
+       * here so the render walk can identify the caret cell by simple
+       * pointer arithmetic against the slice's chars pointer. */
+      if (caret != 0xFFFFFFFF && ct->caret_text_chars == NULL) {
+        ct->caret_text_chars = str_chars;
+        ct->caret_text_length = (int)str_len;
+        ct->caret_offset_bytes = utf8_bytes_for_cps(str_chars, caret, str_len);
+        ct->has_caret = 1;
+      }
 
       Clay_String text = {.length = (int32_t)str_len, .chars = str_chars};
 
@@ -704,6 +998,12 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
 
   Clay_RenderCommandArray cmds = Clay_EndLayout(deltaTime);
 
+  /* pointer: 0 = absent, 1 = up, 2 = down. The hit test runs against this
+   * frame's layout and fires cursor_hover for declaring elements. */
+  ct->hover_shape = 0;
+  if (pointer)
+    Clay_SetPointerState((Clay_Vector2){px, py}, pointer == 2);
+
   /* reset output state */
   ct->out.length = 0;
   ct->lastfg = ct->lastbg = 0xffffffff;
@@ -711,6 +1011,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   ct->clipdepth = 0;
   ct->clipoverflow = 0;
   ct->clip_depth_exceeded = 0;
+  ct->combining_exceeded = 0;
   ct->clipping = 0;
 
   cells_fill(ct->back, ct->w, ct->h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);
@@ -796,10 +1097,34 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
     }
   }
 
+  /* End-of-content fallback: if a caret was declared and its target byte
+   * offset is one past the last byte of the caret text node, the trailing
+   * cell of the last walked caret slice is where it lands. */
+  if (ct->has_caret && !ct->caret_placed) {
+    if (ct->caret_tail_valid &&
+        ct->caret_offset_bytes == (uint32_t)ct->caret_text_length) {
+      ct->caret_x = ct->caret_tail_x;
+      ct->caret_y = ct->caret_tail_y;
+      ct->caret_placed = 1;
+    } else {
+      /* Offset out of range or otherwise unresolvable. Suppress the
+       * cursor for this frame. */
+      ct->has_caret = 0;
+    }
+  }
+
   if (mode == 1) {
     present_lines(ct);
   } else {
     present_cups(ct, row);
+  }
+
+  if ((ct->caps & RENDER_CAP_POINTER_SHAPE) &&
+      ct->hover_shape != ct->pointer_shape) {
+    ct->pointer_shape = ct->hover_shape;
+    buf_str(&ct->out, "\x1b]22;");
+    buf_str(&ct->out, POINTER_SHAPES[ct->pointer_shape]);
+    buf_str(&ct->out, "\x1b\\");
   }
 
   ct_active_context = NULL;
@@ -856,8 +1181,13 @@ void measure(int ret, int txt) {
     int n = utf8_decode(&cp, p);
     if (n <= 0) {
       n = 1;
+      cp = 0xfffd;
     }
+    /* Mirror draw_text: non-printables render as one U+FFFD cell, so
+     * they must measure as one cell. */
     int cw = wcwidth(cp);
+    if (cw < 0)
+      cw = 1;
     if (cw > 0)
       w += cw;
     p += n;

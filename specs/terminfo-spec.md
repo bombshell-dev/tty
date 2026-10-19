@@ -1,0 +1,657 @@
+# Clayterm Terminfo & Capability Specification
+
+**Version:** 0.2 (draft) **Status:** Proposed. Normative for the shared
+capability layer.
+
+---
+
+## 1. Purpose
+
+This specification defines Clayterm's terminal capability layer: how static
+capability data (compiled terminfo binaries) and runtime capability data
+(query/response handshakes such as OSC color queries and DA1) are resolved into
+typed values that the renderer and the input parser consume independently.
+
+The capability layer answers one question for both consumers: **what can this
+terminal do?** The renderer receives a read-only runtime snapshot. Focused
+renderer features decide how to consume that snapshot (color encoding, erase
+strategy, synchronized-output frame wrapping, or protocol-specific output). The
+input parser uses the raw key-sequence material from the terminfo entry to seed
+its trie, and surfaces probe responses as `CapabilityEvent` values in the normal
+event stream.
+
+---
+
+## 2. Scope
+
+### In scope (normative)
+
+- The `Capabilities` interface: its fields and the rules for how they are set
+- The `TerminalInfo` value returned by `detectTerminal()`
+- The `CapabilityEvent` discriminated union and its `key`/`value` shapes
+- Compiled terminfo binary parsing (legacy and extended formats)
+- The probe model: query batch, DA1 completion fence, and sans-IO contract
+- The public API: `detectTerminal()`, `createTerm`, `createInput`, and
+  `Term.update`
+- The baseline capability set and the progressive-enhancement evidence model
+
+### Out of scope
+
+- How the renderer maps capabilities to emitted bytes (see
+  [Renderer Specification](renderer-spec.md) §7.6 and §7.8)
+- How the input parser recognizes query responses byte-by-byte (see
+  [Input Specification](input-spec.md) §6)
+- Caller-layer mode management (alt screen, mouse reporting, keyboard protocol
+  modes) — capabilities inform these decisions but do not perform them
+
+---
+
+## 3. Terminology
+
+**`Capabilities`.** A plain TypeScript interface holding the static capability
+state of one terminal, resolved at detection time. Frozen after `detectTerminal`
+returns. No WASM backing.
+
+**`TerminalInfo`.** The value returned by `detectTerminal()`. Carries the frozen
+`Capabilities`, the probe query batch (`probe`), and the raw terminfo
+key-sequence bytes the input parser needs to seed its trie (`keys`).
+
+**`CapabilityEvent`.** A discriminated union in the input event stream. The
+input parser emits one `CapabilityEvent` for each probe response it recognizes.
+Each event carries a `key` (a string literal identifying the capability) and a
+`value` (an `Rgb` color or a `boolean`).
+
+**`RuntimeCapabilities`.** The renderer's merged view: the static `Capabilities`
+fields plus all `CapabilityEvent` values folded in by `update()` calls. Exposed
+as a read-only property on `Term`.
+
+**Probe.** A batch of terminal query sequences emitted as bytes by the caller,
+whose responses arrive on the input stream and surface as `CapabilityEvent`
+values from `scan()`.
+
+**Fence.** The final query in a probe batch, chosen because every terminal
+answers it. Its response marks the probe complete. DA1 (`CSI c`) is the fence.
+
+---
+
+## 4. Architectural model
+
+### 4.1 Static and dynamic capabilities
+
+Capabilities fall into two categories that never mix at runtime.
+
+**Static capabilities** are resolved once by `detectTerminal()` from the
+compiled terminfo entry and the process environment. They are fields on the
+`Capabilities` interface, frozen at detection time, and never mutated. The
+renderer and input parser each receive a copy at construction.
+
+**Dynamic capabilities** are discovered at runtime through the probe. The
+terminal's responses arrive on the input stream, where the input parser
+recognizes them and emits `CapabilityEvent` values alongside keys and mouse
+events. The host loop routes these events to `term.update()`, which folds them
+into the renderer's `RuntimeCapabilities` and returns any bytes to write
+immediately.
+
+### 4.2 Data flow
+
+```
+terminfo file bytes ──▶ terminfo_parse() ─▶ Capabilities (frozen)
+                                                  │
+                         ┌────────────────────────┤
+                         ▼                        ▼
+                    createInput()           createTerm()
+                         │                        │
+probe bytes ──▶ terminal ──▶ stdin                │
+                    scan() ─▶ CapabilityEvent ─▶ update() ─▶ Uint8Array (write now)
+                                                  │
+                                           RuntimeCapabilities
+```
+
+- `detectTerminal()` parses raw bytes into `Capabilities`. It performs no IO.
+- The input parser is the only source of `CapabilityEvent` values. It writes
+  nothing; it emits.
+- The renderer holds its own private capability state. `update()` is the only
+  path that changes it.
+- The renderer and the input parser share no memory and hold no reference to
+  each other. The host loop is the only place they meet.
+
+### 4.3 Standalone operation
+
+`createTerm` and `createInput` remain usable without a `TerminalInfo`. When no
+`terminfo` option is provided, each factory initializes from the §7.1 baseline.
+Behavior is identical to a `TerminalInfo` with no terminfo bytes, no environment
+evidence, and no probe responses.
+
+---
+
+## 5. Core invariants
+
+_This section is normative._
+
+**TINV-1. Frozen static capabilities.** `Capabilities` is frozen after
+`detectTerminal` returns. Neither the renderer nor the input parser may mutate
+it.
+
+**TINV-2. Pure parsing.** `terminfo_parse` performs no IO, allocates no memory,
+and never traps on malformed input. Input larger than `MAX_TERMINFO_ENTRY`
+(32768 bytes) never reaches the parser: an oversized `entry` rejects at the
+TypeScript boundary (§10.1), and an oversized file found on the search path is
+skipped. Malformed or truncated binaries yield the §7.1 baseline and a nonzero
+parse-result code. They MUST NOT partially apply.
+
+**TINV-3. Progressive enhancement.** The capability layer starts from the
+conservative §7.1 baseline and raises a capability only on positive evidence.
+Evidence sources, in increasing precedence: the baseline, the terminfo entry,
+environment evidence collected at detection (e.g. `COLORTERM`), and probe
+responses. A capability no evidence supports keeps its baseline value.
+Higher-precedence evidence overrides lower-precedence evidence in both
+directions: a probe denial overrides a statically-set capability.
+
+**TINV-4. Sans-IO probe.** `TerminalInfo.probe` is a `Uint8Array` produced by
+`detectTerminal()` without touching any stream. The host writes the bytes.
+`detectTerminal()` resolves — never rejects — on timeout, non-TTY streams, a
+missing, oversized, or malformed terminfo file, or abort. Environmental
+conditions degrade to the §7.1 baseline. The only rejection is caller error
+(§10.1).
+
+**TINV-5. Immediate update output.** `term.update()` returns a `Uint8Array` of
+bytes to write now. It MUST NOT defer output to the next `render()` call. An
+empty array is a valid return when the update changes no rendered state.
+
+**TINV-6. Event-only probe surface.** The input parser MUST NOT write to any
+shared state when it recognizes a probe response. It surfaces the result as a
+`CapabilityEvent` in the `scan()` return value. The host loop is responsible for
+routing the event to `term.update()`.
+
+---
+
+## 6. Capability types
+
+_This section is normative for the shapes and field semantics._
+
+### 6.1 `Capabilities` — static fields
+
+```ts
+interface Capabilities {
+  readonly colors: number;
+  readonly trueColor: boolean;
+  readonly bce: boolean;
+  readonly autoMargin: boolean;
+  readonly xenl: boolean;
+  readonly altScreen: boolean;
+  readonly styledUnderline: boolean;
+  readonly syncOutput: boolean;
+  readonly pointerShape: boolean;
+}
+```
+
+| Field             | Source                                                                  |
+| ----------------- | ----------------------------------------------------------------------- |
+| `colors`          | `max_colors` from terminfo; 256 at baseline                             |
+| `trueColor`       | `RGB`/`Tc` extended caps; `COLORTERM` env evidence; probe overrides     |
+| `bce`             | `bce` boolean cap                                                       |
+| `autoMargin`      | `am` boolean cap                                                        |
+| `xenl`            | `xenl` boolean cap                                                      |
+| `altScreen`       | `smcup` string present                                                  |
+| `styledUnderline` | `Su` boolean or `Smulx` string                                          |
+| `syncOutput`      | `Sync` extended cap; `TMUX` env evidence (§7.2); probe overrides (§6.3) |
+| `pointerShape`    | known OSC 22 support table (below); probe overrides                     |
+
+Key sequences (`key_*` capabilities) are not stored here. The input parser reads
+them directly from the raw terminfo bytes in `TerminalInfo.keys` at
+initialization time.
+
+**Known OSC 22 support.** Some terminals implement OSC 22 pointer shape setting
+but never answer its support query (Renderer Specification §7.10); silence must
+not count as denial, so `detectTerminal()` seeds `pointerShape: true` when the
+environment identifies a terminal in this table. Entries require primary
+evidence from the terminal's own documentation or specification.
+
+| Terminal | Environment evidence                           | Version floor | Evidence                   |
+| -------- | ---------------------------------------------- | ------------- | -------------------------- |
+| ghostty  | `TERM=xterm-ghostty` or `TERM_PROGRAM=ghostty` | 1.0.0         | ghostty.org/docs/vt/osc/22 |
+| kitty    | `TERM=xterm-kitty` or `KITTY_WINDOW_ID` set    | 0.31.0        | kitty pointer-shapes spec  |
+| foot     | `TERM` starting with `foot`                    | 1.12.0        | foot-ctlseqs(7)            |
+| xterm    | `XTERM_VERSION` parses as patch ≥ 367          | 367           | xterm ctlseqs (OSC 22)     |
+
+The table names terminals by what they _emit_, not by what they parse: an
+implementation that accepts only a non-CSS vocabulary (e.g. Windows cursor
+names) MUST NOT be listed, since the renderer emits the kitty CSS names
+exclusively (§6.3). This is static evidence with known failure modes: nested
+contexts that inherit the environment unchanged (for example Emacs `term-mode`
+running inside a listed terminal) are granted by association and will garble
+OSC 22. Terminals that rewrite `TERM` (tmux, Zellij) or `TERM_PROGRAM` (IDE
+terminals) are naturally excluded; ssh forwards are true positives because the
+bytes still reach the real terminal. Stale entries degrade to the same silent
+swallowing the gate was built to avoid.
+
+### 6.2 `ColorDepth`
+
+```ts
+type ColorDepth = "truecolor" | "256" | "16";
+```
+
+`ColorDepth` expresses the terminal's confirmed color rendering tier. It is the
+value type for `key: "colordepth"` `CapabilityEvent` values.
+
+### 6.3 `CapabilityEvent` — dynamic fields
+
+```ts
+type CapabilityEvent =
+  | {
+    readonly type: "capability";
+    readonly key: "foreground-color";
+    readonly value: Rgb;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "background-color";
+    readonly value: Rgb;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "cursor-color";
+    readonly value: Rgb;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "colordepth";
+    readonly value: ColorDepth;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "sync-output";
+    readonly value: boolean;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "kitty-keyboard";
+    readonly value: boolean;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "kitty-graphics";
+    readonly value: boolean;
+  }
+  | {
+    readonly type: "capability";
+    readonly key: "pointer-shape";
+    readonly value: boolean;
+  };
+```
+
+Each variant maps to at least one probe query. The `key` identifies the
+capability; the `value` is the terminal's answer. Capability references per
+[terminfo.dev](https://terminfo.dev):
+
+| `key`              | Query                              | terminfo.dev slug                                                                               |
+| ------------------ | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `foreground-color` | OSC 10                             | [`osc-10-fg-color-query`](https://terminfo.dev/extensions/osc-10-fg-color-query)                |
+| `background-color` | OSC 11                             | [`osc-11-bg-color-query`](https://terminfo.dev/extensions/osc-11-bg-color-query)                |
+| `cursor-color`     | OSC 12 or OSC 21                   | [`osc-12-cursor-color`](https://terminfo.dev/extensions/osc-12-cursor-color)                    |
+| `colordepth`       | XTGETTCAP `RGB`/`Tc`               | [`24-bit-truecolor`](https://terminfo.dev/extensions/24-bit-truecolor)                          |
+| `sync-output`      | DECRPM mode 2026; XTGETTCAP `Sync` | [`decset-2026-synchronized-output`](https://terminfo.dev/modes/decset-2026-synchronized-output) |
+| `kitty-keyboard`   | `CSI ? u`                          | [`kitty-keyboard-protocol`](https://terminfo.dev/extensions/kitty-keyboard-protocol)            |
+| `kitty-graphics`   | APC `_G…`                          | [`kitty-graphics-protocol`](https://terminfo.dev/extensions/kitty-graphics-protocol)            |
+| `pointer-shape`    | OSC 22                             | [`osc-22-pointer-shape`](https://terminfo.dev/extensions/osc-22-pointer-shape)                  |
+
+**Color values.** `Rgb` values in probe responses MUST be recognized in at least
+the `rgb:RR/GG/BB` (1–4 hex digits per channel) and `#`-hash forms.
+
+**`colordepth` denial.** When XTGETTCAP replies with an invalid-capability
+response for both `RGB` and `Tc`, the parser emits
+`{ key: "colordepth", value:
+D }` where `D` is derived from the static
+`Capabilities.colors` field: `"16"` when `colors <= 16`, `"256"` otherwise. This
+preserves TINV-3: the probe response takes precedence over static evidence,
+including in the negative direction.
+
+**XTGETTCAP `Sync`.** A reply carrying a value for `Sync` emits
+`{ key: "sync-output", value: true }`. An invalid-capability reply for `Sync`
+emits `{ key: "sync-output", value: false }`. The value carried by a positive
+reply is the terminal's own synchronization sequence — the iTerm2 DCS form
+(`DCS = 1 s` / `DCS = 2 s`) for some terminals, `CSI ? 2026 h`/`l` for others.
+The value is discarded in v1: only support is recorded, and the renderer emits
+the DEC mode 2026 form (renderer-spec §7.9). A terminal that advertises only the
+DCS form therefore receives 2026-form bytes it ignores; this bounded cost is
+accepted.
+
+**OSC 21.** An OSC 21 reply may supply any subset of `foreground-color`,
+`background-color`, and `cursor-color`. The parser emits one `CapabilityEvent`
+per field the reply carries. OSC 21 arriving alongside OSC 10/11/12 replies does
+not merge; each response yields its own event.
+
+**OSC 22.** An OSC 22 reply sets `key: "pointer-shape", value: true`. The shape
+name in the reply is discarded in v1; only protocol support is recorded. The
+renderer emits pointer shapes only while `pointerShape` is `true` (Renderer
+Specification §7.10). Terminals that implement OSC 22 set but not its query
+never reply; `detectTerminal()` supplies that evidence itself from the
+known-support table (§6.1), and a caller may still override it with
+`term.update([{ type: "capability", key: "pointer-shape", value: true }])`.
+
+**DA1.** The DA1 reply is recognized internally as the probe fence and MUST NOT
+surface as a `CapabilityEvent`.
+
+### 6.4 `RuntimeCapabilities` — merged view
+
+```ts
+interface RuntimeCapabilities extends Capabilities {
+  readonly syncOutput: boolean;
+  readonly kittyKeyboard: boolean;
+  readonly kittyGraphics: boolean;
+  readonly theme: {
+    readonly foreground?: Rgb;
+    readonly background?: Rgb;
+    readonly cursor?: Rgb;
+  };
+}
+```
+
+`RuntimeCapabilities` is the renderer's current merged view: the static
+`Capabilities` fields (including `pointerShape`, which starts from the
+known-support table and is raised by a probe reply or a `pointer-shape`
+CapabilityEvent) plus all other `CapabilityEvent` values folded in so far. The
+`trueColor` field reflects the latest evidence at any precedence level; a
+`colordepth` probe event overrides the static value. `RuntimeCapabilities` is
+exposed as `term.capabilities` and is a frozen snapshot at the moment of access.
+
+---
+
+## 7. Baseline and environment evidence
+
+_This section is normative._
+
+### 7.1 Baseline
+
+With no terminfo bytes, no environment evidence, and no probe responses,
+`Capabilities` is initialized to:
+
+| Field             | Default |
+| ----------------- | ------- |
+| `colors`          | 256     |
+| `trueColor`       | `false` |
+| `bce`             | `true`  |
+| `autoMargin`      | `true`  |
+| `xenl`            | `true`  |
+| `altScreen`       | `true`  |
+| `styledUnderline` | `false` |
+| `syncOutput`      | `false` |
+| `pointerShape`    | `false` |
+
+Truecolor is not assumed at baseline. Per TINV-3, it requires positive evidence.
+The same holds for synchronized output: no frame is wrapped until a `Sync`
+extended capability, `TMUX` environment evidence, or a probe response raises it
+(§7.2, §6.3).
+
+### 7.2 Environment evidence
+
+`detectTerminal()` applies environment evidence after parsing the terminfo
+entry:
+
+- `COLORTERM` equal to `truecolor` or `24bit` sets `trueColor: true`.
+- `TMUX` set to a non-empty value sets `syncOutput: true`. A running tmux
+  consumes DEC mode 2026 from applications running inside it and translates it
+  to the outer terminal's synchronization mechanism (the tmux `Sync` terminfo
+  capability and `sync` terminal feature), so its presence is positive evidence
+  even for tmux releases that do not themselves answer the DECRPM 2026 probe.
+
+Environment evidence outranks the terminfo entry and is outranked by probe
+responses (TINV-3).
+
+---
+
+## 8. Terminfo binary parsing
+
+_This section is normative._
+
+Parsing is implemented in C and exported from the wasm module. It is internal:
+`detectTerminal()` is the only caller, and nothing below is part of the public
+API.
+
+```c
+int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *out);
+```
+
+`terminfo_parse` accepts a compiled terminfo entry and populates a
+`Capabilities`-shaped struct. It returns `0` on success and a nonzero
+parse-result code on failure. The specific nonzero values are unspecified. On
+failure, `out` is left untouched (TINV-2), and `detectTerminal()` proceeds from
+the §7.1 baseline. Parse failures are never surfaced to public callers; they
+observe only the resulting `Capabilities`.
+
+- Both storage formats MUST be supported: legacy (magic `0432`, 16-bit numbers)
+  and extended number format (magic `01036`, 32-bit numbers).
+- The extended-capability string table MUST be parsed for the user-defined
+  capabilities `RGB`, `Tc`, `Su`, `Smulx`, and `Sync`.
+- All reads are bounds-checked against `len`. Out-of-range offsets, truncated
+  sections, and odd-length string tables yield the parse failure path (TINV-2).
+- The maximum accepted size is 32 768 bytes, the extended ncurses format limit.
+  The TypeScript boundary enforces this before bytes reach the parser.
+
+Standard capability indices consumed: booleans `am` (1), `xenl` (4), `bce` (28);
+number `max_colors` (13); strings `smcup` (28) and the `key_*` range (see Input
+Specification §6.1 for the key set).
+
+---
+
+## 9. The probe
+
+### 9.1 Query batch
+
+_This section is normative._
+
+`TerminalInfo.probe` contains the following queries as one `Uint8Array`, in
+order:
+
+| #  | Query               | Bytes                                                | `CapabilityEvent` key |
+| -- | ------------------- | ---------------------------------------------------- | --------------------- |
+| 1  | Foreground color    | `OSC 10 ; ? BEL`                                     | `foreground-color`    |
+| 2  | Background color    | `OSC 11 ; ? BEL`                                     | `background-color`    |
+| 3  | Cursor color        | `OSC 12 ; ? BEL`                                     | `cursor-color`        |
+| 4  | Kitty color         | `OSC 21 ; foreground=? ; background=? ; cursor=? ST` | (per field, see §6.3) |
+| 5  | Pointer shape       | `OSC 22 ; ?__current__ ST`                           | `pointer-shape`       |
+| 6  | Truecolor caps      | `DCS + q 524742 ; 5463 ST` (XTGETTCAP `RGB;Tc`)      | `colordepth`          |
+| 7  | Synchronized output | `CSI ? 2026 $ p` (DECRQM)                            | `sync-output`         |
+| 8  | Sync terminfo cap   | `DCS + q 53796e63 ST` (XTGETTCAP `Sync`)             | `sync-output`         |
+| 9  | Kitty keyboard      | `CSI ? u`                                            | `kitty-keyboard`      |
+| 10 | Kitty graphics      | `APC _G i=31,s=1,v=1,a=q,t=d,f=24 ; AAAA ST`         | `kitty-graphics`      |
+| 11 | **Fence:** DA1      | `CSI c`                                              | (internal only)       |
+
+Terminals answer queries in order and ignore queries they do not understand. DA1
+is answered by every terminal, so its response marks the probe complete. Any of
+queries 1–10 not yet answered when the DA1 reply arrives will never be answered,
+and the renderer keeps their current values.
+
+The batch is safe to emit unconditionally: every query is either answered or
+ignored; none changes terminal state.
+
+### 9.2 Response path
+
+Probe responses arrive on the terminal's input stream, potentially interleaved
+with user input. The input parser recognizes and consumes them during its normal
+`scan()` (see Input Specification §6.2). Each recognized response produces one
+or more `CapabilityEvent` values in the `scan()` result, interleaved with key
+and mouse events in arrival order. The host loop routes them to `term.update()`.
+
+### 9.3 Capability change over time
+
+A capability event can arrive after the renderer has already emitted frames.
+`term.update()` folds it into the runtime snapshot. Any renderer-side output
+invalidation or immediate bytes are defined by the renderer section that
+consumes that capability (Renderer Specification §7.8).
+
+---
+
+## 10. Public API
+
+_This section is normative for the shapes shown._
+
+### 10.1 `detectTerminal`
+
+```ts
+function detectTerminal(options?: DetectOptions): Promise<TerminalInfo>;
+
+interface DetectOptions {
+  term?: string;
+  env?: Record<string, string | undefined>;
+  entry?: Uint8Array;
+  signal?: AbortSignal;
+}
+
+interface TerminalInfo {
+  readonly capabilities: Capabilities;
+  /**
+   * Write to stdout immediately after detection. Responses arrive as
+   * CapabilityEvent values in input.scan().
+   */
+  readonly probe: Uint8Array;
+  /** Raw terminfo key bytes. The input parser loads its trie from this. Opaque to callers. */
+  readonly keys: KeyTable;
+}
+
+type KeyTable = Uint8Array;
+```
+
+`detectTerminal()`:
+
+1. Rejects with a `RangeError` if `entry` is provided and exceeds
+   `MAX_TERMINFO_ENTRY` bytes. This is the only rejection: it reports invalid
+   caller input, not an environmental condition.
+2. Locates and reads the compiled terminfo entry for the terminal (unless raw
+   bytes are provided via `entry`), following the ncurses search path:
+   `$TERMINFO`, `$HOME/.terminfo`, `$TERMINFO_DIRS` (empty entry = compiled-in
+   defaults), then `/usr/share/terminfo`, `/etc/terminfo`, `/lib/terminfo`,
+   `/usr/lib/terminfo`. Both directory layouts are probed: first-letter (Linux)
+   and two-hex-digit (macOS). Names with path separators, NUL, or a leading `.`
+   are rejected. Files are validated by magic number and skipped when larger
+   than `MAX_TERMINFO_ENTRY`.
+3. Parses the bytes into `Capabilities` and extracts key-sequence bytes into
+   `keys`.
+4. Applies environment evidence (§7.2) from the injectable `env`.
+5. Constructs `probe` without performing any IO.
+6. Resolves the `TerminalInfo`. Apart from step 1, it never rejects.
+
+Every environmental dependency is injectable (`env`, `entry`), making the
+function fully testable without a TTY or real terminfo files.
+
+### 10.2 `createTerm`
+
+```ts
+function createTerm(options: {
+  width: number;
+  height: number;
+  terminfo?: TerminalInfo;
+}): Promise<Term>;
+```
+
+When `terminfo` is provided, the renderer initializes its private
+`RuntimeCapabilities` from `terminfo.capabilities` and `RuntimeCapabilities`
+dynamic fields at their baseline values. When omitted, the renderer uses the
+§7.1 baseline for all fields.
+
+### 10.3 `createInput`
+
+```ts
+function createInput(options?: {
+  escLatency?: number;
+  terminfo?: TerminalInfo;
+}): Promise<Input>;
+```
+
+When `terminfo` is provided, the parser loads its key trie from `terminfo.keys`.
+When omitted, the parser uses built-in xterm key sequences.
+
+### 10.4 `Term.update`
+
+```ts
+interface Term {
+  render(ops: Op[], options?: RenderOptions): RenderResult;
+  update(events: readonly InputEvent[]): Uint8Array;
+  readonly capabilities: RuntimeCapabilities;
+}
+```
+
+`update()` accepts an array of `InputEvent` values. Events other than
+`ResizeEvent` and `CapabilityEvent` are no-op steps, so the full `events` array
+from `scan()` can be passed without filtering. Events are folded in order: each
+event produces the next `RuntimeCapabilities` and any bytes defined by the
+consuming feature, and the returned bytes are concatenated. The foundation
+defines no such bytes. The return value is always a `Uint8Array`; callers write
+it to their output stream when non-empty (TINV-5).
+
+`term.capabilities` is a frozen snapshot of the current `RuntimeCapabilities`.
+
+### 10.5 Host loop
+
+```ts
+import { detectTerminal } from "./terminfo.ts";
+import { createTerm } from "./term.ts";
+import { createInput } from "./input.ts";
+
+const terminfo = await detectTerminal({ env: process.env });
+const term = await createTerm({ width: 80, height: 24, terminfo });
+const input = await createInput({ terminfo });
+
+process.stdout.write(terminfo.probe);
+
+process.stdin.on("data", (bytes: Uint8Array) => {
+  const { events } = input.scan(bytes);
+  const out = term.update(events);
+  if (out.length) process.stdout.write(out);
+  for (const event of events) dispatch(event);
+});
+
+process.on("SIGWINCH", () => {
+  const out = term.update([{ type: "resize", width: cols(), height: rows() }]);
+  if (out.length) process.stdout.write(out);
+});
+```
+
+`createTerm` and `createInput` each take `terminfo` and build their own private
+state from it. Passing the same `TerminalInfo` to both passes the same plain
+value twice. There is no shared memory and no attachment guard.
+
+---
+
+## 11. Deferred / future areas
+
+_Non-normative._
+
+**OSC 4 palette queries.** The 256-entry palette is not probed; the theme group
+covers foreground, background, and cursor (OSC 10/11/12) only.
+
+**Theme-change notification (mode 2031).** The probe captures a snapshot; live
+dark/light switching is not tracked.
+
+**XTVERSION / DA2 / DA3 identity parsing.** The DA1 reply is used purely as a
+fence; terminal identification is not extracted.
+
+**Re-probing after suspend/resume.** `TerminalInfo.probe` may be written again
+by the host at any time; responses arrive as events as normal. The spec does not
+define a managed re-probe lifecycle.
+
+**Pixel mouse (1016) and in-band resize (2048) probing.** Candidates for the
+batch once consumers exist.
+
+**terminfo string emission (`sgr`, `cup` from terminfo).** The renderer
+continues to emit hardcoded ANSI; terminfo strings inform input parsing only.
+
+---
+
+## Open decisions
+
+1. **What detects OSC 8 hyperlinks?** The
+   [OSC 8 specification](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda)
+   states no detection mechanism exists and the sequence degrades gracefully on
+   unsupported terminals. Candidate sources: an extended user-capability
+   convention, terminal identity heuristics from DA2/XTVERSION (currently
+   unparsed), or treating OSC 8 as permanently ignore-safe.
+
+2. **Should per-shape pointer support be probed?** The kitty pointer shape
+   protocol's `?name,name,…` query reports support for individual shape names.
+   v1 records protocol support only; a shape-vocabulary field would let the
+   renderer pick portable shape names.
+
+3. **`colordepth` values beyond `"truecolor" | "256" | "16"`.** The three-tier
+   union covers every value XTGETTCAP can produce. Extend it only if a new probe
+   source can deliver finer granularity.

@@ -11,15 +11,17 @@ This specification describes Clayterm's terminal input parsing surface: the API
 for decoding raw terminal byte sequences into structured events.
 
 Input parsing is architecturally independent from rendering (see
-[Renderer Specification](renderer-spec.md), INV-8). The two concerns share a
+[Renderer Specification](renderer-spec.md), INV-7). The two concerns share a
 compiled WASM binary for loading efficiency, but neither depends on the other's
-state, types, or API surface.
+state, types, or API surface. Both consume the shared capability layer defined
+in the [Terminfo Specification](terminfo-spec.md); the input parser is
+additionally that layer's runtime write path (see Section 6).
 
-This specification is currently non-normative. The input API has clear design
-intent but has undergone more revision than the rendering core and faces known
-upcoming forces that will reshape it (Kitty progressive enhancement field
-surfacing, terminfo binary parsing). It is written to document the current
-surface and guide future stabilization.
+This specification is currently non-normative except where noted. The input API
+has clear design intent but has undergone more revision than the rendering core
+and faces known upcoming forces that will reshape it (Kitty progressive
+enhancement field surfacing). It is written to document the current surface and
+guide future stabilization.
 
 ---
 
@@ -31,6 +33,8 @@ surface and guide future stabilization.
 - The scan API and its return type
 - The `InputEvent` discriminated union and its variants
 - The ESC timeout resolution model
+- Terminfo integration: key sequence loading and capability query response
+  recognition (Section 6, normative)
 
 ### Out of scope
 
@@ -74,8 +78,11 @@ Options:
   responsiveness (lower values) and correct disambiguation of ESC-prefixed
   sequences (higher values).
 
-- **`terminfo`** — A `Uint8Array` of raw terminfo binary. Accepted but C-side
-  parsing is not yet implemented.
+- **`terminfo`** — A `TerminalInfo` value from `detectTerminal()` (see
+  [Terminfo Specification](terminfo-spec.md) §10.1). Terminal-specific key
+  sequences from `terminfo.keys` are loaded into the parser's escape sequence
+  trie at initialization (Section 6.1). When omitted, the parser uses built-in
+  xterm default sequences.
 
 ### 4.2 Scan
 
@@ -106,6 +113,13 @@ returns immediately.
   relative duration in milliseconds. The `deadline` field is an absolute
   timestamp (milliseconds since epoch) for the same point in time.
 
+An ESC followed by exactly one introducer byte — `[`, `O`, `]`, `P`, or `_` —
+and nothing else is ambiguous in the same way: it is either an Alt-modified key
+or the start of an escape sequence or probe response. The parser MUST treat it
+as pending and report `pending`. If no further bytes arrive within `escLatency`,
+the rescan MUST resolve it as a key event for the introducer character with
+`alt: true`.
+
 ---
 
 ## 5. InputEvent Types
@@ -135,7 +149,60 @@ has already been extended with fields that are not yet mapped to the TS types).
 
 ---
 
-## 6. Deferred / Future Areas
+## 6. Terminfo Integration
+
+_This section is normative. It defines the input parser's two roles in the
+capability layer specified by the [Terminfo Specification](terminfo-spec.md)._
+
+### 6.1 Key sequences from terminfo
+
+When given a `terminfo` value whose `keys` field is present, the parser MUST
+load the terminal's `key_*` string capabilities into its escape sequence trie at
+initialization, before any scan. Terminfo-supplied sequences take precedence
+over the built-in xterm defaults when they conflict; defaults remain registered
+for sequences the terminfo entry does not define.
+
+The key capabilities consumed are the `key_*` string range mapped to existing
+`KEY_*` codes: arrows (`kcuu1`, `kcud1`, `kcub1`, `kcuf1`), function keys
+(`kf1`–`kf12`), editing keys (`khome`, `kend`, `kich1`, `kdch1`, `kpp`, `knp`),
+and backtab (`kcbt`). Key capabilities with no corresponding `KEY_*` code are
+ignored. Terminfo key sequences longer than 16 bytes are ignored.
+
+### 6.2 Query response recognition
+
+During a normal scan — with responses potentially interleaved with user input —
+the parser MUST recognize and consume the probe responses listed in Terminfo
+Specification §9.1: OSC 10/11/12 theme color reports, OSC 21 kitty color
+reports, OSC 22 pointer shape reports, XTGETTCAP DCS replies, DECRPM mode-2026
+reports, kitty keyboard flag reports, kitty graphics APC replies, and the DA1
+device attributes report.
+
+For each recognized response the parser MUST emit a `CapabilityEvent` in the
+`scan()` return value, per Terminfo Specification §6.3 and TINV-6. Responses are
+consumed silently: they MUST NOT surface as `InputEvent`s, and bytes belonging
+to a recognized response MUST NOT leak into adjacent events.
+
+When the parser is standalone (no `terminfo`), responses are still recognized
+and consumed so stray replies never corrupt the event stream.
+
+### 6.3 Response termination
+
+OSC, DCS, and APC responses are terminated by BEL (`0x07`) or ST (`ESC \`). Once
+the parser has recognized a response header — `ESC ] Ps ;` with `Ps` one of 10,
+11, 12, 21, or 22; `ESC P 0 + r` or `ESC P 1 + r`; or `ESC _ G` — the following
+bytes end the response early instead:
+
+- any other C0 control: `0x00`–`0x06`, `0x08`–`0x1A`, `0x1C`–`0x1F`;
+- DEL (`0x7F`);
+- ESC followed by any byte other than `\`.
+
+When a response ends early, the parser MUST discard the bytes received for it
+and MUST NOT emit a `CapabilityEvent` for it. Parsing resumes at the byte that
+ended the response, so the key or sequence it begins is delivered normally.
+
+---
+
+## 7. Deferred / Future Areas
 
 _These topics are explicitly excluded from this specification. Their omission is
 intentional, not an oversight._
@@ -144,25 +211,6 @@ intentional, not an oversight._
 struct has been extended for progressive enhancement fields. The TypeScript
 event types have not been updated to surface them.
 
-**Terminfo binary parsing.** The input API accepts a `terminfo` option, but
-C-side parsing is not implemented.
-
 **Whether input parsing should be a separate package.** Architecturally
 independent from the renderer but currently co-located. The distribution
 decision is open.
-
----
-
-## Open Decisions
-
-1. **What are the normative Kitty progressive enhancement event types?** The
-   C-side struct has been extended. The TypeScript types have not been updated.
-   This specification does not attempt to predict the final shapes.
-
-2. **Should the input API be a separate package?** It is architecturally
-   independent from the renderer (INV-8) but currently co-located in the same
-   module.
-
-3. **Is the input API ready for normative specification?** The API has clear
-   design ownership but has undergone more revision than the rendering core.
-   This specification documents the current surface without freezing it.

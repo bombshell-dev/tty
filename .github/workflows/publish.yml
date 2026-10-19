@@ -2,77 +2,70 @@ name: Publish
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
-permissions:
-  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
 
 jobs:
-  verify-npm:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the version bump, push the release tag
+      pull-requests: write # open the "Version Packages" PR
+      id-token: write # npm publish via OIDC trusted publishing
     steps:
+      - name: generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
       - name: checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
-          persist-credentials: false
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ steps.bot-token.outputs.token }}
+
+      - name: setup git user
+        run: |
+          git config --global user.name "bombshell-bot[bot]"
+          git config --global user.email "187071675+bombshell-bot[bot]@users.noreply.github.com"
 
       - name: setup deno
-        uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: v2.x
+          # Pinned to v2.8.3 to avoid https://github.com/denoland/deno/issues/35529
+          # (v2.9.0 rejects JSR files without a manifest checksum on warm cache).
+          # Restore to v2.x once v2.9.1 ships.
+          deno-version: v2.8.3
+
+      - name: setup node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
 
       - name: build wasm
         run: make
 
-      - name: Get Version
-        id: vars
-        run: echo "version=$(echo "${GITHUB_REF_NAME}" | sed 's/^v//')" >> $GITHUB_OUTPUT
+      - name: install changesets
+        run: npm ci
 
-      - name: Setup Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - name: changesets
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
-          node-version: 24
-          package-manager-cache: false
-          cache: ""
-
-      - name: Build NPM
-        run: deno task build:npm "${STEPS_VARS_OUTPUTS_VERSION}"
-        env:
-          STEPS_VARS_OUTPUTS_VERSION: ${{steps.vars.outputs.version}}
-
-      - name: dry run publish
-        run: npm publish --dry-run --tag=verify
-        working-directory: ./build/npm
-
-      - name: upload build
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: npm-build
-          path: ./build/npm
-
-  publish-npm:
-    needs: [verify-npm]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Setup Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          package-manager-cache: false
-          cache: ""
-
-      - name: download build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: npm-build
-          path: ./build/npm
-
-      - name: Publish NPM
-        run: npm publish --access=public --tag=latest
-        working-directory: ./build/npm
+          version-script: npm run version
+          publish-script: npm run release
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
+          create-github-releases: false
+          push-with-git-cli: true
+          github-token: ${{ steps.bot-token.outputs.token }}

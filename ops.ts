@@ -1,3 +1,7 @@
+import { type PointerShape, pointerShapeIndex } from "./pointer-shape.ts";
+
+export type { PointerShape };
+
 export type TransitionProperty =
   | "x"
   | "y"
@@ -34,6 +38,7 @@ const PROP_BORDER = 0x08;
 const PROP_CLIP = 0x10;
 const PROP_FLOATING = 0x20;
 const PROP_TRANSITION = 0x40;
+const PROP_CURSOR = 0x80;
 
 const encoder = new TextEncoder();
 
@@ -152,6 +157,8 @@ export function pack(
         if (op.clip) mask |= PROP_CLIP;
         if (op.floating) mask |= PROP_FLOATING;
         if (op.transition) mask |= PROP_TRANSITION;
+        let cursor = pointerShapeIndex(op.cursor);
+        if (cursor !== undefined) mask |= PROP_CURSOR;
         view.setUint32(o, mask, true);
         o += 4;
 
@@ -279,6 +286,11 @@ export function pack(
           view.setUint8(o, t.interactive ? 1 : 0);
           o += 1;
         }
+
+        if (cursor !== undefined) {
+          view.setUint32(o, cursor, true);
+          o += 4;
+        }
         break;
       }
 
@@ -313,6 +325,10 @@ export function pack(
             (((op.attrs ?? 0) | (textDefault ? 0x80 : 0)) << 24),
           true,
         );
+        o += 4;
+
+        // Caret offset (code points), or 0xFFFFFFFF when absent.
+        view.setUint32(o, op.caret ?? 0xFFFFFFFF, true);
         o += 4;
 
         let str = encoder.encode(op.content);
@@ -406,6 +422,7 @@ export interface OpenElement {
     zIndex?: number;
   };
   transition?: Transition;
+  cursor?: PointerShape;
 }
 
 export type AttachPoint =
@@ -481,6 +498,7 @@ export interface Text {
   fontId?: number;
   wrap?: number;
   attrs?: number;
+  caret?: number;
 }
 
 interface Snapshot {
@@ -530,10 +548,11 @@ function packSize(ops: Op[]): number {
         // x, y, expand width/height, parent, attach/pointer, clip/z
         if (op.floating) n += 7 * 4;
         if (op.transition) n += 8;
+        if (pointerShapeIndex(op.cursor) !== undefined) n += 4;
         break;
       }
       case OP_TEXT: {
-        n += 4 + 4 + 4 + 4; // opcode + color + bg + cfg
+        n += 4 + 4 + 4 + 4 + 4; // opcode + color + bg + cfg + caret
         n += 4 + Math.ceil(encoder.encode(op.content).length / 4) * 4; // string
         break;
       }
