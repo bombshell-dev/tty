@@ -458,8 +458,8 @@ be a no-op for that step.
 **Capability semantics.** A `CapabilityEvent` step folds the event's `key` and
 `value` into the Term's private `RuntimeCapabilities`. The foundation update
 transaction does not emit bytes or alter renderer output as a consequence of a
-capability event. A focused capability specification MUST define any output
-invalidation or immediate bytes required by its consumer; the
+capability event unless a capability section of this specification says so
+(§7.10) or a focused capability specification defines it. The
 [Graphics Specification](graphics-spec.md) defines such bytes for graphics
 cleanup on capability denial and resize (§11.2 and §10.5 there).
 
@@ -479,17 +479,107 @@ is valid until the next `render()` **or** `update()` call).
 
 ### 7.8 Capability consumption
 
-The renderer may consume the read-only capability snapshot maintained by
-`Term.update()`, but this foundation specification does not define any
-capability-specific output. Protocols that change emitted bytes MUST add their
-own renderer section, capability evidence, invalidation rules, and tests in a
-focused feature specification.
+The renderer consumes the read-only capability snapshot maintained by
+`Term.update()`. A protocol that changes emitted bytes MUST define its gating
+capability, output, and invalidation rules in its own section of this
+specification. Synchronized output (§7.9) and pointer shape (§7.10) are
+specified so far.
 
-In particular, color encoding, synchronized-output wrapping, pointer-shape
-output, and Kitty keyboard mode setup are deferred to their respective follow-up
-PRs; Kitty graphics emission is specified by the
+In particular, color encoding and Kitty keyboard mode setup are deferred to
+their respective follow-up PRs; Kitty graphics emission is specified by the
 [Graphics Specification](graphics-spec.md). The renderer continues to emit its
 existing hardcoded ANSI output until one of those specifications is adopted.
+
+### 7.9 Synchronized output (DEC mode 2026)
+
+When the `syncOutput` runtime capability is true, each full-screen frame
+(§8.2.1) is wrapped in Synchronized Output mode 2026 — Begin Synchronized Update
+(`CSI ? 2026 h`) before the frame's first emitted byte and End Synchronized
+Update (`CSI ? 2026 l`) after its last. The terminal buffers everything between
+the pair and presents it as one atomic repaint, so a frame never tears
+mid-update.
+
+**Capability evidence.** `syncOutput` is raised only on positive evidence. Two
+runtime channels feed the `sync-output` `CapabilityEvent` (input-spec §5,
+terminfo-spec §6.3): a DECRPM 2026 reply to the probe (`CSI ? 2026 $ p`) —
+values 1, 2, and 3 (set, reset, permanently set) report support, 0 and 4 report
+none — and an XTGETTCAP `Sync` reply, whose sequence value is discarded in favor
+of the mode 2026 form (terminfo-spec §6.3). Detection may also seed the field
+positively: static `Capabilities` carry `syncOutput`, raised by the `Sync`
+extended capability in the parsed terminfo entry and by the `TMUX` environment
+variable (terminfo-spec §7.1, §7.2). Evidence follows TINV-3 precedence: probe
+replies outrank detect-time seeding in both directions, so a DECRPM 0 or 4 reply
+turns the capability off even when detection seeded it. Without positive
+evidence the field stays false and no frame is wrapped.
+
+**Invalidation and timing.** The renderer reads the capability snapshot at each
+render transaction, so a capability flip takes effect on the next rendered
+frame. No invalidation signal exists, and none is required: a flip between
+frames changes only whether the next frame is wrapped.
+
+**Normative rules:**
+
+- When `syncOutput` is false, the renderer MUST NOT emit `?2026h` or `?2026l`.
+- When `syncOutput` is true, the renderer MUST wrap each full-screen frame in
+  the BSU/ESU pair. Line mode (§8.2.2) is never wrapped: inline output may be
+  interleaved with foreign content, and an unterminated synchronized block would
+  suppress it.
+- A full-screen render whose diff produces no cell changes and no caret
+  transition MUST emit zero bytes, even when `syncOutput` is true. The renderer
+  decides after the diff, so no-op frames carry neither the wrap prefix nor the
+  suffix.
+- Terminals that receive the sequences without supporting the mode ignore it by
+  design; the probe still refines behavior for terminals that report mode 0
+  or 4.
+
+This section discharges the synchronized-output deferral recorded in §7.8.
+
+### 7.10 Pointer shape
+
+An `open()` directive MAY declare a `cursor` property naming the mouse pointer
+shape to show while the pointer is over the element. Values are the kitty
+pointer shape names (the CSS `cursor` keywords): `default`, `none`,
+`context-menu`, `help`, `pointer`, `progress`, `wait`, `cell`, `crosshair`,
+`text`, `vertical-text`, `alias`, `copy`, `move`, `no-drop`, `not-allowed`,
+`grab`, `grabbing`, `e-resize`, `n-resize`, `ne-resize`, `nw-resize`,
+`s-resize`, `se-resize`, `sw-resize`, `w-resize`, `ew-resize`, `ns-resize`,
+`nesw-resize`, `nwse-resize`, `zoom-in`, `zoom-out`. Any other value MUST be
+treated as absent and MUST NOT reach the output. The property does not affect
+layout or cell output.
+
+The gate is `RuntimeCapabilities.pointerShape` (see
+[Terminfo Specification](terminfo-spec.md) §6.3). While it is `false`, the
+renderer MUST NOT emit OSC 22.
+
+**Resolved shape.** While the capability is `true`, each render resolves one
+shape:
+
+- `default` when the render options carry no `pointer`.
+- Otherwise, the `cursor` of the last declaring element in hit-test order (the
+  order behind `pointerenter` events, §12.4), or `default` when none declares
+  one. Ancestors precede descendants, so the innermost element wins. A floating
+  element in `"capture"` mode hides the elements beneath it; one in
+  `"passthrough"` mode lets them decide.
+
+Elements inside a `snapshot()` participate as direct directives would.
+Resolution and output are identical in line mode (§8.2.2).
+
+**Output.** The Term tracks the shape it last emitted, starting at `default`.
+When the resolved shape differs, the render MUST append `ESC ] 22 ; <shape> ST`
+to `output` after the frame's cell bytes and record the new shape. Otherwise it
+MUST NOT emit OSC 22.
+
+**Restore.** OSC 22 set cannot pop, so the Term restores by setting `default`:
+
+- A render that resolves `default` emits it per **Output** above.
+- An update step that changes `pointerShape` from `true` to `false` while the
+  emitted shape is not `default` MUST return `ESC ] 22 ; default ST` and record
+  `default`.
+- A resize step leaves the emitted shape unchanged.
+
+To restore before exit, the caller renders a frame without `pointer`, or passes
+`{ type: "capability", key: "pointer-shape", value: false }` to `update()`, and
+writes the result.
 
 ---
 
@@ -845,8 +935,9 @@ declaration is present, the cursor-positioning and cursor-visibility sequences
 specified in §7.6.
 
 Capability-specific output modes are not terminal-state management owned by the
-foundation renderer. A focused feature specification must define their state
-boundaries separately.
+foundation renderer. Each capability section of §7 defines its own state
+boundary. The mouse pointer shape (§7.10) is distinct from the cursor shape
+above, which remains caller-managed.
 
 ### 11.3 The renderer does not own application lifecycle
 
@@ -933,6 +1024,7 @@ The `open()` constructor currently accepts the following property groups in its
   reference, attach target, structured attach points, pointer capture mode, clip
   target, z-index)
 - **`scroll`** — scroll container configuration
+- **`cursor`** — mouse pointer shape while hovered (§7.10)
 
 The `floating` object shape is:
 

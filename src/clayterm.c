@@ -47,6 +47,7 @@ struct Clayterm *ct_active_context = NULL;
 #define PROP_CLIP 0x10
 #define PROP_FLOATING 0x20
 #define PROP_TRANSITION 0x40
+#define PROP_CURSOR 0x80
 
 /* ── Instance state ───────────────────────────────────────────────── */
 
@@ -104,6 +105,14 @@ struct Clayterm {
    * registry, tier engine, and placements record live in their own
    * dimension-independent carve — set by init(), survives resize (§5.1) */
   struct Graphics *gfx;
+  /* CAP_* bits pushed by the host via set_capabilities(); init() zeroes
+   * them, so the host re-pushes after every re-init */
+  uint32_t caps;
+  /* Pointer shape (renderer-spec 7.10): hover_shape is what this frame's
+   * hit test resolved, pointer_shape is what was last emitted. Both index
+   * POINTER_SHAPES; 0 is "default". */
+  int hover_shape;
+  int pointer_shape;
   /* Caret state for hardware-cursor management. The renderer records the
    * first text node carrying a caret declaration per frame, precomputes the
    * caret's byte offset into that node's content, then places the cell as
@@ -132,6 +141,35 @@ struct Clayterm {
 /* 128 bytes per cell: ~84 bytes worst-case for CUP + SGR sequences, plus up
  * to 4 (base SMP char) + 8×4 (combining marks) = 36 bytes of cluster text. */
 #define OUT_BYTES_PER_CELL 128
+
+/* Fixed per-frame slack on top of the per-cell budget, for output emitted
+ * once per frame rather than per cell: the BSU/ESU synchronized-output pair
+ * and one OSC 22 pointer shape. Keeps them from being dropped on tiny grids
+ * where the per-cell budget alone is tight. */
+#define OUT_FRAME_OVERHEAD 64
+
+/* Pointer shape names in wire-index order; mirrors POINTER_SHAPES in
+ * pointer-shape.ts. */
+static const char *const POINTER_SHAPES[] = {
+    "default",       "none",      "context-menu", "help",        "pointer",
+    "progress",      "wait",      "cell",         "crosshair",   "text",
+    "vertical-text", "alias",     "copy",         "move",        "no-drop",
+    "not-allowed",   "grab",      "grabbing",     "e-resize",    "n-resize",
+    "ne-resize",     "nw-resize", "s-resize",     "se-resize",   "sw-resize",
+    "w-resize",      "ew-resize", "ns-resize",    "nesw-resize", "nwse-resize",
+    "zoom-in",       "zoom-out",
+};
+#define POINTER_SHAPE_COUNT                                                    \
+  ((int)(sizeof(POINTER_SHAPES) / sizeof(POINTER_SHAPES[0])))
+
+/* Clay calls hover functions in hit-test order, ancestors first, so the
+ * last call is the innermost declaring element. */
+static void cursor_hover(Clay_ElementId id, Clay_PointerData pointer,
+                         void *shape) {
+  (void)id;
+  (void)pointer;
+  ct_active_context->hover_shape = (int)(uintptr_t)shape;
+}
 
 /* ── Cell buffer ops ──────────────────────────────────────────────── */
 
@@ -278,6 +316,19 @@ static void present_cups(struct Clayterm *ct, int row) {
   ct->lastx = -1;
   ct->lasty = -1;
 
+  /* Synchronized Output (DEC mode 2026): the terminal buffers everything
+   * between BSU and ESU and presents it in one atomic repaint, so a frame
+   * never tears mid-update. Unsupported terminals ignore the private mode;
+   * whether we emit the wrap at all is decided by the sync-output
+   * capability. */
+  int sync = ct->caps & RENDER_CAP_SYNC_OUTPUT;
+  int start = ct->out.length;
+  if (sync)
+    buf_str(&ct->out, "\x1b[?2026h");
+  /* Body start: the no-op check below compares against this so the BSU
+   * itself never counts as frame content. */
+  int body = ct->out.length;
+
   for (int y = 0; y < ct->h; y++) {
     for (int x = 0; x < ct->w;) {
       Cell *back = cell_at(ct, ct->back, x, y);
@@ -327,6 +378,14 @@ static void present_cups(struct Clayterm *ct, int row) {
     buf_str(&ct->out, "\x1b[?25l");
   }
   ct->had_caret_last_frame = ct->has_caret;
+
+  if (ct->out.length == body) {
+    /* Nothing was emitted — no cell changes and no caret transition.
+     * Rewind the BSU so a no-op frame still produces zero bytes. */
+    ct->out.length = start;
+  } else if (sync) {
+    buf_str(&ct->out, "\x1b[?2026l"); /* ESU: end synchronized update */
+  }
 }
 
 /**
@@ -862,7 +921,7 @@ int clayterm_size(int w, int h) {
   set_clay_capacity(w, h);
   int cell_count = w * h;
   int cell_bytes = cell_count * (int)sizeof(Cell);
-  int out_bytes = cell_count * OUT_BYTES_PER_CELL;
+  int out_bytes = cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD;
   int msg_bytes = MAX_ERRORS * MAX_ERROR_MESSAGE;
   int clay_bytes = (int)Clay_MinMemorySize();
   return align8((int)sizeof(struct Clayterm)) + align8(cell_bytes) /* front */
@@ -927,7 +986,7 @@ struct Clayterm *init(void *mem, int w, int h, struct Graphics *gfx) {
   struct Clayterm *ct = (struct Clayterm *)mem;
   int cell_count = w * h;
   int cell_bytes = align8(cell_count * (int)sizeof(Cell));
-  int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL);
+  int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD);
   int msg_bytes = align8(MAX_ERRORS * MAX_ERROR_MESSAGE);
   char *base = (char *)mem + align8((int)sizeof(struct Clayterm));
 
@@ -944,7 +1003,8 @@ struct Clayterm *init(void *mem, int w, int h, struct Graphics *gfx) {
       .h = h,
       .front = (Cell *)base,
       .back = (Cell *)(base + cell_bytes),
-      .out = {base + cell_bytes * 2, 0, cell_count * OUT_BYTES_PER_CELL},
+      .out = {base + cell_bytes * 2, 0,
+              cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD},
       .lastfg = 0xffffffff,
       .lastbg = 0xffffffff,
       .lastx = -1,
@@ -960,8 +1020,24 @@ struct Clayterm *init(void *mem, int w, int h, struct Graphics *gfx) {
   return ct;
 }
 
+int set_capabilities(struct Clayterm *ct, uint32_t caps) {
+  int withdrawn = (ct->caps & RENDER_CAP_POINTER_SHAPE) &&
+                  !(caps & RENDER_CAP_POINTER_SHAPE);
+  int restore = withdrawn && ct->pointer_shape != 0;
+  if (restore)
+    ct->pointer_shape = 0;
+  ct->caps = caps;
+  return restore;
+}
+
+int pointer_shape(struct Clayterm *ct) { return ct->pointer_shape; }
+
+void set_pointer_shape(struct Clayterm *ct, int shape) {
+  ct->pointer_shape = shape;
+}
+
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
-            float deltaTime) {
+            float deltaTime, float px, float py, int pointer) {
   int i = 0;
   ct_active_context = ct;
   ct->error_count = 0;
@@ -1099,7 +1175,14 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
                 : CLAY_TRANSITION_DISABLE_INTERACTIONS_WHILE_TRANSITIONING_POSITION;
       }
 
+      uint32_t cursor = POINTER_SHAPE_COUNT;
+      if (mask & PROP_CURSOR)
+        cursor = rd(buf, len, &i);
+
       Clay__ConfigureOpenElement(decl);
+
+      if (cursor < POINTER_SHAPE_COUNT && (ct->caps & RENDER_CAP_POINTER_SHAPE))
+        Clay_OnHover(cursor_hover, (void *)(uintptr_t)cursor);
       break;
     }
 
@@ -1166,6 +1249,12 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   }
 
   Clay_RenderCommandArray cmds = Clay_EndLayout(deltaTime);
+
+  /* pointer: 0 = absent, 1 = up, 2 = down. The hit test runs against this
+   * frame's layout and fires cursor_hover for declaring elements. */
+  ct->hover_shape = 0;
+  if (pointer)
+    Clay_SetPointerState((Clay_Vector2){px, py}, pointer == 2);
 
   /* reset output state */
   ct->out.length = 0;
@@ -1313,6 +1402,14 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
         emit_cursor(ct, ct->lastx + 1, ct->lasty, row);
       }
     }
+  }
+
+  if ((ct->caps & RENDER_CAP_POINTER_SHAPE) &&
+      ct->hover_shape != ct->pointer_shape) {
+    ct->pointer_shape = ct->hover_shape;
+    buf_str(&ct->out, "\x1b]22;");
+    buf_str(&ct->out, POINTER_SHAPES[ct->pointer_shape]);
+    buf_str(&ct->out, "\x1b\\");
   }
 
   ct_active_context = NULL;
