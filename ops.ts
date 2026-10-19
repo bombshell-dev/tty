@@ -1,8 +1,10 @@
 import type { names } from "hueful";
 import {
   resolveColor,
+  resolveForField,
   type systemColors,
   type TerminalColor,
+  type ThemeColors,
 } from "./color.ts";
 import { type PointerShape, pointerShapeIndex } from "./pointer-shape.ts";
 
@@ -98,19 +100,24 @@ function sideWidth(side: BorderSide | undefined): number {
   return typeof side === "number" ? side : side?.width ?? 0;
 }
 
-function sideFg(side: BorderSide | undefined, shared: Color): number {
+function sideFg(
+  side: BorderSide | undefined,
+  shared: Color,
+  theme: ThemeColors | undefined,
+): number {
   let color = typeof side === "object" && side.color !== undefined
     ? side.color
     : shared;
-  return colorWord(color);
+  return colorWord(color, "fg", theme);
 }
 
 function sideBg(
   side: BorderSide | undefined,
   shared: Color | undefined,
+  theme: ThemeColors | undefined,
 ): number {
   let bg = typeof side === "object" && side.bg !== undefined ? side.bg : shared;
-  return bg === undefined ? BG_KEEP : colorWord(bg);
+  return bg === undefined ? BG_KEEP : colorWord(bg, "bg", theme);
 }
 
 function packString(
@@ -142,6 +149,7 @@ export function pack(
   mem: ArrayBufferLike,
   offset: number,
   limit?: number,
+  theme?: ThemeColors,
 ): number {
   let view = new DataView(mem);
   let end = limit ?? mem.byteLength;
@@ -161,7 +169,9 @@ export function pack(
         let bytes = encoder.encode(op.id);
         o = packString(view, bytes, o, end, "element id");
 
-        let bg = op.bg === undefined ? undefined : colorValue(op.bg);
+        let bg = op.bg === undefined
+          ? undefined
+          : colorValue(op.bg, "bg", theme);
         let mask = 0;
         if (op.layout) mask |= PROP_LAYOUT;
         if (typeof bg === "number") mask |= PROP_BG_COLOR;
@@ -245,9 +255,9 @@ export function pack(
           // C treats the presence and order of these words as a wire-format
           // invariant and only consumes the explicit values.
           for (let side of [b.top, b.right, b.bottom, b.left]) {
-            view.setUint32(o, sideFg(side, b.color), true);
+            view.setUint32(o, sideFg(side, b.color, theme), true);
             o += 4;
-            view.setUint32(o, sideBg(side, b.bg), true);
+            view.setUint32(o, sideBg(side, b.bg, theme), true);
             o += 4;
           }
         }
@@ -325,8 +335,8 @@ export function pack(
         // ORs the attrs byte back over the high byte. No color is the
         // terminal default.
         let color = op.color === undefined
-          ? { ansi: "default" as const }
-          : colorValue(op.color);
+          ? { ansi: "fg-default" as const }
+          : colorValue(op.color, "fg", theme);
         let terminal = typeof color === "object";
         view.setUint32(
           o,
@@ -337,7 +347,7 @@ export function pack(
 
         view.setUint32(
           o,
-          op.bg === undefined ? BG_KEEP : colorWord(op.bg),
+          op.bg === undefined ? BG_KEEP : colorWord(op.bg, "bg", theme),
           true,
         );
         o += 4;
@@ -387,23 +397,37 @@ export type Color = number | string;
 
 /**
  * Resolves a color value to a packed ARGB number or a terminal-themed color
- * (§8.5). Numbers pass through; strings resolve through the CSS color
- * grammar. Invalid strings throw rather than decoding to a garbage color.
+ * (§8.5), for the field it's packed into. Numbers pass through; strings
+ * resolve through the CSS color grammar. A cross-field default keyword
+ * resolves against `theme` to a packed ARGB number, falling back to the
+ * field's own terminal default when `theme` lacks that color. Invalid
+ * strings throw rather than decoding to a garbage color.
  */
-function colorValue(color: Color): number | TerminalColor {
+function colorValue(
+  color: Color,
+  field: "fg" | "bg",
+  theme: ThemeColors | undefined,
+): number | TerminalColor {
   if (typeof color === "number") return color;
   let value = resolveColor(color);
   if (value === undefined) throw new TypeError(`invalid color: "${color}"`);
-  return value;
+  if (typeof value === "number") return value;
+  return resolveForField(value, field, theme);
 }
 
 function terminalWord(color: TerminalColor): number {
-  return color.ansi === "default" ? TERMINAL : TERMINAL | PALETTE | color.ansi;
+  return typeof color.ansi === "number"
+    ? TERMINAL | PALETTE | color.ansi
+    : TERMINAL;
 }
 
 /* The color word text bg and border attributes carry; alpha is dropped. */
-function colorWord(color: Color): number {
-  let value = colorValue(color);
+function colorWord(
+  color: Color,
+  field: "fg" | "bg",
+  theme: ThemeColors | undefined,
+): number {
+  let value = colorValue(color, field, theme);
   return typeof value === "number" ? value & 0x00FFFFFF : terminalWord(value);
 }
 

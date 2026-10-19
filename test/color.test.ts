@@ -501,6 +501,68 @@ describe("system colors", () => {
     expect(frame("HighlightText")).toContain("\x1b[107m\x1b[1;1H    ");
   });
 
+  it("paints a probed default foreground as a truecolor text bg once the theme reports it", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    let before = decode(
+      term.render([text("Hi", { bg: "CanvasText" })]).output,
+    );
+    expect(before).not.toContain("48;2;");
+
+    term.update([
+      {
+        type: "capability",
+        key: "foreground-color",
+        value: { r: 10, g: 20, b: 30 },
+      },
+    ]);
+    let after = decode(
+      term.render([text("Hi", { bg: "CanvasText" })]).output,
+    );
+    expect(after).toContain("48;2;10;20;30");
+  });
+
+  it("paints a probed default foreground as a truecolor element bg once the theme reports it", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    term.update([
+      {
+        type: "capability",
+        key: "foreground-color",
+        value: { r: 10, g: 20, b: 30 },
+      },
+    ]);
+    let ansi = decode(
+      term.render([
+        open("box", {
+          layout: { width: fixed(4), height: fixed(1) },
+          bg: "CanvasText",
+        }),
+        close(),
+      ], { mode: "line" }).output,
+    );
+    expect(ansi).toContain("48;2;10;20;30");
+  });
+
+  it("paints a probed default background as a truecolor border side fg", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    term.update([
+      {
+        type: "capability",
+        key: "background-color",
+        value: { r: 200, g: 210, b: 220 },
+      },
+    ]);
+    let ansi = decode(
+      term.render([
+        open("box", {
+          layout: { width: fixed(4), height: fixed(1) },
+          border: { color: "Canvas", top: { width: 1 } },
+        }),
+        close(),
+      ], { mode: "line" }).output,
+    );
+    expect(ansi).toContain("38;2;200;210;220");
+  });
+
   it("checks system color literals at compile time", () => {
     let valid = [
       text("a", { color: "LinkText", bg: "canvas" }),

@@ -723,4 +723,28 @@ describe("system colors", () => {
     expect(at(parsed, 3, 0).fg).toBeUndefined();
     expect(at(parsed, 3, 0).bg).toBeUndefined();
   });
+
+  it("renders a probed default background as a truecolor border side fg once the theme reports it", async () => {
+    let term = await createTerm({ width: 12, height: 5 });
+    term.update([
+      {
+        type: "capability",
+        key: "background-color",
+        value: { r: 200, g: 210, b: 220 },
+      },
+    ]);
+    let ansi = decode(
+      term.render([
+        open("box", {
+          layout: { width: fixed(8), height: fixed(4) },
+          border: { color: "Canvas", top: 1 },
+        }),
+        close(),
+      ], { mode: "line" }).output,
+    );
+    let parsed = cells(ansi);
+
+    expect(at(parsed, 3, 0).ch).toBe("─");
+    expect(at(parsed, 3, 0).fg).toBe("\x1b[38;2;200;210;220");
+  });
 });

@@ -853,42 +853,41 @@ color; the terminal applies its own theme when it draws the cell.
 | `HighlightText`, `SelectedItemText`     | palette 15 (bright white)   |
 | `MarkText`, `AccentColorText`           | palette 0 (black)           |
 
-Each default keyword names the terminal default color of one specific
-attribute: `Canvas`, `ButtonFace`, and `Field` name the default background;
-`CanvasText`, `ButtonText`, and `FieldText` name the default foreground.
-**Used in its own field** — a background-default keyword in a background
-field (`open({ bg })`, `text({ bg })`, `border.bg`, a border side's `bg`), or
-a foreground-default keyword in a foreground field (`text({ color })`,
-`border.color`, a border side's `color`) — it resolves to that field's
-terminal default, unchanged from the table above.
+Each default keyword names the terminal default color of one specific attribute:
+`Canvas`, `ButtonFace`, and `Field` name the default background; `CanvasText`,
+`ButtonText`, and `FieldText` name the default foreground. **Used in its own
+field** — a background-default keyword in a background field (`open({ bg })`,
+`text({ bg })`, `border.bg`, a border side's `bg`), or a foreground-default
+keyword in a foreground field (`text({ color })`, `border.color`, a border
+side's `color`) — it resolves to that field's terminal default, unchanged from
+the table above.
 
 **Used in the other field** — a foreground-default keyword in a background
-field, or a background-default keyword in a foreground field, including a
-border side's `color` — it resolves to the terminal's probed color for the
-attribute it names, not to that field's default. The renderer reads this from
-the OSC 10/11 theme probe, surfaced as `RuntimeCapabilities.theme.foreground`
-/ `.background` (terminfo-spec §6.4) and passed into `pack()` as the theme
-snapshot `term.render()` holds at render time (§12.5). The result is an
-ordinary opaque sRGB color (alpha 255): it packs exactly like the equivalent
-`rgba()` value, renders as truecolor, and transitions interpolate it like any
-other RGB color — unlike the terminal-themed colors described below. When the
-theme has not yet reported that color, the keyword falls back to its field's
-own terminal default instead (the same-field behavior above). A theme report
-that arrives after a frame renders takes effect starting with the next
-render.
+field, or a background-default keyword in a foreground field, including a border
+side's `color` — it resolves to the terminal's probed color for the attribute it
+names, not to that field's default. The renderer reads this from the OSC 10/11
+theme probe, surfaced as `RuntimeCapabilities.theme.foreground` / `.background`
+(terminfo-spec §6.4) and passed into `pack()` as the theme snapshot
+`term.render()` holds at render time (§12.5). The result is an ordinary opaque
+sRGB color (alpha 255): it packs exactly like the equivalent `rgba()` value,
+renders as truecolor, and transitions interpolate it like any other RGB color —
+unlike the terminal-themed colors described below. When the theme has not yet
+reported that color, the keyword falls back to its field's own terminal default
+instead (the same-field behavior above). A theme report that arrives after a
+frame renders takes effect starting with the next render.
 
 For example, once the terminal has reported its default foreground color,
 `text({ bg: "CanvasText" })` paints that color as an opaque truecolor
 background. Until then it falls back to the default background: a terminal
-offers no way to paint its default foreground color as a cell background
-without knowing its RGB value, and the renderer never guesses one.
+offers no way to paint its default foreground color as a cell background without
+knowing its RGB value, and the renderer never guesses one.
 
-A terminal-themed color (a same-field default, or a palette entry) is opaque.
-A palette color in a foreground field is emitted as SGR `30`–`37` for palette
-0–7 and `90`–`97` for palette 8–15; in a background field, as SGR `40`–`47`
-and `100`–`107`. A terminal default color is emitted as SGR `39` (foreground)
-or `49` (background), or by omitting the foreground or background SGR after
-an SGR reset, which leaves the same default in effect.
+A terminal-themed color (a same-field default, or a palette entry) is opaque. A
+palette color in a foreground field is emitted as SGR `30`–`37` for palette 0–7
+and `90`–`97` for palette 8–15; in a background field, as SGR `40`–`47` and
+`100`–`107`. A terminal default color is emitted as SGR `39` (foreground) or
+`49` (background), or by omitting the foreground or background SGR after an SGR
+reset, which leaves the same default in effect.
 
 A terminal default background is a color, not the absence of one. An explicit
 `Canvas` background (or `ButtonFace`, `Field`, or any default keyword in a
@@ -1402,11 +1401,11 @@ Exported and used in tests.
 serializes a directive array into the transfer encoding described in Section
 12.1. Currently exported but not public API; its exposure is incidental to the
 module structure. The optional trailing `theme` carries the probed default
-foreground/background colors (`RuntimeCapabilities.theme`, terminfo-spec
-§6.4), used to resolve a cross-field default keyword (§8.5) to the terminal's
-actual default color. `term.render()` passes its current capability
-snapshot's `theme`; a caller that omits it gets the field-default fallback for
-every cross-field keyword.
+foreground/background colors (`RuntimeCapabilities.theme`, terminfo-spec §6.4),
+used to resolve a cross-field default keyword (§8.5) to the terminal's actual
+default color. `term.render()` passes its current capability snapshot's `theme`;
+a caller that omits it gets the field-default fallback for every cross-field
+keyword.
 
 ---
 

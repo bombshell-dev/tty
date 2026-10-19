@@ -273,3 +273,61 @@ describe("system colors", () => {
     expect((snapshot(ops) as { data: Uint8Array }).data).toEqual(packed(ops));
   });
 });
+
+describe("cross-field default keywords with a theme", () => {
+  function packed(
+    ops: Parameters<typeof pack>[0],
+    theme?: Parameters<typeof pack>[4],
+  ): Uint8Array {
+    let memory = new ArrayBuffer(512);
+    let n = pack(ops, memory, 0, memory.byteLength, theme);
+    return new Uint8Array(memory, 0, n * 4);
+  }
+
+  let theme = {
+    foreground: { r: 10, g: 20, b: 30 },
+    background: { r: 200, g: 210, b: 220 },
+  };
+
+  it("packs a fg-default keyword in a bg field as the probed foreground", () => {
+    expect(packed([text("Hi", { bg: "CanvasText" })], theme)).toEqual(
+      packed([text("Hi", { bg: rgba(10, 20, 30) })]),
+    );
+    expect(packed([open("box", { bg: "ButtonText" }), close()], theme))
+      .toEqual(
+        packed([open("box", { bg: rgba(10, 20, 30) }), close()]),
+      );
+  });
+
+  it("packs a bg-default keyword in a fg field as the probed background", () => {
+    expect(packed([text("Hi", { color: "Canvas" })], theme)).toEqual(
+      packed([text("Hi", { color: rgba(200, 210, 220) })]),
+    );
+    expect(
+      packed(
+        [open("box", { border: { color: "Field", top: 1 } }), close()],
+        theme,
+      ),
+    ).toEqual(
+      packed([
+        open("box", { border: { color: rgba(200, 210, 220), top: 1 } }),
+        close(),
+      ]),
+    );
+  });
+
+  it("falls back to the field's own default without a theme", () => {
+    expect(packed([text("Hi", { bg: "CanvasText" })])).toEqual(
+      packed([text("Hi", { bg: "Canvas" })]),
+    );
+    expect(packed([text("Hi", { color: "Canvas" })])).toEqual(
+      packed([text("Hi", { color: "CanvasText" })]),
+    );
+  });
+
+  it("falls back to the field's own default when the theme omits that color", () => {
+    expect(packed([text("Hi", { bg: "CanvasText" })], {})).toEqual(
+      packed([text("Hi", { bg: "Canvas" })]),
+    );
+  });
+});

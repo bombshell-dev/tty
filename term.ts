@@ -205,6 +205,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         memory.buffer,
         native.opsBuf,
         memory.buffer.byteLength,
+        currentCaps.theme,
       );
       let mode = options?.mode === "line" ? 1 : 0;
       let row = options?.row ?? 1;
