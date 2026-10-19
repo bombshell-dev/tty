@@ -14,6 +14,7 @@ const FLAG_AUTO_RIGHT_MARGIN = 1 << 2;
 const FLAG_EAT_NEWLINE_GLITCH = 1 << 3;
 const FLAG_ALTSCREEN = 1 << 4;
 const FLAG_STYLED_UNDERLINE = 1 << 5;
+const FLAG_SYNC = 1 << 6;
 
 const TermInfoStruct = struct({
   generation: uint32(),
@@ -43,6 +44,8 @@ export interface Capabilities {
   readonly xenl: boolean;
   readonly altScreen: boolean;
   readonly styledUnderline: boolean;
+  readonly syncOutput: boolean;
+  readonly pointerShape: boolean;
 }
 
 /** Opaque type alias for the raw terminfo key-sequence bytes. */
@@ -84,12 +87,47 @@ const PROBE = encoder.encode(
     "\x1b]22;?__current__\x1b\\" +
     "\x1bP+q524742;5463\x1b\\" +
     "\x1b[?2026$p" +
+    "\x1bP+q53796e63\x1b\\" +
     "\x1b[?u" +
     "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\" +
     "\x1b[c",
 );
 
 const WASM_PAGE_BYTES = 65536;
+
+/**
+ * The known OSC 22 pointer-shape support table (terminfo-spec §6.1): terminals
+ * that implement OSC 22 pointer shape setting but never answer its support
+ * query, identified by environment evidence. Entries require primary evidence
+ * from the terminal's own documentation. Each entry records the version that
+ * introduced support; a stale entry degrades to the same silent swallowing the
+ * capability gate already produces, never to garbage.
+ */
+function knownPointerShape(
+  env: Record<string, string | undefined>,
+): boolean {
+  // ghostty: OSC 22 since 1.0.0 (ghostty.org/docs/vt/osc/22); set only —
+  // the reference documents no query form.
+  if (env.TERM === "xterm-ghostty" || env.TERM_PROGRAM === "ghostty") {
+    return true;
+  }
+  // kitty: full kitty pointer-shapes protocol since 0.31.0, including the
+  // query (sw.kovidgoyal.net/kitty/pointer-shapes/). Seeded here so
+  // term.capabilities is correct before the probe reply arrives.
+  if (env.TERM === "xterm-kitty" || env.KITTY_WINDOW_ID !== undefined) {
+    return true;
+  }
+  // foot: OSC 22 sets the xcursor pointer (foot-ctlseqs(7)); no query form.
+  if (env.TERM?.startsWith("foot")) {
+    return true;
+  }
+  // xterm: OSC 22 since patch 367 (ctlseqs); XTERM_VERSION is `xterm(N)`.
+  let patch = env.XTERM_VERSION?.match(/xterm\((\d+)\)/);
+  if (patch && Number(patch[1]) >= 367) {
+    return true;
+  }
+  return false;
+}
 
 function rgbOf(packed: number): Rgb {
   return {
@@ -169,6 +207,14 @@ export async function detectTerminal(
     exports.terminfo_grant(structPtr, FLAG_TRUECOLOR);
   }
 
+  /* Environment evidence (terminfo-spec §7.2): a running tmux consumes
+   * DEC mode 2026 from applications inside it, so its presence is
+   * positive sync-output evidence even for tmux releases that do not
+   * answer the DECRPM probe. */
+  if (env.TMUX) {
+    exports.terminfo_grant(structPtr, FLAG_SYNC);
+  }
+
   let view = new DataView(memory.buffer);
   let flags = view.getUint32(structPtr + TI.flags, true);
   let capabilities: Capabilities = Object.freeze({
@@ -179,6 +225,8 @@ export async function detectTerminal(
     xenl: !!(flags & FLAG_EAT_NEWLINE_GLITCH),
     altScreen: !!(flags & FLAG_ALTSCREEN),
     styledUnderline: !!(flags & FLAG_STYLED_UNDERLINE),
+    syncOutput: !!(flags & FLAG_SYNC),
+    pointerShape: knownPointerShape(env),
   });
 
   return Object.freeze<TerminalInfo>({

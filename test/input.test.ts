@@ -996,6 +996,72 @@ describe("terminfo integration", () => {
       });
     });
 
+    it("surfaces a BEL-terminated OSC 22 pointer shape report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]22;pointer\x07"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "pointer-shape", value: true },
+      ]);
+    });
+
+    it("surfaces an OSC 22 empty-stack report", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]22;0\x1b\\"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "pointer-shape", value: true },
+      ]);
+    });
+
+    it("buffers an OSC 22 report fed one byte at a time", async () => {
+      let { input } = await withTerminfo();
+      let reply = str("\x1b]22;default\x1b\\");
+      for (let i = 0; i < reply.length - 1; i++) {
+        expect(input.scan(reply.subarray(i, i + 1)).events).toEqual([]);
+      }
+      expect(input.scan(reply.subarray(reply.length - 1)).events).toEqual([
+        { type: "capability", key: "pointer-shape", value: true },
+      ]);
+    });
+
+    it("rejects an OSC 22 report whose ST is split from its ESC by a non-backslash", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]22;default\x1bx"));
+      expect(result.events.some((e) => e.type === "capability")).toBe(false);
+    });
+
+    it("bails on an OSC number longer than any it accepts without overflowing", async () => {
+      let { input } = await withTerminfo();
+      let digits = "9".repeat(64);
+      let result = input.scan(str(`\x1b]${digits};pointer\x07`));
+      expect(result.events.some((e) => e.type === "capability")).toBe(false);
+      expect(input.scan(str("\x1b]22;default\x1b\\")).events).toEqual([
+        { type: "capability", key: "pointer-shape", value: true },
+      ]);
+    });
+
+    it("does not read OSC 220 as OSC 22", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1b]220;pointer\x07"));
+      expect(result.events.some((e) => e.type === "capability")).toBe(false);
+    });
+
+    it("drops an OSC 22 report whose payload exceeds the response bound", async () => {
+      let { input } = await withTerminfo();
+      let events = input.scan(str(`\x1b]22;${"x".repeat(2048)}\x07`)).events;
+      expect(events.some((e) => e.type === "capability")).toBe(false);
+      events = input.scan(str("\x1b]22;default\x07")).events;
+      for (let i = 0; i < 32 && events.length > 0; i++) {
+        let last = events[events.length - 1];
+        if (last.type === "capability") break;
+        events = input.scan().events;
+      }
+      expect(events[events.length - 1]).toEqual({
+        type: "capability",
+        key: "pointer-shape",
+        value: true,
+      });
+    });
+
     it("surfaces truecolor colordepth from a valid XTGETTCAP reply", async () => {
       let terminfo = await detectTerminal({ env: {}, entry: CLAYTERM_16 });
       let input = await createInput({ terminfo });
@@ -1081,6 +1147,59 @@ describe("terminfo integration", () => {
       );
       expect(result.events).toEqual([
         { type: "capability", key: "colordepth", value: "truecolor" },
+        { type: "capability", key: "colordepth", value: "256" },
+      ]);
+    });
+
+    it("surfaces sync-output=true from a value-carrying XTGETTCAP Sync reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bP1+r53796e63=1b5b3f3230323668\x1b\\"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: true },
+      ]);
+    });
+
+    it("surfaces sync-output=false from an invalid XTGETTCAP Sync reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bP0+r53796e63\x1b\\"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: false },
+      ]);
+    });
+
+    it("surfaces sync-output=false from a Sync reply without a value", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bP1+r53796e63\x1b\\"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: false },
+      ]);
+    });
+
+    it("accepts a BEL-terminated XTGETTCAP Sync reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(str("\x1bP1+r53796e63=31\x07"));
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: true },
+      ]);
+    });
+
+    it("does not let a Sync denial disturb the colordepth tally", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(
+        str("\x1bP0+r524742\x1b\\\x1bP0+r53796e63\x1b\\"),
+      );
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: false },
+      ]);
+    });
+
+    it("keeps the colordepth denial working after a Sync reply", async () => {
+      let { input } = await withTerminfo();
+      let result = input.scan(
+        str("\x1bP1+r53796e63=31\x1b\\\x1bP0+r\x1b\\"),
+      );
+      expect(result.events).toEqual([
+        { type: "capability", key: "sync-output", value: true },
         { type: "capability", key: "colordepth", value: "256" },
       ]);
     });
@@ -1192,6 +1311,11 @@ describe("terminfo integration", () => {
         ["\x1b]22;default\x1b\\", [cap("pointer-shape", true)]],
         ["\x1bP1+r524742=382F382F38\x1b\\", [cap("colordepth", "truecolor")]],
         ["\x1bP0+r\x1b\\", [cap("colordepth", "256")]],
+        [
+          "\x1bP1+r53796e63=1b5b3f3230323668\x1b\\",
+          [cap("sync-output", true)],
+        ],
+        ["\x1bP0+r53796e63\x1b\\", [cap("sync-output", false)]],
         ["\x1b[?2026;2$y", [cap("sync-output", true)]],
         ["\x1b[?1u", [cap("kitty-keyboard", true)]],
         ["\x1b_Gi=31;OK\x1b\\", [cap("kitty-graphics", true)]],
