@@ -26,6 +26,8 @@ export const TRUECOLOR_INFO: TerminalInfo = Object.freeze({
     xenl: true,
     altScreen: true,
     styledUnderline: false,
+    syncOutput: false,
+    pointerShape: false,
   }),
   probe: new Uint8Array(0),
   keys: new Uint8Array(0),

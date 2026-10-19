@@ -60,6 +60,8 @@ describe("width", () => {
     let native = await createTermNative(10, 3, {
       colors: 256,
       trueColor: false,
+      syncOutput: false,
+      pointerShape: false,
     });
 
     // TextEncoder never produces surrogate bytes, so pack a placeholder
@@ -86,7 +88,7 @@ describe("width", () => {
     buf[at + 1] = 0xa0;
     buf[at + 2] = 0x80;
 
-    native.reduce(native.statePtr, native.opsBuf, len, 0, 1, 0);
+    native.reduce(native.statePtr, native.opsBuf, len, 0, 1, 0, 0, 0, 0);
     let out = new Uint8Array(
       native.memory.buffer,
       native.output(native.statePtr),

@@ -954,10 +954,34 @@ static int parse_osc_response(struct InputState *st) {
 }
 
 /* XTGETTCAP reply: DCS 1 + r … ST (valid) or DCS 0 + r … ST (invalid).
- * We only query RGB (524742) and Tc (5463). A valid reply naming either
- * confirms truecolor. The static tier is emitted only once both are
- * denied without a confirmation since the last DA1 fence; an invalid
- * reply naming neither denies both. */
+ * We query RGB (524742), Tc (5463), and Sync (53796e63) in separate
+ * requests. A valid reply naming RGB or Tc confirms truecolor. The
+ * static tier is emitted only once both are denied without a
+ * confirmation since the last DA1 fence; an invalid reply naming
+ * neither denies both.
+ *
+ * A reply naming Sync answers the Sync query alone: a value-carrying
+ * reply (name '=' hex-value) confirms synchronized output; a reply
+ * naming Sync without a value denies it. Sync replies never touch the
+ * colordepth tally (terminfo-spec 6.3). */
+/* True when payload contains name, then '=', then at least one hex
+ * digit — an XTGETTCAP reply carrying a value for the capability. */
+static int payload_contains_value(const char *s, int len, const char *name) {
+  int n = (int)strlen(name);
+  for (int i = 0; i + n + 1 < len; i++) {
+    int j = 0;
+    while (j < n && s[i + j] == name[j])
+      j++;
+    if (j == n && s[i + n] == '=') {
+      char v = s[i + n + 1];
+      if ((v >= '0' && v <= '9') || (v >= 'a' && v <= 'f') ||
+          (v >= 'A' && v <= 'F'))
+        return 1;
+    }
+  }
+  return 0;
+}
+
 static int parse_dcs_response(struct InputState *st) {
   if (st->len < 5)
     return PARSE_NEED_MORE;
@@ -980,7 +1004,11 @@ static int parse_dcs_response(struct InputState *st) {
   int plen = end - 5 - (st->buf[end - 1] == '\x07' ? 1 : 2);
   int rgb = payload_contains(payload, plen, "524742");
   int tc = payload_contains(payload, plen, "5463");
-  if (ok == '1') {
+  int sync = payload_contains(payload, plen, "53796e63");
+  if (sync) {
+    emit_cap_bool(st, CAP_SYNC_OUTPUT,
+                  payload_contains_value(payload, plen, "53796e63"));
+  } else if (ok == '1') {
     if (rgb || tc) {
       st->tcap |= TCAP_CONFIRMED;
       struct InputEvent *ev = emit(st);

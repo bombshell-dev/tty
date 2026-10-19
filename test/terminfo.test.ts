@@ -8,6 +8,7 @@ import { detectTerminal } from "../terminfo.ts";
 import {
   CLAYTERM_16,
   CLAYTERM_DIRECT,
+  CLAYTERM_SYNC,
   CLAYTERM_TC,
   XTERM_256COLOR,
 } from "./fixtures.ts";
@@ -23,7 +24,54 @@ const BASELINE = {
   xenl: true,
   altScreen: true,
   styledUnderline: false,
+  syncOutput: false,
+  pointerShape: false,
 };
+
+describe("known OSC 22 pointer shape support (terminfo-spec §6.1)", () => {
+  it("grants for ghostty by TERM and by TERM_PROGRAM", async () => {
+    let byTerm = await detectTerminal({ env: { TERM: "xterm-ghostty" } });
+    expect(byTerm.capabilities.pointerShape).toBe(true);
+    let byProgram = await detectTerminal({ env: { TERM_PROGRAM: "ghostty" } });
+    expect(byProgram.capabilities.pointerShape).toBe(true);
+  });
+
+  it("grants for kitty by TERM and by KITTY_WINDOW_ID", async () => {
+    let byTerm = await detectTerminal({ env: { TERM: "xterm-kitty" } });
+    expect(byTerm.capabilities.pointerShape).toBe(true);
+    let byWindow = await detectTerminal({ env: { KITTY_WINDOW_ID: "1" } });
+    expect(byWindow.capabilities.pointerShape).toBe(true);
+  });
+
+  it("grants for foot by TERM prefix", async () => {
+    let d = await detectTerminal({ env: { TERM: "foot" } });
+    expect(d.capabilities.pointerShape).toBe(true);
+  });
+
+  it("grants for xterm at the version floor and above", async () => {
+    let old = await detectTerminal({ env: { XTERM_VERSION: "xterm(366)" } });
+    expect(old.capabilities.pointerShape).toBe(false);
+    let floor = await detectTerminal({ env: { XTERM_VERSION: "xterm(367)" } });
+    expect(floor.capabilities.pointerShape).toBe(true);
+    let newer = await detectTerminal({ env: { XTERM_VERSION: "xterm(388)" } });
+    expect(newer.capabilities.pointerShape).toBe(true);
+  });
+
+  it("does not grant for terminals that rewrite their identity", async () => {
+    for (
+      let TERM of [
+        "tmux-256color",
+        "screen-256color",
+        "xterm-256color",
+      ]
+    ) {
+      let d = await detectTerminal({ env: { TERM } });
+      expect(d.capabilities.pointerShape).toBe(false);
+    }
+    let vscode = await detectTerminal({ env: { TERM_PROGRAM: "vscode" } });
+    expect(vscode.capabilities.pointerShape).toBe(false);
+  });
+});
 
 describe("baseline", () => {
   it("initializes to the baseline with no evidence", async () => {
@@ -46,6 +94,14 @@ describe("terminfo parsing", () => {
     expect(caps.bce).toBe(true);
     expect(caps.autoMargin).toBe(true);
     expect(caps.altScreen).toBe(true);
+    expect(caps.syncOutput).toBe(false);
+  });
+
+  it("reads Sync from the extended capability table", async () => {
+    let d = await detectTerminal({ env: {}, entry: CLAYTERM_SYNC });
+    let caps = d.capabilities;
+    expect(caps.syncOutput).toBe(true);
+    expect(caps.trueColor).toBe(false);
   });
 
   it("reads Tc / Su / Smulx from the extended capability table", async () => {
@@ -112,6 +168,26 @@ describe("environment evidence", () => {
   it("ignores other COLORTERM values", async () => {
     let d = await detectTerminal({ env: { COLORTERM: "yes" } });
     expect(d.capabilities.trueColor).toBe(false);
+  });
+
+  it("grants syncOutput from TMUX", async () => {
+    let d = await detectTerminal({
+      env: { TMUX: "/tmp/tmux-1000/default,12345,0" },
+    });
+    expect(d.capabilities.syncOutput).toBe(true);
+  });
+
+  it("ignores an empty TMUX", async () => {
+    let d = await detectTerminal({ env: { TMUX: "" } });
+    expect(d.capabilities.syncOutput).toBe(false);
+  });
+
+  it("TMUX evidence applies even when the entry lacks Sync", async () => {
+    let d = await detectTerminal({
+      env: { TMUX: "/tmp/tmux-1000/default,12345,0" },
+      entry: XTERM_256COLOR,
+    });
+    expect(d.capabilities.syncOutput).toBe(true);
   });
 });
 
@@ -184,6 +260,7 @@ const PROBE = "\x1b]10;?\x07" +
   "\x1b]22;?__current__\x1b\\" +
   "\x1bP+q524742;5463\x1b\\" +
   "\x1b[?2026$p" +
+  "\x1bP+q53796e63\x1b\\" +
   "\x1b[?u" +
   "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\" +
   "\x1b[c";
