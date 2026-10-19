@@ -919,31 +919,31 @@ clipped per channel; no perceptual gamut mapping is performed. Alpha defaults to
 255 when a form does not supply it. A hex string and the equivalent `rgba()`
 call produce bit-identical packed values.
 
-**Foreground inheritance and `currentcolor`.** `open()` accepts a `color`
-field: the element's own foreground color. `color` is inherited: an element
-with no explicit `color` (or with `color: "currentcolor"`) uses the nearest
-ancestor `open()`'s resolved color; an explicit `color` other than
-`currentcolor` overrides it for that element and, by the same inheritance
-rule, every descendant that does not itself override it. `text()` resolves its
-own `color` field (and, when absent, inherits) the same way; a `text()` has no
-descendants, so its resolved color only affects itself. With no `color`
-anywhere in the enclosing chain, the inherited color is the terminal default
-foreground — the same color a directive gets today when `color` is omitted.
+**Foreground inheritance and `currentcolor`.** `open()` accepts a `color` field:
+the element's own foreground color. `color` is inherited: an element with no
+explicit `color` (or with `color: "currentcolor"`) uses the nearest ancestor
+`open()`'s resolved color; an explicit `color` other than `currentcolor`
+overrides it for that element and, by the same inheritance rule, every
+descendant that does not itself override it. `text()` resolves its own `color`
+field (and, when absent, inherits) the same way; a `text()` has no descendants,
+so its resolved color only affects itself. With no `color` anywhere in the
+enclosing chain, the inherited color is the terminal default foreground — the
+same color a directive gets today when `color` is omitted.
 
 `currentcolor` used in any field other than `color` — `open({ bg })`,
 `text({ bg })`, `border.color`, `border.bg`, or a structured border side's
-`color` or `bg` — resolves to that directive's own resolved color (its
-explicit `color`, or the color it inherits). That resolved color is then
-subject to the same field resolution as any other color value: a same-field
-default keyword or palette entry stays terminal-themed, a cross-field default
-keyword resolves against the probed theme (falling back to the field's own
-default when unprobed), and an sRGB color passes through unchanged. For
-example, an element with no `color` set anywhere above it has an inherited
-color of the terminal default foreground; `bg: "currentcolor"` on that element
-resolves exactly like `bg: "CanvasText"` — the probed foreground when
-available, the default background otherwise — while `border.color` left at its
-default resolves like `border.color: "CanvasText"` used in a foreground field,
-which stays terminal-themed (SGR `39`).
+`color` or `bg` — resolves to that directive's own resolved color (its explicit
+`color`, or the color it inherits). That resolved color is then subject to the
+same field resolution as any other color value: a same-field default keyword or
+palette entry stays terminal-themed, a cross-field default keyword resolves
+against the probed theme (falling back to the field's own default when
+unprobed), and an sRGB color passes through unchanged. For example, an element
+with no `color` set anywhere above it has an inherited color of the terminal
+default foreground; `bg: "currentcolor"` on that element resolves exactly like
+`bg: "CanvasText"` — the probed foreground when available, the default
+background otherwise — while `border.color` left at its default resolves like
+`border.color: "CanvasText"` used in a foreground field, which stays
+terminal-themed (SGR `39`).
 
 `border.color` is optional and defaults to `currentcolor`, matching CSS. A
 structured border side without its own `color` falls back to the shared
@@ -953,8 +953,8 @@ structured border side without its own `color` falls back to the shared
 Foreground inheritance is resolved by `pack()` with a stack: pushed on each
 element open (the newly resolved color), popped on the matching close. It is
 scoped to the single pass over one frame's directive array — a sibling that
-follows a closed element does not see that element's color, and no
-inheritance state carries across frames (§6, §10.4).
+follows a closed element does not see that element's color, and no inheritance
+state carries across frames (§6, §10.4).
 
 **Invalid color strings.** A string that does not match the color string grammar
 is invalid directive input (§9.1). `validate()` reports it as an invalid field
@@ -967,10 +967,10 @@ The directive constructors check string literals at compile time: a literal
 beginning with `#` must match the hex form (the type-level equivalent of
 `#${string{3,4,6,8}}`); a literal containing `(` must begin with a supported
 function name; any other literal must be a named color keyword, `transparent`,
-`currentcolor`, or a system color keyword. Function arguments are not checked statically.
-Strings whose value is only known at runtime (colors read from a theme or
-configuration, for example) pass the type check as `string` and are checked by
-`validate()` and the packer at render time.
+`currentcolor`, or a system color keyword. Function arguments are not checked
+statically. Strings whose value is only known at runtime (colors read from a
+theme or configuration, for example) pass the type check as `string` and are
+checked by `validate()` and the packer at render time.
 
 ### 8.6 Term update
 

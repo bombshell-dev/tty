@@ -1,5 +1,6 @@
 import type { names } from "hueful";
 import {
+  isCurrentColor,
   resolveColor,
   resolveForField,
   type systemColors,
@@ -104,20 +105,22 @@ function sideFg(
   side: BorderSide | undefined,
   shared: Color,
   theme: ThemeColors | undefined,
+  current: number | TerminalColor,
 ): number {
   let color = typeof side === "object" && side.color !== undefined
     ? side.color
     : shared;
-  return colorWord(color, "fg", theme);
+  return colorWord(color, "fg", theme, current);
 }
 
 function sideBg(
   side: BorderSide | undefined,
   shared: Color | undefined,
   theme: ThemeColors | undefined,
+  current: number | TerminalColor,
 ): number {
   let bg = typeof side === "object" && side.bg !== undefined ? side.bg : shared;
-  return bg === undefined ? BG_KEEP : colorWord(bg, "bg", theme);
+  return bg === undefined ? BG_KEEP : colorWord(bg, "bg", theme, current);
 }
 
 function packString(
@@ -155,11 +158,16 @@ export function pack(
   let end = limit ?? mem.byteLength;
   let o = offset;
 
+  // §8.5 foreground inheritance: pushed on open (the element's own resolved
+  // color), popped on the matching close. Scoped to this single pass.
+  let colorStack: (number | TerminalColor)[] = [DEFAULT_FG];
+
   for (let op of ops) {
     switch (op.directive) {
       case OP_CLOSE_ELEMENT:
         view.setUint32(o, op.directive, true);
         o += 4;
+        if (colorStack.length > 1) colorStack.pop();
         break;
 
       case OP_OPEN_ELEMENT: {
@@ -169,9 +177,15 @@ export function pack(
         let bytes = encoder.encode(op.id);
         o = packString(view, bytes, o, end, "element id");
 
+        let ownColor = resolveOwn(
+          op.color,
+          colorStack[colorStack.length - 1],
+        );
+        colorStack.push(ownColor);
+
         let bg = op.bg === undefined
           ? undefined
-          : colorValue(op.bg, "bg", theme);
+          : colorValue(op.bg, "bg", theme, ownColor);
         let mask = 0;
         if (op.layout) mask |= PROP_LAYOUT;
         if (typeof bg === "number") mask |= PROP_BG_COLOR;
@@ -254,10 +268,11 @@ export function pack(
           // attribute words: fg/bg pairs in top, right, bottom, left order.
           // C treats the presence and order of these words as a wire-format
           // invariant and only consumes the explicit values.
+          let sharedColor: Color = b.color ?? "currentcolor";
           for (let side of [b.top, b.right, b.bottom, b.left]) {
-            view.setUint32(o, sideFg(side, b.color, theme), true);
+            view.setUint32(o, sideFg(side, sharedColor, theme, ownColor), true);
             o += 4;
-            view.setUint32(o, sideBg(side, b.bg, theme), true);
+            view.setUint32(o, sideBg(side, b.bg, theme, ownColor), true);
             o += 4;
           }
         }
@@ -332,11 +347,15 @@ export function pack(
         view.setUint32(o, OP_TEXT, true);
         o += 4;
         // The fg word's bit 31 travels in the attrs byte (0x80); the C path
-        // ORs the attrs byte back over the high byte. No color is the
-        // terminal default.
-        let color = op.color === undefined
-          ? { ansi: "fg-default" as const }
-          : colorValue(op.color, "fg", theme);
+        // ORs the attrs byte back over the high byte. No color inherits the
+        // nearest ancestor open()'s color (§8.5), terminal default at root.
+        let ownColor = resolveOwn(
+          op.color,
+          colorStack[colorStack.length - 1],
+        );
+        let color = typeof ownColor === "number"
+          ? ownColor
+          : resolveForField(ownColor, "fg", theme);
         let terminal = typeof color === "object";
         view.setUint32(
           o,
@@ -347,7 +366,9 @@ export function pack(
 
         view.setUint32(
           o,
-          op.bg === undefined ? BG_KEEP : colorWord(op.bg, "bg", theme),
+          op.bg === undefined
+            ? BG_KEEP
+            : colorWord(op.bg, "bg", theme, ownColor),
           true,
         );
         o += 4;
@@ -398,21 +419,45 @@ export type Color = number | string;
 /**
  * Resolves a color value to a packed ARGB number or a terminal-themed color
  * (§8.5), for the field it's packed into. Numbers pass through; strings
- * resolve through the CSS color grammar. A cross-field default keyword
- * resolves against `theme` to a packed ARGB number, falling back to the
- * field's own terminal default when `theme` lacks that color. Invalid
- * strings throw rather than decoding to a garbage color.
+ * resolve through the CSS color grammar. `currentcolor` substitutes `current`
+ * — the directive's own resolved color — before field resolution runs, same
+ * as any other color. A cross-field default keyword resolves against `theme`
+ * to a packed ARGB number, falling back to the field's own terminal default
+ * when `theme` lacks that color. Invalid strings throw rather than decoding
+ * to a garbage color.
  */
 function colorValue(
   color: Color,
   field: "fg" | "bg",
   theme: ThemeColors | undefined,
+  current: number | TerminalColor,
 ): number | TerminalColor {
   if (typeof color === "number") return color;
   let value = resolveColor(color);
   if (value === undefined) throw new TypeError(`invalid color: "${color}"`);
-  if (typeof value === "number") return value;
-  return resolveForField(value, field, theme);
+  let resolved = isCurrentColor(value) ? current : value;
+  if (typeof resolved === "number") return resolved;
+  return resolveForField(resolved, field, theme);
+}
+
+/**
+ * Resolves the canonical (pre field-resolution) color a directive's own
+ * `color` property names — its inheritance value for §8.5's foreground
+ * inheritance. `undefined` or `currentcolor` inherits `parent`; any other
+ * value resolves through the CSS color grammar, same as `colorValue`, but
+ * without field resolution — that happens where the value is later consumed.
+ */
+function resolveOwn(
+  explicit: Color | undefined,
+  parent: number | TerminalColor,
+): number | TerminalColor {
+  if (explicit === undefined) return parent;
+  if (typeof explicit === "number") return explicit;
+  let value = resolveColor(explicit);
+  if (value === undefined) {
+    throw new TypeError(`invalid color: "${explicit}"`);
+  }
+  return isCurrentColor(value) ? parent : value;
 }
 
 function terminalWord(color: TerminalColor): number {
@@ -426,10 +471,14 @@ function colorWord(
   color: Color,
   field: "fg" | "bg",
   theme: ThemeColors | undefined,
+  current: number | TerminalColor,
 ): number {
-  let value = colorValue(color, field, theme);
+  let value = colorValue(color, field, theme, current);
   return typeof value === "number" ? value & 0x00FFFFFF : terminalWord(value);
 }
+
+/* The directive-chain default when no ancestor `open()` sets `color`. */
+const DEFAULT_FG: TerminalColor = { ansi: "fg-default" };
 
 export type SizingAxis =
   | { type: "fit"; min?: number; max?: number }
@@ -468,6 +517,10 @@ export type BorderSide =
 export interface OpenElement {
   directive: typeof OP_OPEN_ELEMENT;
   id: string;
+  /** The element's own foreground color (§8.5). Inherited by descendants
+   * that do not override it; `currentcolor` means "inherit," same as
+   * omitting this field. */
+  color?: Color;
   layout?: {
     width?: SizingAxis;
     height?: SizingAxis;
@@ -480,7 +533,8 @@ export interface OpenElement {
   bg?: Color;
   cornerRadius?: { tl?: number; tr?: number; bl?: number; br?: number };
   border?: {
-    color: Color;
+    /** Defaults to `currentcolor` (§8.5): the element's own resolved color. */
+    color?: Color;
     bg?: Color;
     left?: BorderSide;
     right?: BorderSide;
@@ -640,7 +694,8 @@ type ColorFunction =
 type NamedColor =
   | keyof typeof names
   | keyof typeof systemColors
-  | "transparent";
+  | "transparent"
+  | "currentcolor";
 
 type CheckedColor<T> = T extends number ? T
   : T extends string ? string extends T ? T

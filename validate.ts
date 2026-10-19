@@ -99,7 +99,7 @@ const BorderSide = Type.Union([
 ]);
 
 const Border = Type.Object({
-  color,
+  color: Type.Optional(color),
   bg: Type.Optional(color),
   left: Type.Optional(BorderSide),
   right: Type.Optional(BorderSide),
@@ -196,6 +196,7 @@ const CloseElement = Type.Object({ directive: Type.Literal(0x04) });
 const OpenElement = Type.Object({
   directive: Type.Literal(0x02),
   id: Type.String(),
+  color: Type.Optional(color),
   layout: Type.Optional(Layout),
   bg: Type.Optional(color),
   cornerRadius: Type.Optional(CornerRadius),

@@ -197,7 +197,7 @@ describe("CSS color strings", () => {
         "color-mix(in srgb, red, blue)",
         "rgb(from red r g b)",
         "device-cmyk(0 0 0 1)",
-        "currentcolor",
+        "currentcolour",
         " red",
         "red ",
         "rgb(1 2)",
@@ -328,6 +328,143 @@ describe("cross-field default keywords with a theme", () => {
   it("falls back to the field's own default when the theme omits that color", () => {
     expect(packed([text("Hi", { bg: "CanvasText" })], {})).toEqual(
       packed([text("Hi", { bg: "Canvas" })]),
+    );
+  });
+});
+
+describe("currentcolor", () => {
+  function packed(
+    ops: Parameters<typeof pack>[0],
+    theme?: Parameters<typeof pack>[4],
+  ): Uint8Array {
+    let memory = new ArrayBuffer(512);
+    let n = pack(ops, memory, 0, memory.byteLength, theme);
+    return new Uint8Array(memory, 0, n * 4);
+  }
+
+  it("packs a text bg currentcolor identically to the inherited ancestor rgba() color", () => {
+    expect(
+      packed([
+        open("a", { color: rgba(10, 20, 30) }),
+        text("Hi", { bg: "currentcolor" }),
+        close(),
+      ]),
+    ).toEqual(
+      packed([
+        open("a", { color: rgba(10, 20, 30) }),
+        text("Hi", { bg: rgba(10, 20, 30) }),
+        close(),
+      ]),
+    );
+  });
+
+  it("packs a text color currentcolor identically to omitting color", () => {
+    expect(packed([text("Hi", { color: "currentcolor" })])).toEqual(
+      packed([text("Hi")]),
+    );
+  });
+
+  it("packs open bg currentcolor identically to its own explicit color", () => {
+    expect(
+      packed([
+        open("a", { color: rgba(1, 2, 3), bg: "currentcolor" }),
+        close(),
+      ]),
+    ).toEqual(
+      packed([open("a", { color: rgba(1, 2, 3), bg: rgba(1, 2, 3) }), close()]),
+    );
+  });
+
+  it("packs border.color currentcolor identically to the inherited color", () => {
+    expect(
+      packed([
+        open("a", { color: rgba(4, 5, 6) }),
+        open("b", { border: { top: 1 } }),
+        close(),
+        close(),
+      ]),
+    ).toEqual(
+      packed([
+        open("a", { color: rgba(4, 5, 6) }),
+        open("b", { border: { color: "currentcolor", top: 1 } }),
+        close(),
+        close(),
+      ]),
+    );
+  });
+
+  it("packs border.bg currentcolor identically to the directive's own resolved color", () => {
+    expect(
+      packed([
+        open("a", {
+          color: rgba(7, 8, 9),
+          border: { bg: "currentcolor", top: 1 },
+        }),
+        close(),
+      ]),
+    ).toEqual(
+      packed([
+        open("a", {
+          color: rgba(7, 8, 9),
+          border: { bg: rgba(7, 8, 9), top: 1 },
+        }),
+        close(),
+      ]),
+    );
+  });
+
+  it("packs a structured side color currentcolor identically to its own resolved color", () => {
+    expect(
+      packed([
+        open("a", {
+          color: rgba(1, 1, 1),
+          border: {
+            color: rgba(9, 9, 9),
+            top: { width: 1, color: "currentcolor" },
+          },
+        }),
+        close(),
+      ]),
+    ).toEqual(
+      packed([
+        open("a", {
+          color: rgba(1, 1, 1),
+          border: {
+            color: rgba(9, 9, 9),
+            top: { width: 1, color: rgba(1, 1, 1) },
+          },
+        }),
+        close(),
+      ]),
+    );
+  });
+
+  it("packs a same-field default inherited via currentcolor like the default keyword", () => {
+    expect(packed([text("Hi", { bg: "currentcolor" })])).toEqual(
+      packed([text("Hi", { bg: "CanvasText" })]),
+    );
+  });
+
+  it("packs a cross-field default inherited via currentcolor against a probed theme", () => {
+    let theme = { foreground: { r: 10, g: 20, b: 30 } };
+    expect(packed([text("Hi", { bg: "currentcolor" })], theme)).toEqual(
+      packed([text("Hi", { bg: rgba(10, 20, 30) })]),
+    );
+  });
+
+  it("packs a palette color inherited via currentcolor unchanged", () => {
+    expect(
+      packed([
+        open("a", { color: "Mark" }),
+        text("Hi", { bg: "currentcolor" }),
+        close(),
+      ]),
+    ).toEqual(
+      packed([
+        open("a", { color: "Mark" }),
+        text("Hi", { bg: "Mark" }),
+        close(),
+      ]),
     );
   });
 });

@@ -51,15 +51,32 @@ function byte(unit: number): number {
 }
 
 /**
+ * A §8.5 `currentcolor` sentinel. In a `color` field it means "inherit"; in
+ * any other field it means "this directive's own resolved color." Both
+ * substitutions happen in `pack()`'s inheritance stack (ops.ts), not here.
+ */
+export const CURRENT_COLOR: { readonly current: true } = { current: true };
+export type CurrentColor = typeof CURRENT_COLOR;
+
+/** Narrows a `resolveColor()` result to the `currentcolor` sentinel. */
+export function isCurrentColor(
+  value: number | TerminalColor | CurrentColor,
+): value is CurrentColor {
+  return typeof value === "object" && "current" in value;
+}
+
+/**
  * Resolves a §8.5 CSS color string to the packed ARGB number the transfer
- * encoding carries, a terminal-themed color for a system color keyword, or
- * `undefined` when the string is not a supported color. Channels clamp to
- * the sRGB range, so out-of-gamut colors clip per channel.
+ * encoding carries, a terminal-themed color for a system color keyword, the
+ * `currentcolor` sentinel, or `undefined` when the string is not a supported
+ * color. Channels clamp to the sRGB range, so out-of-gamut colors clip per
+ * channel.
  */
 export function resolveColor(
   input: string,
-): number | TerminalColor | undefined {
+): number | TerminalColor | CurrentColor | undefined {
   let lower = input.toLowerCase();
+  if (lower === "currentcolor") return CURRENT_COLOR;
   if (Object.hasOwn(systemColors, lower)) {
     return { ansi: systemColors[lower as keyof typeof systemColors] };
   }
