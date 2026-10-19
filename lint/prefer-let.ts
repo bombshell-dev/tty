@@ -1,7 +1,7 @@
 type VariableDeclaration = Deno.lint.VariableDeclaration;
 
 const plugin: Deno.lint.Plugin = {
-  name: "clayterm",
+  name: "tty",
   rules: {
     "prefer-let": {
       create(context) {

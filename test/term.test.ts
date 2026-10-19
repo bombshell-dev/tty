@@ -1,5 +1,7 @@
+// deno-lint-ignore-file no-control-regex
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
+import type { InputEvent } from "../input.ts";
 import {
   close,
   fixed,
@@ -11,6 +13,7 @@ import {
   text,
 } from "../ops.ts";
 import { print } from "./print.ts";
+import { trueColorDetect } from "./caps.ts";
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const trim = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n");
@@ -52,8 +55,8 @@ describe("term", () => {
       ]).output,
     );
 
-    // the SGR active when "h" is emitted should include the
-    // parent's red background (48;2;255;0;0), not terminal default
+    // The SGR active when "h" is emitted should include the parent's red
+    // background, not the terminal default.
     let before = ansi.slice(0, ansi.indexOf("h"));
     expect(before).toContain("\x1b[48;2;255;0;0");
   });
@@ -92,8 +95,8 @@ describe("term", () => {
 │                                      │
 │                                      │
 │                                      │
-│    padded                            │
 │                                      │
+│     padded                           │
 │                                      │
 │                                      │
 ╰──────────────────────────────────────╯`.trim());
@@ -109,7 +112,6 @@ describe("term", () => {
           width: grow(),
           height: grow(),
           direction: "ttb",
-          padding: { left: 1, top: 1 },
         },
         border: {
           color: rgba(255, 255, 255),
@@ -130,7 +132,7 @@ describe("term", () => {
       let out = decode(
         term.render(box("hello world"), { mode: "line" }).output,
       );
-      // deno-lint-ignore no-control-regex
+
       expect(out).not.toMatch(/\x1b\[\d+;\d+H/);
       expect(out.split("\n").length).toBe(5);
       expect(trim(print(out, 20, 5))).toEqual(`
@@ -212,7 +214,6 @@ describe("term", () => {
               width: fixed(12),
               height: fixed(5),
               direction: "ttb",
-              padding: { left: 1, top: 1 },
             },
             border: {
               color: rgba(255, 255, 255),
@@ -297,7 +298,6 @@ describe("term", () => {
             width: grow(),
             height: grow(),
             direction: "ttb",
-            padding: { left: 1, top: 1 },
           },
           border: {
             color: rgba(255, 255, 255),
@@ -337,6 +337,351 @@ describe("term", () => {
     });
   });
 
+  describe("grapheme clusters", () => {
+    let border = {
+      color: rgba(255, 255, 255),
+      left: 1,
+      right: 1,
+      top: 1,
+      bottom: 1,
+    };
+
+    async function render(content: string): Promise<string> {
+      let t = await createTerm({ width: 12, height: 3 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+            border,
+          }),
+          text(content),
+          close(),
+        ]).output,
+      );
+      return trim(print(ansi, 12, 3));
+    }
+
+    it("preserves combining accent (e + U+0301)", async () => {
+      expect(await render("cafe\u0301")).toEqual(`\
+┌──────────┐
+│cafe\u0301      │
+└──────────┘`);
+    });
+
+    it("preserves kitty-graphics placeholder cluster (base + 2 combining marks)", async () => {
+      expect(await render("\u{10EEEE}\u0305\u030D")).toEqual(`\
+┌──────────┐
+│\u{10EEEE}\u0305\u030D         │
+└──────────┘`);
+    });
+
+    it("preserves ZWJ (ZWJ is per-cell combining; following emoji start new cells)", async () => {
+      // The trailing half of each wide emoji is the blank column after it.
+      expect(await render("👨\u200D👩\u200D👧\u200D👦")).toEqual(`\
+┌──────────┐
+│👨\u200D 👩\u200D 👧\u200D 👦   │
+└──────────┘`);
+    });
+
+    it("truncates excess combining marks from the end (first 8 survive)", async () => {
+      let grave = "\u0300";
+      expect(await render("a" + grave.repeat(9))).toEqual(`\
+┌──────────┐
+│a${grave.repeat(8)}         │
+└──────────┘`);
+    });
+
+    it("reports COMBINING_MARKS_EXCEEDED once per frame on truncation", async () => {
+      let t = await createTerm({ width: 12, height: 3 });
+      let frame = (content: string) => [
+        open("root", {
+          layout: { width: grow(), height: grow(), direction: "ttb" },
+        }),
+        text(content),
+        close(),
+      ];
+      let types = (content: string) =>
+        t.render(frame(content)).errors.map((e) => e.type);
+      let grave = "̀";
+
+      expect(types("a" + grave.repeat(9) + "b" + grave.repeat(9))).toEqual([
+        "COMBINING_MARKS_EXCEEDED",
+      ]);
+      expect(types("a" + grave.repeat(8))).toEqual([]);
+      expect(types("c" + grave.repeat(10))).toEqual([
+        "COMBINING_MARKS_EXCEEDED",
+      ]);
+    });
+
+    it("drops combining marks whose base cell is clipped", async () => {
+      let t = await createTerm({ width: 6, height: 1 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ltr" },
+          }),
+          open("clip", {
+            layout: { width: fixed(2), height: fixed(1) },
+            clip: { horizontal: true, vertical: true },
+          }),
+          text("abe\u0301"),
+          close(),
+          close(),
+        ]).output,
+      );
+      expect(print(ansi, 6, 1)).toEqual("ab    ");
+    });
+  });
+
+  describe("caret placement", () => {
+    // These tests use `print()`, which marks the terminal's final
+    // cursor position by appending U+0332 COMBINING LOW LINE to that
+    // cell's base character (so the underlying char is preserved and
+    // the underline spans its rendered width, including wide chars).
+
+    it("renders the caret at the declared offset", async () => {
+      let t = await createTerm({ width: 6, height: 1 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          // caret at code-point 2 sits before the first 'l' — that 'l'
+          // is the underlined cell.
+          text("Hello", { caret: 2 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 6, 1))).toEqual("Hel̲lo");
+    });
+
+    it("uses the first caret declaration when multiple are present", async () => {
+      let t = await createTerm({ width: 2, height: 2 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          text("AA", { caret: 1 }),
+          text("BB", { caret: 2 }),
+          close(),
+        ]).output,
+      );
+      // First caret wins: offset 1 of "AA" → underline the second 'A'.
+      // No caret marker appears anywhere in "BB".
+      expect(trim(print(ansi, 2, 2))).toEqual(`\
+AA̲
+BB`);
+    });
+
+    it("accounts for wide characters when positioning the caret", async () => {
+      let t = await createTerm({ width: 5, height: 1 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          // 中 is a 2-cell wide char. Caret at offset 1 sits after 中,
+          // on 'h' at col 3. The extra space between 中 and h in the
+          // grid is 中's trailing half (the emulator's grid stores each
+          // codepoint in one cell regardless of wcwidth).
+          text("中hi", { caret: 1 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 5, 1))).toEqual("中 h̲i");
+    });
+
+    it("places the caret on the correct wrapped line", async () => {
+      let t = await createTerm({ width: 5, height: 2 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          // "hello world" wraps to "hello" / "world" at width 5.
+          // Code-point 7 is the second 'o' of "world" — caret on it.
+          text("hello world", { caret: 7 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 5, 2))).toEqual(`\
+hello
+wo̲rld`);
+    });
+
+    it("snaps to the next wrapped line for a caret at the wrap seam", async () => {
+      let t = await createTerm({ width: 5, height: 2 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          // The space between "hello" and "world" is on the wrap seam.
+          // Code-point 6 ('w') starts the second line; the caret lands
+          // there rather than orphaned off the end of the first line.
+          text("hello world", { caret: 6 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 5, 2))).toEqual(`\
+hello
+w̲orld`);
+    });
+
+    it("places the caret at the start of a wrapped line when whitespace is consumed", async () => {
+      let t = await createTerm({ width: 6, height: 2 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          // "abc def" wraps to "abc" / "def" at width 6. Code-point 4
+          // ('d') starts the second line; the dropped space between
+          // words is handled by the pre-check that snaps the caret to
+          // the slice origin when the slice's first byte is past the
+          // target.
+          text("abc def", { caret: 4 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 6, 2))).toEqual(`\
+abc
+d̲ef`);
+    });
+
+    it("snaps to the next wrapped line before a wide char at the wrap seam", async () => {
+      // "hi 中x" at width 4 wraps to "hi" / "中x". Caret before 中 snaps
+      // through the dropped space to the origin of the wrapped line
+      // and underlines the wide char.
+      let t = await createTerm({ width: 4, height: 2 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          text("hi 中x", { caret: 3 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 4, 2))).toEqual(`\
+hi
+中̲ x`);
+    });
+
+    it("advances past a wide char when placing the caret on a wrapped line", async () => {
+      // "hi 中x" at width 4 wraps to "hi" / "中x". Caret at offset 4
+      // (after 中, before x) — the render walk correctly advances by
+      // wcwidth(中)=2 and underlines x's cell.
+      let t = await createTerm({ width: 4, height: 2 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          text("hi 中x", { caret: 4 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 4, 2))).toEqual(`\
+hi
+中 x̲`);
+    });
+
+    it("places the caret one past the last char after a wrapped wide-char line", async () => {
+      // "hi 中x" at width 4 wraps to "hi" / "中x". Caret at offset 5
+      // (end-of-content) — the trailing-cell fallback puts the caret
+      // one cell past 'x' (underlining the trailing space).
+      let t = await createTerm({ width: 4, height: 2 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          text("hi 中x", { caret: 5 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 4, 2))).toEqual(`\
+hi
+中 x ̲`);
+    });
+
+    it("places the caret one cell past the last character when offset == length", async () => {
+      let t = await createTerm({ width: 4, height: 1 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          text("Hi", { caret: 2 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 4, 1))).toEqual("Hi ̲");
+    });
+
+    it("renders no caret when no caret has ever been declared", async () => {
+      let t = await createTerm({ width: 4, height: 1 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          text("Hi"),
+          close(),
+        ]).output,
+      );
+      // No caret marker anywhere in the grid; also no visibility bytes.
+      expect(trim(print(ansi, 4, 1))).toEqual("Hi");
+      expect(ansi).not.toContain("\x1b[?25h");
+      expect(ansi).not.toContain("\x1b[?25l");
+    });
+
+    it("renders the caret at the text origin when content is empty and caret is 0", async () => {
+      // Declaring a `caret` on empty content is a rendering commitment:
+      // the renderer places the cursor at the cell the caret would
+      // occupy if the content were a single space (row 1, col 1).
+      let t = await createTerm({ width: 3, height: 1 });
+      let ansi = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          text("", { caret: 0 }),
+          close(),
+        ]).output,
+      );
+      expect(trim(print(ansi, 3, 1))).toEqual(" ̲");
+    });
+
+    it("hides the cursor when transitioning from caret-present to caret-absent", async () => {
+      let t = await createTerm({ width: 3, height: 1 });
+      let frame1 = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          text("Hi", { caret: 1 }),
+          close(),
+        ]).output,
+      );
+      let frame2 = decode(
+        t.render([
+          open("root", {
+            layout: { width: grow(), height: grow(), direction: "ttb" },
+          }),
+          text("Hi"),
+          close(),
+        ]).output,
+      );
+      // Streaming both frames through the emulator: frame 1 turns the
+      // cursor on; frame 2 MUST emit `?25l` to turn it back off,
+      // otherwise the caret marker would linger at frame 1's cell.
+      expect(trim(print(frame1 + frame2, 3, 1))).toEqual("Hi");
+    });
+  });
+
   describe("row offset", () => {
     it("renders two frames at the offset position", async () => {
       let term = await createTerm({ width: 20, height: 5 });
@@ -349,7 +694,6 @@ describe("term", () => {
             width: grow(),
             height: grow(),
             direction: "ttb",
-            padding: { left: 1, top: 1 },
           },
           border: {
             color: rgba(255, 255, 255),
@@ -392,6 +736,265 @@ describe("term", () => {
 │                  │
 │                  │
 └──────────────────┘`);
+    });
+  });
+
+  describe("capabilities", () => {
+    it("starts from the 256-color baseline without terminfo", () => {
+      expect(term.capabilities.colors).toBe(256);
+      expect(term.capabilities.trueColor).toBe(false);
+    });
+
+    it("seeds static capabilities from terminfo", async () => {
+      let terminfo = await trueColorDetect();
+      let seeded = await createTerm({ width: 40, height: 10, terminfo });
+      expect(seeded.capabilities.trueColor).toBe(true);
+      for (let [key, value] of Object.entries(terminfo.capabilities)) {
+        expect(seeded.capabilities).toHaveProperty(key, value);
+      }
+    });
+  });
+
+  describe("update", () => {
+    let frame: Op[] = [
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      text("Hi"),
+      close(),
+    ];
+
+    it("emits a complete redraw on the first render after update", () => {
+      term.render(frame);
+      expect(term.render(frame).output.length).toBe(0);
+      term.update([{ type: "resize", width: 20, height: 5 }]);
+      let out = decode(term.render(frame).output);
+      expect(trim(print(out, 20, 5))).toContain("Hi");
+      expect(out.length).toBeGreaterThan(0);
+    });
+
+    it("is a no-op when dimensions are unchanged", () => {
+      term.render(frame);
+      term.update([{ type: "resize", width: 40, height: 10 }]);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it("throws on non-positive or non-integer dimensions", () => {
+      expect(() => term.update([{ type: "resize", width: 0, height: 10 }]))
+        .toThrow(RangeError);
+      expect(() => term.update([{ type: "resize", width: 40, height: -1 }]))
+        .toThrow(RangeError);
+      expect(() => term.update([{ type: "resize", width: 40.5, height: 10 }]))
+        .toThrow(
+          RangeError,
+        );
+    });
+
+    it("accepts an update array, last resize wins, non-resize updates applied", () => {
+      term.update([
+        { type: "resize", width: 30, height: 8 },
+        { type: "capability", key: "sync-output", value: false },
+        { type: "resize", width: 12, height: 4 },
+      ]);
+      let result = term.render(frame);
+      expect(result.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 12,
+        height: 4,
+      });
+    });
+
+    it("treats an update array with no resize as a no-op for layout", () => {
+      term.render(frame);
+      term.update([{ type: "capability", key: "sync-output", value: false }]);
+      expect(term.render(frame).output.length).toBe(0);
+      term.update([]);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it('resizes only on events tagged type: "resize"', () => {
+      term.render(frame);
+      let untagged = { width: 12, height: 4 } as unknown as InputEvent;
+      term.update([untagged]);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it("ignores input events that are neither resize nor capability", () => {
+      term.render(frame);
+      let before = term.capabilities;
+      let out = term.update([
+        { type: "keydown", key: "a", code: "a", text: "a" },
+        { type: "mousemove", button: "left", x: 1, y: 1 },
+      ]);
+      expect(out).toEqual(new Uint8Array(0));
+      expect(term.capabilities).toEqual(before);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it("discards pointer interaction state on resize", () => {
+      let pointer = { x: 1, y: 0, down: false };
+      let first = term.render(frame, { pointer });
+      expect(first.events).toContainEqual({ type: "pointerenter", id: "root" });
+      expect(term.render(frame, { pointer }).events).toEqual([]);
+      term.update([{ type: "resize", width: 20, height: 5 }]);
+      let after = term.render(frame, { pointer });
+      expect(after.events).toContainEqual({ type: "pointerenter", id: "root" });
+    });
+
+    it("resizes in place and lays out at the new dimensions", () => {
+      term.render(frame);
+      term.update([{ type: "resize", width: 12, height: 4 }]);
+      let result = term.render(frame);
+      expect(result.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 12,
+        height: 4,
+      });
+      expect(trim(print(decode(result.output), 12, 4))).toBe(
+        trim(
+          [
+            "Hi",
+            "",
+            "",
+            "",
+          ].join("\n"),
+        ),
+      );
+    });
+
+    it("survives downsize then upsize past the original size", () => {
+      term.render(frame);
+      term.update([{ type: "resize", width: 10, height: 3 }]);
+      let small = term.render(frame);
+      expect(small.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 3,
+      });
+      term.update([{ type: "resize", width: 120, height: 40 }]);
+      let large = term.render(frame);
+      expect(large.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 120,
+        height: 40,
+      });
+      expect(trim(print(decode(large.output), 120, 40))).toContain("Hi");
+    });
+  });
+
+  describe("synchronized output", () => {
+    let frame: Op[] = [
+      open("root", { layout: { width: grow(), height: grow() } }),
+      text("Hi"),
+      close(),
+    ];
+
+    let syncOn = {
+      type: "capability",
+      key: "sync-output",
+      value: true,
+    } as const;
+    let syncOff = {
+      type: "capability",
+      key: "sync-output",
+      value: false,
+    } as const;
+
+    it("does not wrap frames by default", () => {
+      let out = decode(term.render(frame).output);
+      expect(out).not.toContain("\x1b[?2026");
+    });
+
+    it("wraps frames when seeded from terminfo capabilities", async () => {
+      let t = await createTerm({
+        width: 40,
+        height: 10,
+        terminfo: {
+          capabilities: {
+            colors: 256,
+            trueColor: false,
+            bce: true,
+            autoMargin: true,
+            xenl: true,
+            altScreen: true,
+            styledUnderline: false,
+            syncOutput: true,
+            pointerShape: false,
+          },
+          probe: new Uint8Array(0),
+          keys: new Uint8Array(0),
+        },
+      });
+      expect(t.capabilities.syncOutput).toBe(true);
+      let out = decode(t.render(frame).output);
+      expect(out.startsWith("\x1b[?2026h")).toBe(true);
+      expect(out.endsWith("\x1b[?2026l")).toBe(true);
+    });
+
+    it("stops wrapping when a probe reply refutes seeded evidence", async () => {
+      let t = await createTerm({
+        width: 40,
+        height: 10,
+        terminfo: {
+          capabilities: {
+            colors: 256,
+            trueColor: false,
+            bce: true,
+            autoMargin: true,
+            xenl: true,
+            altScreen: true,
+            styledUnderline: false,
+            syncOutput: true,
+            pointerShape: false,
+          },
+          probe: new Uint8Array(0),
+          keys: new Uint8Array(0),
+        },
+      });
+      t.update([syncOff]);
+      let out = decode(t.render(frame).output);
+      expect(out).not.toContain("\x1b[?2026");
+    });
+
+    it("wraps full-screen frames when the capability is on", () => {
+      term.update([syncOn]);
+      let out = decode(term.render(frame).output);
+      expect(out.startsWith("\x1b[?2026h")).toBe(true);
+      expect(out.endsWith("\x1b[?2026l")).toBe(true);
+    });
+
+    it("emits zero bytes for a no-op frame even when wrapped", () => {
+      term.update([syncOn]);
+      term.render(frame);
+      expect(term.render(frame).output.length).toBe(0);
+    });
+
+    it("stops wrapping after the capability turns off", () => {
+      term.update([syncOn]);
+      term.render(frame);
+      term.update([syncOff]);
+      let out = decode(term.render(frame).output);
+      expect(out).not.toContain("\x1b[?2026");
+    });
+
+    it("keeps wrapping after a resize update", () => {
+      term.update([syncOn]);
+      term.update([{ type: "resize", width: 50, height: 12 }]);
+      let out = decode(term.render(frame).output);
+      expect(out.startsWith("\x1b[?2026h")).toBe(true);
+      expect(out.endsWith("\x1b[?2026l")).toBe(true);
+    });
+
+    it("never wraps line mode output", () => {
+      term.update([syncOn]);
+      let out = decode(
+        term.render(frame, { mode: "line", row: 1 }).output,
+      );
+      expect(out).not.toContain("\x1b[?2026");
     });
   });
 });

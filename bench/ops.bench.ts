@@ -1,19 +1,7 @@
 import { Bench } from "tinybench";
-import { withCodSpeed } from "@codspeed/tinybench-plugin";
+import { sync, withCodSpeed } from "./fixtures/utils.ts";
 import { close, fixed, grow, open, pack, rgba, text } from "../ops.ts";
 import type { Op } from "../ops.ts";
-
-function makeBuf(size: number): ArrayBuffer {
-  return new ArrayBuffer(size);
-}
-
-let simpleOps: Op[] = [
-  open("root", {
-    layout: { width: grow(), height: grow(), direction: "ttb" },
-  }),
-  text("Hello, World!"),
-  close(),
-];
 
 let complexOps: Op[] = [
   open("root", {
@@ -104,21 +92,23 @@ let listOps: Op[] = [
   close(),
 ];
 
-let bench = withCodSpeed(new Bench());
+let buf = new ArrayBuffer(32768);
+
+let bench = withCodSpeed(new Bench({ name: "ops" }));
 
 bench
-  .add("simple tree (root + text)", () => {
-    let buf = makeBuf(4096);
-    pack(simpleOps, buf, 0);
-  })
-  .add("complex layout (header + sidebar + main + footer)", () => {
-    let buf = makeBuf(8192);
-    pack(complexOps, buf, 0);
-  })
-  .add("large list (50 items)", () => {
-    let buf = makeBuf(32768);
-    pack(listOps, buf, 0);
-  });
+  .add(
+    "pack complex layout",
+    sync(() => {
+      for (let i = 0; i < 1500; i++) pack(complexOps, buf, 0);
+    }),
+  )
+  .add(
+    "pack large list",
+    sync(() => {
+      for (let i = 0; i < 250; i++) pack(listOps, buf, 0);
+    }),
+  );
 
 await bench.run();
 console.table(bench.table());

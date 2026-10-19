@@ -1,3 +1,29 @@
+import { type PointerShape, pointerShapeIndex } from "./pointer-shape.ts";
+
+export type { PointerShape };
+
+export type TransitionProperty =
+  | "x"
+  | "y"
+  | "position"
+  | "width"
+  | "height"
+  | "size"
+  | "bg"
+  | "overlay"
+  | "borderColor"
+  | "borderWidth"
+  | "all";
+
+export type Easing = "linear" | "easeIn" | "easeOut" | "easeInOut";
+
+export interface Transition {
+  duration: number;
+  easing?: Easing;
+  properties: TransitionProperty[];
+  interactive?: boolean;
+}
+
 /* Command buffer opcodes — mirrors ops.h */
 const OP_OPEN_ELEMENT = 0x02;
 const OP_TEXT = 0x03;
@@ -11,6 +37,8 @@ const PROP_CORNER_RADIUS = 0x04;
 const PROP_BORDER = 0x08;
 const PROP_CLIP = 0x10;
 const PROP_FLOATING = 0x20;
+const PROP_TRANSITION = 0x40;
+const PROP_CURSOR = 0x80;
 
 const ALIGN_SELF: Record<AlignSelf, number> = {
   auto: 0,
@@ -75,6 +103,26 @@ function packAxis(view: DataView, offset: number, axis: SizingAxis): number {
   return o;
 }
 
+function sideWidth(side: BorderSide | undefined): number {
+  return typeof side === "number" ? side : side?.width ?? 0;
+}
+
+function sideFg(side: BorderSide | undefined, shared: number): number {
+  let color = typeof side === "object" && side.color !== undefined
+    ? side.color
+    : shared;
+  return color & 0x00FFFFFF;
+}
+
+function sideBg(
+  side: BorderSide | undefined,
+  shared: number | undefined,
+): number {
+  let bg = typeof side === "object" && side.bg !== undefined ? side.bg : shared;
+  // ATTR_DEFAULT sentinel (bit 31 set) means "keep the existing cell bg"
+  return bg === undefined ? 0x80000000 : bg & 0x00FFFFFF;
+}
+
 function packString(
   view: DataView,
   bytes: Uint8Array,
@@ -86,7 +134,7 @@ function packString(
   let next = o + 4 + paddedLength;
   if (next > end) {
     throw new RangeError(
-      `clayterm transfer buffer capacity exceeded while packing ${context} ` +
+      `transfer buffer capacity exceeded while packing ${context} ` +
         `(${next} byte offset, ${end} byte limit). ` +
         `Render a smaller visible slice or reduce frame content.`,
     );
@@ -130,6 +178,9 @@ export function pack(
         if (op.border) mask |= PROP_BORDER;
         if (op.clip) mask |= PROP_CLIP;
         if (op.floating) mask |= PROP_FLOATING;
+        if (op.transition) mask |= PROP_TRANSITION;
+        let cursor = pointerShapeIndex(op.cursor);
+        if (cursor !== undefined) mask |= PROP_CURSOR;
         view.setUint32(o, mask, true);
         o += 4;
 
@@ -187,21 +238,25 @@ export function pack(
 
         if (op.border) {
           let b = op.border;
-          view.setUint32(o, b.color, true);
-          o += 4;
-
-          // ATTR_DEFAULT sentinel (bit 31 set) means "use terminal default bg"
-          let bg = b.bg === undefined ? 0x80000000 : b.bg & 0x00FFFFFF;
-          view.setUint32(o, bg, true);
-          o += 4;
-
           view.setUint32(
             o,
-            (b.left ?? 0) | ((b.right ?? 0) << 8) | ((b.top ?? 0) << 16) |
-              ((b.bottom ?? 0) << 24),
+            sideWidth(b.left) | (sideWidth(b.right) << 8) |
+              (sideWidth(b.top) << 16) | (sideWidth(b.bottom) << 24),
             true,
           );
           o += 4;
+
+          // Must match render_border() in src/clayterm.c.
+          // Resolve CSS-like side fallbacks here, then write eight required
+          // attribute words: fg/bg pairs in top, right, bottom, left order.
+          // C treats the presence and order of these words as a wire-format
+          // invariant and only consumes the explicit values.
+          for (let side of [b.top, b.right, b.bottom, b.left]) {
+            view.setUint32(o, sideFg(side, b.color), true);
+            o += 4;
+            view.setUint32(o, sideBg(side, b.bg), true);
+            o += 4;
+          }
         }
 
         if (op.clip) {
@@ -241,6 +296,26 @@ export function pack(
           );
           o += 4;
         }
+
+        if (op.transition) {
+          let t = op.transition;
+          let pmask = 0;
+          for (let name of t.properties) pmask |= propertyMask(name);
+
+          view.setFloat32(o, t.duration, true);
+          o += 4;
+          view.setUint16(o, pmask, true);
+          o += 2;
+          view.setUint8(o, easingByte(t.easing ?? "linear"));
+          o += 1;
+          view.setUint8(o, t.interactive ? 1 : 0);
+          o += 1;
+        }
+
+        if (cursor !== undefined) {
+          view.setUint32(o, cursor, true);
+          o += 4;
+        }
         break;
       }
 
@@ -275,6 +350,10 @@ export function pack(
             (((op.attrs ?? 0) | (textDefault ? 0x80 : 0)) << 24),
           true,
         );
+        o += 4;
+
+        // Caret offset (code points), or 0xFFFFFFFF when absent.
+        view.setUint32(o, op.caret ?? 0xFFFFFFFF, true);
         o += 4;
 
         let str = encoder.encode(op.content);
@@ -337,6 +416,14 @@ export interface CloseElement {
   directive: typeof OP_CLOSE_ELEMENT;
 }
 
+export type BorderSide =
+  | number
+  | {
+    width: number;
+    color?: number;
+    bg?: number;
+  };
+
 export interface OpenElement {
   directive: typeof OP_OPEN_ELEMENT;
   id: string;
@@ -355,10 +442,10 @@ export interface OpenElement {
   border?: {
     color: number;
     bg?: number;
-    left?: number;
-    right?: number;
-    top?: number;
-    bottom?: number;
+    left?: BorderSide;
+    right?: BorderSide;
+    top?: BorderSide;
+    bottom?: BorderSide;
   };
   clip?: { horizontal?: boolean; vertical?: boolean };
   floating?: {
@@ -372,6 +459,8 @@ export interface OpenElement {
     clipTo?: ClipTo;
     zIndex?: number;
   };
+  transition?: Transition;
+  cursor?: PointerShape;
 }
 
 export type AttachPoint =
@@ -447,6 +536,7 @@ export interface Text {
   fontId?: number;
   wrap?: number;
   attrs?: number;
+  caret?: number;
 }
 
 interface Snapshot {
@@ -491,14 +581,16 @@ function packSize(ops: Op[]): number {
         if (op.layout) n += 6 * 4 + 4 + 4 + 4 + 4; // 2 axes (3 words each) + pad + gap + align + alignSelf
         if (op.bg !== undefined) n += 4;
         if (op.cornerRadius) n += 4;
-        if (op.border) n += 12;
+        if (op.border) n += 36; // widths word + 4 sides × (fg + bg)
         if (op.clip) n += 4;
         // x, y, expand width/height, parent, attach/pointer, clip/z
         if (op.floating) n += 7 * 4;
+        if (op.transition) n += 8;
+        if (pointerShapeIndex(op.cursor) !== undefined) n += 4;
         break;
       }
       case OP_TEXT: {
-        n += 4 + 4 + 4 + 4; // opcode + color + bg + cfg
+        n += 4 + 4 + 4 + 4 + 4; // opcode + color + bg + cfg + caret
         n += 4 + Math.ceil(encoder.encode(op.content).length / 4) * 4; // string
         break;
       }
@@ -512,4 +604,63 @@ export function snapshot(ops: Op[]): Op {
   let buf = new ArrayBuffer(size);
   let words = pack(ops, buf, 0, size);
   return { directive: OP_SNAPSHOT, data: new Uint8Array(buf, 0, words * 4) };
+}
+
+const TP_X = 1;
+const TP_Y = 2;
+const TP_WIDTH = 4;
+const TP_HEIGHT = 8;
+const TP_BG = 16;
+const TP_OVERLAY = 32;
+const TP_BORDER_COLOR = 128;
+const TP_BORDER_WIDTH = 256;
+
+const TP_POSITION = TP_X | TP_Y;
+const TP_SIZE = TP_WIDTH | TP_HEIGHT;
+const TP_ALL = TP_X | TP_Y | TP_WIDTH | TP_HEIGHT |
+  TP_BG | TP_OVERLAY | TP_BORDER_COLOR | TP_BORDER_WIDTH;
+
+function propertyMask(name: TransitionProperty): number {
+  switch (name) {
+    case "x":
+      return TP_X;
+    case "y":
+      return TP_Y;
+    case "position":
+      return TP_POSITION;
+    case "width":
+      return TP_WIDTH;
+    case "height":
+      return TP_HEIGHT;
+    case "size":
+      return TP_SIZE;
+    case "bg":
+      return TP_BG;
+    case "overlay":
+      return TP_OVERLAY;
+    case "borderColor":
+      return TP_BORDER_COLOR;
+    case "borderWidth":
+      return TP_BORDER_WIDTH;
+    case "all":
+      return TP_ALL;
+  }
+}
+
+const EASING_LINEAR = 0;
+const EASING_EASE_IN = 1;
+const EASING_EASE_OUT = 2;
+const EASING_EASE_IN_OUT = 3;
+
+function easingByte(easing: Easing): number {
+  switch (easing) {
+    case "linear":
+      return EASING_LINEAR;
+    case "easeIn":
+      return EASING_EASE_IN;
+    case "easeOut":
+      return EASING_EASE_OUT;
+    case "easeInOut":
+      return EASING_EASE_IN_OUT;
+  }
 }

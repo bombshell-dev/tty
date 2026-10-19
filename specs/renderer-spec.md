@@ -25,6 +25,9 @@ pointer event model and certain wrapper types — those are described in Section
 Input parsing is specified separately in the
 [Clayterm Input Specification](input-spec.md).
 
+Transitions are specified separately in the
+[Clayterm Transitions Specification](transitions-spec.md).
+
 ---
 
 ## 2. Scope
@@ -37,6 +40,8 @@ Input parsing is specified separately in the
 - The directive model and core helpers
 - Element identity and frame semantics
 - Boundary responsibilities (what Clayterm owns and what it does not)
+- Capability-gated emission (Section 7.6; the capability layer itself is
+  specified in the [Terminfo Specification](terminfo-spec.md))
 
 ### In scope (non-normative, descriptive)
 
@@ -55,6 +60,9 @@ Input parsing is specified separately in the
 - Demo applications
 - The crankterm project or any specific framework built on Clayterm
 - Input parsing (see [Clayterm Input Specification](input-spec.md))
+- Terminfo parsing and capability probing (see
+  [Terminfo Specification](terminfo-spec.md)); this specification consumes the
+  capability struct, it does not define it
 
 ---
 
@@ -229,7 +237,10 @@ function scope.
 concern MUST remain independent. Neither MUST depend on the other's state,
 types, or API surface. They MAY share a compiled WASM binary for loading
 efficiency, but this is an implementation convenience, not an architectural
-coupling.
+coupling. Both MAY consume the shared capability layer defined in the
+[Terminfo Specification](terminfo-spec.md); the renderer reads capabilities and
+the input parser surfaces probe responses as `CapabilityEvent` values, but
+neither observes the other beyond the capability facts it carries.
 
 ---
 
@@ -277,22 +288,287 @@ The output reflects the complete visual state of the frame. The caller SHOULD
 write the output to the terminal without modification.
 
 The output `Uint8Array` is a view over renderer-owned memory. It is valid until
-the next `render()` call on the same Term instance, at which point the buffer
-may be reused. Callers who need to retain the output beyond the next render MUST
-copy it.
+the next `render()` or `update()` call on the same Term instance, at which point
+the buffer may be reused or detached (§7.7). Callers who need to retain the
+output beyond that point MUST copy it.
 
 ### 7.4 Lifecycle
 
 A Term instance is created for specific terminal dimensions. The caller provides
 width and height at creation time.
 
-To handle terminal resize, the caller creates a new Term with the new
-dimensions. The previous Term instance becomes stale and SHOULD NOT be used for
-further rendering.
-
 Creation of a Term is asynchronous because it may involve WASM module
 preparation. A Term instance MAY be used for any number of render transactions.
 The Term retains its cell buffers across frames for diffing purposes.
+
+A Term instance's dimensions MAY be changed after creation through the update
+transaction (§7.7). A resized Term remains valid: it continues to accept render
+transactions at the new dimensions. Creating a new Term is NOT required to
+handle terminal resize.
+
+### 7.5 Clip semantics
+
+An element whose `props` include a `clip` group declares a **clip region**: a
+rectangular bound on the cells its descendants are permitted to write. Cells
+produced by descendants that fall outside this region MUST be suppressed from
+the output. The clip region is determined by the element's computed layout box
+and the axes selected by the `clip` group (`horizontal`, `vertical`, or both).
+
+Clip regions stack. When clip elements nest:
+
+- The effective clip region of an element MUST be the intersection of its own
+  declared region with the effective clip region of its nearest clipping
+  ancestor, if any.
+- When the renderer finishes processing a clip element's subtree, it MUST
+  restore the effective clip region of that element's clipping ancestor. Later
+  siblings drawn within an ancestor clip MUST therefore remain bounded by that
+  ancestor.
+- A `clip` element whose declared region is fully outside its ancestor's
+  effective region produces an empty effective region; descendants of that
+  element MUST NOT contribute any cells to the output.
+
+The renderer MAY impose an implementation-defined limit on the depth of clip
+regions it can track. The limit itself is not normatively bounded. When a frame
+nests clip regions more deeply than the renderer can track:
+
+- All clip regions whose entry the renderer successfully tracked MUST continue
+  to be honored for the remainder of the frame, including for siblings drawn
+  after the over-deep subtree closes. The renderer MUST maintain push/pop
+  symmetry so that exiting an untracked clip does not disturb any ancestor's
+  effective region.
+- Content drawn inside an untracked clip region MUST remain bounded by the
+  deepest successfully-tracked ancestor clip region. The untracked region's own
+  additional restriction MAY be lost.
+- The renderer MUST surface the condition via the render result's error channel
+  (see §12.3) before returning, so the caller can detect that some clipping was
+  not applied.
+
+### 7.6 Hardware cursor visibility and positioning
+
+A `text()` directive MAY declare a `caret` property whose value is a
+non-negative integer code-point offset into the directive's `content`. `0` means
+"before the first code point"; `[...content].length` means "after the last."
+Offsets in between sit immediately before the cell where the corresponding code
+point would render.
+
+The cell where a declared caret sits is the cell at which the code point at the
+caret's offset would be drawn given the layout engine's text wrapping. For an
+offset `N`:
+
+- If `N < [...content].length`, the caret's cell is the display position of the
+  `N`-th code point (zero-indexed) within the rendered text.
+- If `N == [...content].length`, the caret's cell is one display position past
+  the last rendered code point: on the same wrapped line if there is room, or at
+  the start of the next line if the layout wraps at the end.
+- If `N > [...content].length` or `N < 0`, behavior is unspecified; callers must
+  keep offsets within bounds.
+
+When the layout engine consumes whitespace at a wrap boundary — dropping it from
+the rendered text so that neither wrapped line contains a display cell for those
+code points — the caret has no display position of its own for any offset that
+falls in that dropped run. In that case the caret's cell is the origin of the
+following wrapped line (the display position of the first code point on that
+line). This rule keeps the caret on-screen at the point where subsequent input
+will land, rather than orphaning it past the end of the previous line.
+
+When `content` is empty, the only in-range offset is `0`. In that case the
+caret's cell is the text element's origin — the cell at which the first code
+point of `content` would be drawn if `content` were a single space. This is a
+rendering commitment implied by the presence of a `caret` declaration, and the
+renderer must synthesize whatever minimal geometry is required to honor it. How
+this outcome is achieved is implementation-defined.
+
+Display position accounts for code points wider than one cell (CJK, fullwidth
+forms, some emoji): such code points occupy two cells, and the caret sits at the
+first cell of the pair. Cell widths are determined by the same measurement the
+renderer uses to lay out the text itself.
+
+The renderer manages the terminal's hardware cursor based on the presence of
+`caret:` declarations:
+
+- When the current frame contains one or more `caret:` declarations, the
+  rendered `output` MUST, when written to the terminal, leave the hardware
+  cursor visible at the cell where the first declared caret (in directive order)
+  sits.
+
+- When the current frame contains no `caret:` declarations:
+  - If the previous frame contained one, the rendered `output` MUST leave the
+    hardware cursor hidden.
+  - Otherwise, the rendered `output` MUST NOT include cursor-positioning or
+    cursor-visibility bytes; the caller's cursor state is preserved.
+
+The byte-level path the renderer takes to satisfy these outcomes is
+implementation-defined. The renderer MAY hide the cursor before cell writes to
+prevent flicker, MAY omit such a hide for in-place edits where flicker is
+acceptable, MAY emit only a CUP when the caret has moved within an
+already-visible state, MAY use whatever escape-sequence path it judges
+appropriate. Only the post-frame cursor state above is normative.
+
+If more than one `caret:` declaration is present in a frame, the renderer SHOULD
+use the first in directive order for the hardware cursor. Behavior for
+additional declarations is intentionally unspecified, leaving room for a future
+multi-cursor extension without breaking this contract.
+
+This responsibility is limited to the hardware cursor's position and visibility.
+Cursor shape and blink rate remain caller-managed.
+
+### 7.7 Update transaction
+
+The update transaction changes a Term instance's dimensions or capability state
+in place. Like the render transaction (§7.2), it is synchronous: it MUST NOT
+yield, suspend, or require callbacks during execution.
+
+**Inputs.** The update transaction accepts an ordered array of `InputEvent`
+values (see [Input Specification](input-spec.md) §5), discriminated by `type`:
+
+- A `ResizeEvent` (`{ type: "resize"; width: number; height: number }`) — a
+  resize to the given character-cell dimensions. Both MUST be positive integers;
+  the transaction MUST throw otherwise.
+- A `CapabilityEvent` (see [Terminfo Specification](terminfo-spec.md) §6.3) — a
+  capability value delivered by the input parser from a probe response.
+- Any other `InputEvent` — a no-op step. It changes no state and contributes no
+  bytes.
+
+The Term folds each event in array order. The returned bytes are the
+concatenation of each fold's output. An empty array is a no-op.
+
+A resize event whose target dimensions equal the Term's current dimensions MUST
+be a no-op for that step.
+
+**Resize semantics.** A non-no-op resize step:
+
+1. Reallocates renderer state for the new dimensions within the Term's existing
+   WASM instance and linear memory, growing the memory if required. The renderer
+   MUST NOT create a new WASM module or instance.
+2. Discards all diff state. The next render transaction MUST emit the frame as a
+   complete redraw, so that no cell laid out at the previous dimensions can
+   linger on screen.
+3. Discards pointer interaction state (hover and press tracking), since cell
+   coordinates under the pointer have changed. No synthetic pointer events are
+   emitted.
+
+**Capability semantics.** A `CapabilityEvent` step folds the event's `key` and
+`value` into the Term's private `RuntimeCapabilities`. The foundation update
+transaction emits bytes or alters renderer output as a consequence of a
+capability event only where a capability section of this specification says so
+(§7.10).
+
+**Return value.** `update()` returns a `Uint8Array` of bytes to write to the
+terminal immediately. An empty array is valid when the update changes no
+rendered state (TINV-5). The caller writes the bytes to its output stream before
+the next render.
+
+**Memory.** WASM linear memory can only grow. An update to smaller dimensions
+retains the high-water-mark allocation; memory is not reclaimed until the Term
+itself is discarded. This is accepted behavior, not a defect.
+
+**Output invalidation.** Growing linear memory detaches existing buffer views.
+Output `Uint8Array`s returned by render transactions prior to a resize update
+MUST NOT be used after it (this strengthens the validity window in §7.3: output
+is valid until the next `render()` **or** `update()` call).
+
+### 7.8 Capability consumption
+
+The renderer consumes the read-only capability snapshot maintained by
+`Term.update()`. A protocol that changes emitted bytes MUST define its gating
+capability, output, and invalidation rules in its own section of this
+specification. Synchronized output (§7.9) and pointer shape (§7.10) are
+specified so far.
+
+Color encoding, Kitty keyboard mode setup, and Kitty graphics emission are
+deferred to their respective follow-up PRs. The renderer continues to emit its
+existing hardcoded ANSI output until each is specified.
+
+### 7.9 Synchronized output (DEC mode 2026)
+
+When the `syncOutput` runtime capability is true, each full-screen frame
+(§8.2.1) is wrapped in Synchronized Output mode 2026 — Begin Synchronized Update
+(`CSI ? 2026 h`) before the frame's first emitted byte and End Synchronized
+Update (`CSI ? 2026 l`) after its last. The terminal buffers everything between
+the pair and presents it as one atomic repaint, so a frame never tears
+mid-update.
+
+**Capability evidence.** `syncOutput` is raised only on positive evidence. Two
+runtime channels feed the `sync-output` `CapabilityEvent` (input-spec §5,
+terminfo-spec §6.3): a DECRPM 2026 reply to the probe (`CSI ? 2026 $ p`) —
+values 1, 2, and 3 (set, reset, permanently set) report support, 0 and 4 report
+none — and an XTGETTCAP `Sync` reply, whose sequence value is discarded in favor
+of the mode 2026 form (terminfo-spec §6.3). Detection may also seed the field
+positively: static `Capabilities` carry `syncOutput`, raised by the `Sync`
+extended capability in the parsed terminfo entry and by the `TMUX` environment
+variable (terminfo-spec §7.1, §7.2). Evidence follows TINV-3 precedence: probe
+replies outrank detect-time seeding in both directions, so a DECRPM 0 or 4 reply
+turns the capability off even when detection seeded it. Without positive
+evidence the field stays false and no frame is wrapped.
+
+**Invalidation and timing.** The renderer reads the capability snapshot at each
+render transaction, so a capability flip takes effect on the next rendered
+frame. No invalidation signal exists, and none is required: a flip between
+frames changes only whether the next frame is wrapped.
+
+**Normative rules:**
+
+- When `syncOutput` is false, the renderer MUST NOT emit `?2026h` or `?2026l`.
+- When `syncOutput` is true, the renderer MUST wrap each full-screen frame in
+  the BSU/ESU pair. Line mode (§8.2.2) is never wrapped: inline output may be
+  interleaved with foreign content, and an unterminated synchronized block would
+  suppress it.
+- A full-screen render whose diff produces no cell changes and no caret
+  transition MUST emit zero bytes, even when `syncOutput` is true. The renderer
+  decides after the diff, so no-op frames carry neither the wrap prefix nor the
+  suffix.
+- Terminals that receive the sequences without supporting the mode ignore it by
+  design; the probe still refines behavior for terminals that report mode 0
+  or 4.
+
+This section discharges the synchronized-output deferral recorded in §7.8.
+
+### 7.10 Pointer shape
+
+An `open()` directive MAY declare a `cursor` property naming the mouse pointer
+shape to show while the pointer is over the element. Values are the kitty
+pointer shape names (the CSS `cursor` keywords): `default`, `none`,
+`context-menu`, `help`, `pointer`, `progress`, `wait`, `cell`, `crosshair`,
+`text`, `vertical-text`, `alias`, `copy`, `move`, `no-drop`, `not-allowed`,
+`grab`, `grabbing`, `e-resize`, `n-resize`, `ne-resize`, `nw-resize`,
+`s-resize`, `se-resize`, `sw-resize`, `w-resize`, `ew-resize`, `ns-resize`,
+`nesw-resize`, `nwse-resize`, `zoom-in`, `zoom-out`. Any other value MUST be
+treated as absent and MUST NOT reach the output. The property does not affect
+layout or cell output.
+
+The gate is `RuntimeCapabilities.pointerShape` (see
+[Terminfo Specification](terminfo-spec.md) §6.3). While it is `false`, the
+renderer MUST NOT emit OSC 22.
+
+**Resolved shape.** While the capability is `true`, each render resolves one
+shape:
+
+- `default` when the render options carry no `pointer`.
+- Otherwise, the `cursor` of the last declaring element in hit-test order (the
+  order behind `pointerenter` events, §12.4), or `default` when none declares
+  one. Ancestors precede descendants, so the innermost element wins. A floating
+  element in `"capture"` mode hides the elements beneath it; one in
+  `"passthrough"` mode lets them decide.
+
+Elements inside a `snapshot()` participate as direct directives would.
+Resolution and output are identical in line mode (§8.2.2).
+
+**Output.** The Term tracks the shape it last emitted, starting at `default`.
+When the resolved shape differs, the render MUST append `ESC ] 22 ; <shape> ST`
+to `output` after the frame's cell bytes and record the new shape. Otherwise it
+MUST NOT emit OSC 22.
+
+**Restore.** OSC 22 set cannot pop, so the Term restores by setting `default`:
+
+- A render that resolves `default` emits it per **Output** above.
+- An update step that changes `pointerShape` from `true` to `false` while the
+  emitted shape is not `default` MUST return `ESC ] 22 ; default ST` and record
+  `default`.
+- A resize step leaves the emitted shape unchanged.
+
+To restore before exit, the caller renders a frame without `pointer`, or passes
+`{ type: "capability", key: "pointer-shape", value: false }` to `update()`, and
+writes the result.
 
 ---
 
@@ -304,12 +580,21 @@ included. See Section 5 for what this section does and does not freeze._
 ### 8.1 Term creation
 
 ```
-createTerm(options: { width: number; height: number }): Promise<Term>
+createTerm(options: {
+  width: number;
+  height: number;
+  terminfo?: TerminalInfo;
+}): Promise<Term>
 ```
 
 Creates a new Term instance bound to the specified terminal dimensions. The
 returned promise resolves when the renderer is ready. The `width` and `height`
 parameters specify the terminal dimensions in character cells.
+
+The optional `terminfo` value (from `detectTerminal()`; see
+[Terminfo Specification](terminfo-spec.md) §10.1) initializes the Term's private
+`RuntimeCapabilities` from the static `Capabilities` it carries. When omitted,
+the Term uses the §7.1 baseline.
 
 ### 8.2 Render invocation
 
@@ -408,6 +693,15 @@ NOT override the background already present in each glyph cell; element
 backgrounds established by `open({ bg })` remain in effect, and the terminal
 default remains in effect where no element background applies.
 
+**Grapheme cluster preservation.** When `content` contains grapheme clusters — a
+base codepoint followed by one or more combining marks (Unicode codepoints with
+`wcwidth` ≤ 0) — the renderer MUST preserve and emit the full cluster. Combining
+marks MUST NOT be silently dropped. Combining marks do not advance the cursor
+position; they are attached to the preceding base codepoint's cell and emitted
+immediately after the base codepoint's bytes in the output stream. A cell
+occupied by a grapheme cluster with combining marks MUST be treated as changed
+(and thus emitted) when any mark in the cluster changes between frames.
+
 The set of styling properties accepted by `props` is part of the current
 implementation surface and may be extended.
 
@@ -464,6 +758,41 @@ rgba(r: number, g: number, b: number, a?: number): number
 Packs color channel values (each 0–255) into a single 32-bit integer in ARGB
 format. Alpha defaults to 255 (fully opaque). The returned value is used
 wherever the directive model expects a color.
+
+### 8.6 Term update
+
+```
+term.update(events: readonly InputEvent[]): Uint8Array
+```
+
+Performs an update transaction as defined in §7.7. `update()` is the universal
+sink for both resize and capability change.
+
+**Events.** A resize step is a `ResizeEvent`
+(`{ type: "resize", width, height }`). A capability step is any
+`CapabilityEvent` value (see [Terminfo Specification](terminfo-spec.md) §6.3).
+Every other `InputEvent` is accepted and ignored, so the full `events` array
+from `input.scan()` can be passed without filtering. Events are folded in array
+order.
+
+**Return value.** `update()` always returns a `Uint8Array`. Write it to the
+terminal immediately when non-empty. Do not wait for the next `render()`. An
+empty array means the update changed no rendered state.
+
+**Host usage.** Events from `input.scan()` pass through directly. Resizes
+observed outside the input stream (e.g. `SIGWINCH`) are passed as a constructed
+`ResizeEvent`:
+
+```
+const { events } = input.scan(bytes);
+const out = term.update(events);
+if (out.length) stdout.write(out);
+
+// on SIGWINCH
+term.update([{ type: "resize", width: cols(), height: rows() }]);
+```
+
+A resize to the Term's current dimensions is a no-op for that step.
 
 ---
 
@@ -564,7 +893,6 @@ The renderer MUST NOT emit escape sequences for any of the following
 terminal-management operations:
 
 - Entering or leaving the alternate screen buffer
-- Hiding or showing the cursor
 - Setting the cursor shape or blink state
 - Enabling or disabling mouse reporting
 - Enabling or disabling keyboard protocol modes (e.g., Kitty progressive
@@ -573,7 +901,14 @@ terminal-management operations:
 
 These are the caller's responsibility. The renderer's output contains only the
 escape sequences needed to render the frame content (cursor positioning for cell
-writes, SGR attributes for styling, and UTF-8 text).
+writes, SGR attributes for styling, and UTF-8 text) and, when a `caret`
+declaration is present, the cursor-positioning and cursor-visibility sequences
+specified in §7.6.
+
+Capability-specific output modes are not terminal-state management owned by the
+foundation renderer. Each capability section of §7 defines its own state
+boundary. The mouse pointer shape (§7.10) is distinct from the cursor shape
+above, which remains caller-managed.
 
 ### 11.3 The renderer does not own application lifecycle
 
@@ -644,15 +979,22 @@ The `open()` constructor currently accepts the following property groups in its
   padding (per-side), alignment (`alignX`: `"left"` | `"center"` | `"right"`;
   `alignY`: `"top"` | `"center"` | `"bottom"`, defaulting to left/top when
   omitted), direction (top-to-bottom or left-to-right), and gap
-- **`border`** — per-side border widths, border color, and border background
-  color
+- **`border`** — per-side border configuration. Each side field (`top`, `right`,
+  `bottom`, `left`) accepts either a scalar width or a structured object
+  `{ width, color?, bg? }`. The shared `color` field is required and is the
+  fallback foreground for every side; the optional shared `bg` field is the
+  fallback border-cell background for every side
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
-- **`clip`** — clip region configuration for scroll containers
+- **`clip`** — Declares the element as a clip region (see §7.5). Currently
+  accepts `horizontal: boolean` and `vertical: boolean` axis selectors.
+  Originally added for scroll containers; nesting and standalone use are
+  supported.
 - **`floating`** — floating-element configuration (offset, expansion, parent
   reference, attach target, structured attach points, pointer capture mode, clip
   target, z-index)
 - **`scroll`** — scroll container configuration
+- **`cursor`** — mouse pointer shape while hovered (§7.10)
 
 The `floating` object shape is:
 
@@ -709,19 +1051,65 @@ The `text()` constructor accepts: `color`, `bg`, `fontSize`, `letterSpacing`,
 These property groups represent the current implementation surface. New groups
 and fields have been added incrementally and more may follow.
 
-**Border background.** When `border.bg` is provided, the renderer MUST apply
-that background color to all cells occupied by border glyphs (corners,
-horizontal edges, and vertical edges). When `border.bg` is omitted, border
-rendering MUST NOT override the background already present in each border cell;
-element backgrounds established by `open({ bg })` remain in effect, and the
-terminal default remains in effect where no element background applies.
+**Border sides.** Each border side is declared independently as either a scalar
+width (`top: 1`) or a structured object (`top: { width: 1, color?, bg? }`). The
+two forms are equivalent when the object form provides only `width`. A side is
+enabled when its resolved width is greater than zero; an omitted side or a side
+with width `0` MUST NOT be drawn. Scalar side declarations MUST keep their
+pre-existing behavior.
 
-**Border width and layout interaction.** In the underlying layout engine (Clay),
-border configuration does not affect layout computation. This is Clay's intended
-behavior. Borders are drawn as visual overlays within the element's bounding
-box. A bordered element with zero padding will have its borders drawn over its
-content. Callers must add padding equal to or greater than the border width to
-prevent overlap.
+**Border side colors (fallback resolution).** Side attributes resolve in a
+CSS-like shorthand/longhand fashion before rendering:
+
+- A structured side with `color` MUST render with that foreground color. A
+  scalar side, or a structured side that omits `color`, MUST fall back to the
+  shared `border.color`. The shared `color` remains required.
+- A structured side with `bg` MUST render border cells of that side with that
+  background color. A scalar side, or a structured side that omits `bg`, MUST
+  fall back to the shared `border.bg` when it is provided.
+- When neither the side nor the shared border provides `bg`, border rendering
+  MUST NOT override the background already present in each border cell of that
+  side; element backgrounds established by `open({ bg })` remain in effect, and
+  the terminal default remains in effect where no element background applies.
+
+Fallback resolution is performed on the TypeScript side before the frame is
+transferred; the WASM renderer consumes explicit per-side attributes and does
+not implement the public fallback rules.
+
+**Independent sides and corners.** Each enabled side renders as a straight edge
+(`─` for horizontal sides, `│` for vertical sides). A corner glyph MUST be
+rendered only when both adjacent sides for that corner are enabled; when either
+adjacent side is absent, the present side continues straight through the
+endpoint with no corner glyph. A left-only border is therefore a plain vertical
+line, and a top-plus-bottom border is two plain horizontal rules.
+
+**Corner styling approximation.** A terminal cell carries a single glyph,
+foreground, and background, so CSS-style diagonally split corners cannot be
+represented. When corners are rendered: top corners (`┌`, `┐`, and their rounded
+variants) MUST use the resolved attributes of the `top` side, and bottom corners
+(`└`, `┘`, and their rounded variants) MUST use the resolved attributes of the
+`bottom` side. Left and right side attributes apply to vertical edge cells
+excluding joined corner cells. Per-side attributes affect only the styling of
+corner cells; corner glyph shape selection (including rounded corners via
+`cornerRadius`) is unchanged.
+
+**Border width and layout interaction.** The renderer automatically reserves
+space for each enabled border side. For each side, the effective padding passed
+to the layout engine is `userPadding + borderWidth`; the WASM renderer applies
+this adjustment when decoding the element declaration. Border glyphs are drawn
+at the same positions as before; the change is purely in how much layout space
+Clay allocates for the element.
+
+Semantics of the additive rule:
+
+- **No explicit padding.** The border width itself becomes the effective
+  padding, so content is placed immediately inside the border.
+- **Explicit user padding.** Adds breathing room _beyond_ the border edge.
+  `padding: 1` with `border: 1` places content 2 cells from the element edge — 1
+  for the border glyph, 1 for the padding inset.
+- **Prior workaround pattern (`padding == borderWidth`).** These callers now
+  receive double-reservation (effective = 2 × borderWidth). This is a breaking
+  change: remove the workaround padding to restore the original visual.
 
 ### 12.3 Render return type
 
@@ -770,7 +1158,8 @@ The `errors` field contains any errors reported by the Clay layout engine during
 the most recent `render()` call. Each error is a `ClayError` object with:
 
 - `type`: a string identifying the error category. The following types are
-  defined, matching Clay's error taxonomy:
+  defined. Most mirror Clay's error taxonomy; `"CLIP_DEPTH_EXCEEDED"` and
+  `"COMBINING_MARKS_EXCEEDED"` are Clayterm-specific.
   - `"TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED"`
   - `"ARENA_CAPACITY_EXCEEDED"`
   - `"ELEMENTS_CAPACITY_EXCEEDED"`
@@ -780,6 +1169,13 @@ the most recent `render()` call. Each error is a `ClayError` object with:
   - `"PERCENTAGE_OVER_1"`
   - `"INTERNAL_ERROR"`
   - `"UNBALANCED_OPEN_CLOSE"`
+  - `"CLIP_DEPTH_EXCEEDED"` — A frame nested clip regions more deeply than the
+    renderer could track. See §7.5 for the guarantees that still hold in this
+    case. The `message` SHOULD identify the renderer's tracking limit.
+  - `"COMBINING_MARKS_EXCEEDED"` — A frame attached more combining marks to a
+    single cell than the cell can store. The excess marks are truncated (see
+    §13, Cell representation). Reported at most once per frame, on the first
+    truncation. The `message` SHOULD identify the per-cell limit.
 - `message`: a human-readable string describing the error in detail.
 
 Errors are collected per-render; each call to `render()` returns only the errors
@@ -835,6 +1231,14 @@ generated module and instantiated per Term or Input with fresh memory.
 renderer state struct and the transfer buffer are allocated in WASM linear
 memory. The specific layout is an implementation detail.
 
+**Capability state.** `RuntimeCapabilities` is currently held in TypeScript and
+folded by `update()`; the WASM renderer state carries no capability fields
+because no renderer output depends on them yet (§7.8). When a
+capability-consuming feature lands, the authoritative state is expected to move
+into WASM linear memory alongside the renderer state, so that `render()` reads
+it without per-frame transfer; `term.capabilities` remains a frozen snapshot
+decoded on access.
+
 **Layout engine.** The underlying layout engine is Clay, included as a
 dependency. Clay provides flexbox-like layout computation with support for
 fixed, grow, and fit sizing; padding; alignment; direction; gap; floating
@@ -842,15 +1246,53 @@ elements; clip regions; and scroll containers.
 
 **Text measurement.** Text width measurement uses `wcwidth`-based character
 width computation, supporting ASCII, CJK wide characters, and other Unicode
-codepoints.
+codepoints. Combining marks (codepoints with `wcwidth` ≤ 0) contribute zero to
+measured width; they attach to the preceding base codepoint's cell and are not
+counted as separate cells in layout. Measurement and rendering MUST agree: if
+the measurer ignores a combining mark for width purposes, the renderer MUST
+still attach and emit it.
 
-**Cell representation.** Each cell in the buffer stores a Unicode codepoint, a
-foreground color (packed ARGB with attribute flags in the high byte), and a
-background color.
+**Cell representation.** Each cell in the buffer stores a grapheme cluster — a
+base Unicode codepoint plus up to 8 combining-mark codepoints — together with a
+foreground color (packed ARGB with attribute flags in the high byte) and a
+background color. The combining-mark slots are zero-terminated; a cell with no
+combining marks stores zero in every slot. When a text string produces more than
+8 combining marks for a single base codepoint, the excess marks are truncated
+from the end (marks 1–8 are kept, marks 9+ are discarded), ensuring that the
+first and most semantically significant marks always survive. The first
+truncation in a frame is reported as a `"COMBINING_MARKS_EXCEEDED"` error
+(§12.3); later truncations in the same frame are not reported again. Cell
+comparison for diffing considers combining marks: a cell is considered changed
+when any combining mark differs from the front buffer, not only when the base
+codepoint or color attributes differ.
 
 **Border junction resolution.** When bordered elements share edges, the renderer
 accumulates per-cell direction bitmasks and resolves them to correct box-drawing
 junction glyphs in a post-render pass.
+
+**Clip stack.** Section 7.5 requires the effective clip region of a nested
+`clip` element to be the intersection of its declared region with its clipping
+ancestor's effective region. The underlying layout engine (Clay) emits
+per-clip-element bounding boxes that are not pre-intersected with any ancestor's
+clip, so the renderer maintains an internal stack of effective clip rectangles:
+it pushes the intersected rect on each clip-region entry and pops on exit. The
+stack capacity is a small fixed value sufficient for realistic UIs; depth beyond
+that is handled per §7.5 (prior clips honored, the over-deep level coalesced
+into its deepest tracked ancestor, and a `"CLIP_DEPTH_EXCEEDED"` error
+surfaced).
+
+Upstream Clay may eventually flatten nested clip emission so renderers only need
+single-rect handling; see
+[nicbarker/clay#466](https://github.com/nicbarker/clay/issues/466) (the
+underlying issue),
+[nicbarker/clay#485](https://github.com/nicbarker/clay/pull/485) (in-flight
+Clay-side fix), and
+[nicbarker/clay#87](https://github.com/nicbarker/clay/issues/87) (renderer
+guidance). When upgrading Clay, check whether a single clip element now produces
+multiple `SCISSOR_START`/`SCISSOR_END` pairs across its lifetime (one per
+nesting transition rather than just an outer pair); if so, the renderer-side
+stack can be removed and replaced with a single rect storing Clay's bounding box
+directly.
 
 ---
 
@@ -863,49 +1305,14 @@ specification. Their omission is intentional, not an oversight._
 containers. No TypeScript-side API exists for providing scroll state to the
 renderer.
 
-**CSI helper for terminal setup.** A helper for generating paired apply/rollback
-byte arrays for terminal mode configuration was discussed but not implemented.
+**CSI helper for terminal setup.** No helper exists for generating paired
+apply/rollback byte arrays for terminal mode configuration.
 
 **Browser-specific adapter.** The renderer's zero-IO architecture makes browser
 portability possible. No adapter exists.
 
 **`betweenChildren` border support.** The underlying layout engine supports
 this. It is not exposed in the directive model.
-
----
-
-## Appendix A. Confidence Notes
-
-### Why the rendering core is specified more aggressively than other surfaces
-
-The rendering architecture — `createTerm`, `render(ops)`, the directive
-constructors, the bytes-output commitment, and the core invariants — was
-designed at the project's inception and has been stable since. It has survived
-the addition of pointer events, border junction resolution, and the crankterm
-integration without revision to its fundamental shapes. Its key abstractions
-(flat directive arrays, single render transaction, ANSI byte output) were chosen
-over explicitly rejected alternatives (per-element FFI, protobuf, builder
-pattern, string output). This level of stability and intentionality justifies
-normative specification.
-
-The pointer event model and render return wrapper are the least settled of the
-currently shipping features. Both were introduced during feature implementation
-rather than designed as part of the core architecture. The return type of
-`render()` has changed twice. The pointer calling convention was discovered
-through iteration. These are working and useful, but they carry the lowest
-confidence of any feature currently in the codebase.
-
-### How to interpret "currently exported"
-
-Several symbols are currently accessible from Clayterm's module exports —
-including `pack()`, `validate()`, and numerous input-related types — without
-clear evidence that they were intended as stable public contract. Being exported
-may mean "needed by internal modules" or "not yet audited for public/internal
-boundary."
-
-This specification does not treat the export list as a contract boundary.
-Instead, it uses stability over time, design ownership, survival of corrections,
-and absence of known reshaping forces as the criteria for normative inclusion.
 
 ---
 
@@ -928,21 +1335,15 @@ resolution.
 3. **Is `pack()` public API?** `pack()` is currently exported but is an internal
    implementation detail, not public API. `validate()` is public API.
 
-4. **How should border widths interact with layout?** The current behavior
-   (borders do not affect layout) is inherited from the underlying layout
-   engine. The project has questioned whether this is the right design. This
-   specification describes the current behavior in Section 12.2 without
-   committing to it.
-
-5. **What are the specific transfer encoding details?** The encoding structure
+4. **What are the specific transfer encoding details?** The encoding structure
    is described in Section 12.1 as current implementation surface. Locking down
    opcode values would constrain future extensions unnecessarily.
 
-6. **What is the complete set of directive properties?** The property groups
+5. **What is the complete set of directive properties?** The property groups
    available in `open()` and `text()` are described in Section 12.2 as current
    implementation surface. They have been extended incrementally and will
    continue to grow.
 
-7. **What are the validation and error semantics?** How the renderer responds to
+6. **What are the validation and error semantics?** How the renderer responds to
    invalid input is unspecified. Callers SHOULD validate, but the validation
    model is not yet settled enough to define normatively.

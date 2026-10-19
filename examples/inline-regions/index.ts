@@ -39,7 +39,6 @@ const GREEN = rgba(80, 250, 123);
 const GREEN_BG = rgba(20, 70, 38);
 const GRAY = rgba(100, 100, 100);
 const CYAN = rgba(139, 233, 253);
-const DARK_BG = rgba(30, 30, 40);
 
 const RED = rgba(255, 0, 0);
 const ORANGE = rgba(255, 153, 0);
@@ -85,7 +84,7 @@ await main(function* () {
   );
 
   let first = term.render(
-    box("Press any key to compile modules.", CYAN, GRAY, DARK_BG),
+    box("Press any key to compile modules.", CYAN, GRAY),
     { row },
   );
   write(new Uint8Array(first.output));
@@ -102,7 +101,6 @@ await main(function* () {
         `${icon} ${label}  ${time}`,
         done ? GREEN : CYAN,
         done ? GREEN : GRAY,
-        DARK_BG,
       ),
       { row },
     );
@@ -350,7 +348,7 @@ function waitKey(): void {
   }
 }
 
-function box(msg: string, fg: number, border: number, bg: number): Op[] {
+function box(msg: string, fg: number, border: number, bg?: number): Op[] {
   return [
     open("root", {
       layout: { width: grow(), height: grow(), direction: "ttb" },

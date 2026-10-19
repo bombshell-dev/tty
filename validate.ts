@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
 import type { Op } from "./ops.ts";
+import { POINTER_SHAPES } from "./pointer-shape.ts";
 import type { RenderOptions, RenderResult, Term } from "./term.ts";
 
 /* ── Range helpers (match bit-packing in pack()) ──────────────────── */
@@ -96,13 +97,22 @@ const CornerRadius = Type.Object({
   br: Type.Optional(u8),
 });
 
+const BorderSide = Type.Union([
+  u8,
+  Type.Object({
+    width: u8,
+    color: Type.Optional(rgba),
+    bg: Type.Optional(rgba),
+  }),
+]);
+
 const Border = Type.Object({
   color: rgba,
   bg: Type.Optional(rgba),
-  left: Type.Optional(u8),
-  right: Type.Optional(u8),
-  top: Type.Optional(u8),
-  bottom: Type.Optional(u8),
+  left: Type.Optional(BorderSide),
+  right: Type.Optional(BorderSide),
+  top: Type.Optional(BorderSide),
+  bottom: Type.Optional(BorderSide),
 });
 
 const Clip = Type.Object({
@@ -157,6 +167,36 @@ const Floating = Type.Object({
   zIndex: Type.Optional(i16),
 });
 
+const TransitionProperty = Type.Union([
+  Type.Literal("x"),
+  Type.Literal("y"),
+  Type.Literal("position"),
+  Type.Literal("width"),
+  Type.Literal("height"),
+  Type.Literal("size"),
+  Type.Literal("bg"),
+  Type.Literal("overlay"),
+  Type.Literal("borderColor"),
+  Type.Literal("borderWidth"),
+  Type.Literal("all"),
+]);
+
+const Easing = Type.Union([
+  Type.Literal("linear"),
+  Type.Literal("easeIn"),
+  Type.Literal("easeOut"),
+  Type.Literal("easeInOut"),
+]);
+
+const Transition = Type.Object({
+  duration: Type.Number({ minimum: 0 }),
+  easing: Type.Optional(Easing),
+  properties: Type.Array(TransitionProperty),
+  interactive: Type.Optional(Type.Boolean()),
+});
+
+const PointerShape = Type.Union(POINTER_SHAPES.map((s) => Type.Literal(s)));
+
 /* ── Op types (discriminated on `directive`) ──────────────────────── */
 
 const CloseElement = Type.Object({ directive: Type.Literal(0x04) });
@@ -170,6 +210,8 @@ const OpenElement = Type.Object({
   border: Type.Optional(Border),
   clip: Type.Optional(Clip),
   floating: Type.Optional(Floating),
+  transition: Type.Optional(Transition),
+  cursor: Type.Optional(PointerShape),
 });
 
 const TextOp = Type.Object({
@@ -208,9 +250,15 @@ export function assert(ops: unknown): asserts ops is Op[] {
 
 export function validated(term: Term): Term {
   return {
+    get capabilities() {
+      return term.capabilities;
+    },
     render(ops: Op[], options?: RenderOptions): RenderResult {
       assert(ops);
       return term.render(ops, options);
+    },
+    update(events) {
+      return term.update(events);
     },
   };
 }

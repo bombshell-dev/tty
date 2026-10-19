@@ -1,30 +1,30 @@
-# clayterm
+# @bomb.sh/tty
 
 A low-level, platform-independent terminal renderer and event parser for
-JavaScript. You can use clayterm directly, or as the foundation for your own
-framework.
+JavaScript. You can use `@bomb.sh/tty` directly, or as the foundation for your
+own framework.
 
 ## Features
 
 **Declarative terminal UI** — Build terminal interfaces the same way you'd build
-a web page. Clayterm uses [Clay](https://github.com/nicbarker/clay) under the
-hood, giving you flexbox-like layout, pointer detection, and scroll containers —
-all rendered to the terminal as box-drawing characters and ANSI escape
-sequences.
+a web page. `@bomb.sh/tty` uses [Clay](https://github.com/nicbarker/clay) under
+the hood, giving you flexbox-like layout, pointer detection, and scroll
+containers — all rendered to the terminal as box-drawing characters and ANSI
+escape sequences.
 
-**Zero I/O** — Clayterm never reads stdin or writes stdout. You feed it bytes
-and get bytes back. This makes it trivially embeddable in any framework, any
-runtime, any event loop. There are no opinions about how you do I/O, just pure
-computation.
+**Zero I/O** — `@bomb.sh/tty` never reads stdin or writes stdout. You feed it
+bytes and get bytes back. This makes it trivially embeddable in any framework,
+any runtime, any event loop. There are no opinions about how you do I/O, just
+pure computation.
 
-**Runs everywhere** — The entire engine is compiled to WebAssembly, so clayterm
-will run anywhere JavaScript runs with no native dependencies, and no build step
-for consumers.
+**Runs everywhere** — The entire engine is compiled to WebAssembly, so
+`@bomb.sh/tty` will run anywhere JavaScript runs with no native dependencies,
+and no build step for consumers.
 
 ### Examples
 
 See this keyboard example and more in the [examples folder](examples/README.md).
-This demo uses Clayterm for all layout and input parsing.
+This demo uses `@bomb.sh/tty` for all layout and input parsing.
 
 #### Keyboard Events
 
@@ -42,9 +42,9 @@ state. Clay drives the hit testing; no manual coordinate math required.
 
 ## Architecture
 
-Clayterm does not do any I/O itself. On the ouput side, it converts UI elements
-into a raw sequence of bytes and pointer events, and on the input side, it
-converts a stream of raw bytes into structured events.
+`@bomb.sh/tty` does not do any I/O itself. On the ouput side, it converts UI
+elements into a raw sequence of bytes and pointer events, and on the input side,
+it converts a stream of raw bytes into structured events.
 
 ### Output
 
@@ -117,16 +117,13 @@ To render this:
 ```
 
 ```typescript
-import { close, createTerm, grow, open, rgba, text } from "clayterm";
+import { close, createTerm, open, rgba, text } from "@bomb.sh/tty";
 
 let term = await createTerm({ width: 80, height: 24 });
 
 let { output } = term.render([
-  open("root", {
-    layout: { width: grow(), height: grow(), direction: "ttb" },
-  }),
   open("greeting", {
-    layout: { padding: { left: 1, right: 1 } },
+    layout: { padding: { left: 1, right: 1, top: 1, bottom: 1 } },
     border: {
       color: rgba(0, 255, 0),
       left: 1,
@@ -138,7 +135,6 @@ let { output } = term.render([
   }),
   text("Hello, World!"),
   close(),
-  close(),
 ]);
 
 process.stdout.write(output);
@@ -146,10 +142,14 @@ process.stdout.write(output);
 
 ### Pointer detection
 
-Pass pointer state to `render()` to have clayterm do hit detection and return
-pointer events in addition to the byte sequence.
+Pass pointer state to `render()` to have `@bomb.sh/tty` do hit detection and
+return pointer events in addition to the byte sequence.
 
 ```typescript
+import { close, createTerm, fixed, grow, open, rgba, text } from "@bomb.sh/tty";
+
+let term = await createTerm({ width: 80, height: 24 });
+
 let { output, events } = term.render(
   [
     open("root", {
@@ -186,7 +186,7 @@ process.stdout.write(output);
 ### Input parsing
 
 ```typescript
-import { createInput } from "clayterm/input";
+import { createInput } from "@bomb.sh/tty";
 
 let input = await createInput({ escLatency: 25 });
 

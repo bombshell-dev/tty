@@ -23,17 +23,17 @@ await build({
   },
   skipSourceOutput: true,
   package: {
-    name: "clayterm",
+    name: "@bomb.sh/tty",
     version,
     description:
       "A terminal rendering backend for Clay, compiled to WebAssembly",
     license: "MIT",
     repository: {
       type: "git",
-      url: "git+https://github.com/bombshell-dev/clayterm.git",
+      url: "git+https://github.com/bombshell-dev/tty.git",
     },
     bugs: {
-      url: "https://github.com/bombshell-dev/clayterm/issues",
+      url: "https://github.com/bombshell-dev/tty/issues",
     },
     engines: {
       node: ">= 22",

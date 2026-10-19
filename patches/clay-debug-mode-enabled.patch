@@ -1,0 +1,83 @@
+diff --git a/clay.h b/clay.h
+index 7c967bb..6452cd6 100644
+--- a/clay.h
++++ b/clay.h
+@@ -1048,6 +1048,10 @@ extern uint32_t Clay__debugViewWidth;
+ // IMPLEMENTATION --------------------------
+ // -----------------------------------------
+ #ifdef CLAY_IMPLEMENTATION
++
++#ifndef CLAY_DEBUG_MODE_ENABLED
++#define CLAY_DEBUG_MODE_ENABLED 1
++#endif
+ #undef CLAY_IMPLEMENTATION
+ 
+ #ifndef CLAY__NULL
+@@ -1805,9 +1809,11 @@ Clay_LayoutElementHashMapItem* Clay__AddHashMapItem(Clay_ElementId elementId, Cl
+                     .errorType = CLAY_ERROR_TYPE_DUPLICATE_ID,
+                     .errorText = CLAY_STRING("An element with this ID was already previously declared during this layout."),
+                     .userData = context->errorHandler.userData });
++#if CLAY_DEBUG_MODE_ENABLED
+                 if (context->debugModeEnabled) {
+                     hashItem->debugData->collision = true;
+                 }
++#endif // CLAY_DEBUG_MODE_ENABLED
+             }
+             return hashItem;
+         }
+@@ -3181,6 +3187,7 @@ CLAY_DLL_EXPORT Clay_ElementIdArray Clay_GetPointerOverIds(void) {
+     return Clay_GetCurrentContext()->pointerOverIds;
+ }
+ 
++#if CLAY_DEBUG_MODE_ENABLED
+ #pragma region DebugTools
+ Clay_Color CLAY__DEBUGVIEW_COLOR_1 = {58, 56, 52, 255};
+ Clay_Color CLAY__DEBUGVIEW_COLOR_2 = {62, 60, 58, 255};
+@@ -3932,6 +3939,7 @@ void Clay__RenderDebugView(void) {
+     }
+ }
+ #pragma endregion
++#endif // CLAY_DEBUG_MODE_ENABLED
+ 
+ uint32_t Clay__debugViewWidth = 400;
+ Clay_Color Clay__debugViewHighlightColor = { 168, 66, 28, 100 };
+@@ -4333,9 +4341,11 @@ void Clay_BeginLayout(void) {
+     context->dynamicElementIndex = 0;
+     // Set up the root container that covers the entire window
+     Clay_Dimensions rootDimensions = {context->layoutDimensions.width, context->layoutDimensions.height};
++#if CLAY_DEBUG_MODE_ENABLED
+     if (context->debugModeEnabled) {
+         rootDimensions.width -= (float)Clay__debugViewWidth;
+     }
++#endif // CLAY_DEBUG_MODE_ENABLED
+     context->booleanWarnings = CLAY__INIT(Clay_BooleanWarnings) CLAY__DEFAULT_STRUCT;
+     Clay__OpenElementWithId(CLAY_ID("Clay__RootContainer"));
+     Clay__ConfigureOpenElement(CLAY__INIT(Clay_ElementDeclaration) {
+@@ -4658,11 +4668,13 @@ Clay_RenderCommandArray Clay_EndLayout(float deltaTime) {
+                 }
+             }
+ 
++#if CLAY_DEBUG_MODE_ENABLED
+             if (context->debugModeEnabled) {
+                 context->warningsEnabled = false;
+                 Clay__RenderDebugView();
+                 context->warningsEnabled = true;
+             }
++#endif // CLAY_DEBUG_MODE_ENABLED
+ 
+             if (context->booleanWarnings.maxElementsExceeded) {
+                 Clay_String message;
+@@ -4677,11 +4689,13 @@ Clay_RenderCommandArray Clay_EndLayout(float deltaTime) {
+                 Clay__CloneElementsWithExitTransition();
+             }
+         } else {
++#if CLAY_DEBUG_MODE_ENABLED
+             if (context->debugModeEnabled) {
+                 context->warningsEnabled = false;
+                 Clay__RenderDebugView();
+                 context->warningsEnabled = true;
+             }
++#endif // CLAY_DEBUG_MODE_ENABLED
+ 
+             if (context->booleanWarnings.maxElementsExceeded) {
+                 Clay_String message;
