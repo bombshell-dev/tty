@@ -8,8 +8,9 @@
  * - xterm-256color copied from the system terminfo database (legacy
  *   format, magic 0432): real-world entry with am/xenl/bce/smcup and
  *   colors#256, no truecolor capabilities.
- * - clayterm-tc / clayterm-16 compiled with tic -x from the inline
- *   source below (legacy format with an extended capability block).
+ * - clayterm-tc / clayterm-sync / clayterm-16 compiled with tic -x from
+ *   the inline source below (legacy format with an extended capability
+ *   block).
  * - clayterm-direct hand-assembled in the extended number format
  *   (magic 01036, 32-bit numbers) because macOS ships ncurses 6.0,
  *   which predates that format: colors#0x1000000 plus an extended RGB
@@ -25,6 +26,13 @@ const ENTRIES_SRC = `clayterm-tc|clayterm truecolor extended-caps test entry,
 \tcup=\\E[%i%p1%d;%p2%dH,
 \tkcuu1=\\EOZ, kf5=\\E[99~,
 \tSmulx=\\E[4:%p1%dm,
+
+clayterm-sync|clayterm sync extended-caps test entry,
+\tam, xenl, bce,
+\tcolors#256, pairs#65536, cols#80, lines#24,
+\tsmcup=\\E[?1049h, rmcup=\\E[?1049l,
+\tcup=\\E[%i%p1%d;%p2%dH,
+\tSync=\\E[?2026%p1%dh,
 
 clayterm-16|clayterm sixteen color test entry,
 \tam, xenl,
@@ -145,6 +153,7 @@ import { decodeBase64 } from "@std/encoding/base64";
 
 ${constant("XTERM_256COLOR", xterm256)}
 ${constant("CLAYTERM_TC", compiled["clayterm-tc"])}
+${constant("CLAYTERM_SYNC", compiled["clayterm-sync"])}
 ${constant("CLAYTERM_16", compiled["clayterm-16"])}
 ${constant("CLAYTERM_DIRECT", buildDirect())}`;
 
