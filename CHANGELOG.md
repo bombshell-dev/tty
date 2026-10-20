@@ -1,5 +1,93 @@
 # @bomb.sh/tty
 
+## 0.10.0
+
+### Minor Changes
+
+- [#132](https://github.com/bombshell-dev/tty/pull/132) [`d8f2a24`](https://github.com/bombshell-dev/tty/commit/d8f2a247b2607f783d8d00790725ff954b3d7410) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Adds `CapabilityEvent` to `InputEvent` and changes `InputOptions.terminfo` to accept a `TerminalInfo`.
+  
+  `scan()` now parses terminal probe responses — OSC 10/11/12 theme colors, OSC 21 kitty color protocol, OSC 22 pointer shape, XTGETTCAP (`DCS`), kitty graphics (`APC`), kitty keyboard (`CSI ?…u`), synchronized output (`DECRPM`), and DA1 — and surfaces them as typed `CapabilityEvent` objects with keys `foreground-color`, `background-color`, `cursor-color`, `colordepth`, `sync-output`, `kitty-keyboard`, `kitty-graphics`, and `pointer-shape`.
+  
+  **Breaking:** `InputOptions.terminfo` now takes the `TerminalInfo` returned by `detectTerminal()` instead of raw compiled terminfo bytes. It seeds the key-sequence trie from `terminfo.keys` and uses `terminfo.capabilities.colors` to resolve colordepth denial events to the correct tier (`"16"` vs `"256"`). Raw bytes now go to `detectTerminal({ entry })`.
+  
+  #### Migration
+  
+  ```diff
+  - import { createInput } from "@bomb.sh/tty";
+  + import { createInput, detectTerminal } from "@bomb.sh/tty";
+  
+  - const input = await createInput({ terminfo: myTerminfoBinary });
+  + const terminfo = await detectTerminal({ env: process.env, entry: myTerminfoBinary });
+  + const input = await createInput({ terminfo });
+  ```
+  
+  Omit `terminfo` entirely to keep the xterm default key sequences.
+
+- [#137](https://github.com/bombshell-dev/tty/pull/137) [`628196c`](https://github.com/bombshell-dev/tty/commit/628196c018756c41fc645db1881a7228b72b66b3) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Adds a `cursor` property to `open()`, so the mouse pointer changes shape (OSC 22) as it moves over elements
+  
+  When the terminal confirms support through the probe (`term.capabilities.pointerShape`), `render()` appends the shape change to `output`, so writing `output` keeps the pointer in sync. The shape resets to `default` when the pointer leaves, when a frame renders without `pointer`, or when `update()` withdraws the capability. `detectTerminal()` also seeds the capability from a known-support table for terminals that set shapes without answering the query (ghostty, kitty, foot, xterm ≥ 367), so those work out of the box. For anything the table misses, assert support with `term.update([{ type: "capability", key: "pointer-shape", value: true }])`.
+  
+  ```ts
+  term.render([open("link", { cursor: "pointer" }), text("Docs"), close()], { pointer });
+  ```
+
+- [#139](https://github.com/bombshell-dev/tty/pull/139) [`acb51e1`](https://github.com/bombshell-dev/tty/commit/acb51e1aeb161f1b04ea3311d7aeaa0ee8d48e07) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Adds synchronized output (DEC mode 2026) driven by the `sync-output` capability.
+  
+  When `RuntimeCapabilities.syncOutput` is true, every full-screen render is wrapped in Begin/End Synchronized Update (`CSI ? 2026 h` / `CSI ? 2026 l`) so the terminal presents the frame as one atomic repaint without tearing. The capability is raised only on positive evidence, resolved from three channels — a DECRPM 2026 probe reply (`CSI ? 2026 $ p`), an XTGETTCAP `Sync` reply (the terminal's own terminfo-declared synchronization sequence, value discarded in favor of the 2026 form), and detection-time seeding from the `Sync` extended capability in the parsed terminfo entry or the `TMUX` environment variable (tmux consumes mode 2026 from inner applications). Probe replies outrank detection-time evidence in both directions, so a DECRPM 0 or 4 reply turns the capability off even when detection seeded it. Frames render unwrapped when the capability is false or unknown. Zero-diff frames emit nothing whether or not wrapping is active, and line mode is never wrapped.
+  
+  #### Migration
+  
+  `Capabilities` gains a required `syncOutput` field. An object literal passed to `createTerm` as `terminfo.capabilities` must include it:
+  
+  ```diff
+    terminfo: {
+      capabilities: {
+        colors: 256,
+        trueColor: false,
+        bce: true,
+        autoMargin: true,
+        xenl: true,
+        altScreen: true,
+        styledUnderline: false,
+  +     syncOutput: false,
+      },
+    }
+  ```
+
+- [#133](https://github.com/bombshell-dev/tty/pull/133) [`2c6215c`](https://github.com/bombshell-dev/tty/commit/2c6215cf2d255ccf06b609327c0d89c0e2bfab09) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Adds `detectTerminal()`, `TerminalInfo`, `Capabilities`, `DetectOptions`, `KeyTable`, and `MAX_TERMINFO_ENTRY` to the public API, and a `terminfo` option to `createTerm`.
+  
+  `detectTerminal()` reads the compiled terminfo entry for the current terminal (from the ncurses search path, or from bytes passed as `entry`), applies environment evidence (`COLORTERM`), and resolves a frozen `TerminalInfo` carrying static `capabilities`, a `probe` query batch to write to stdout, and opaque `keys` for the input parser.
+  
+  Pass the returned `TerminalInfo` as `terminfo` to `createTerm` and `createInput`. `term.capabilities` exposes the renderer's current capability snapshot, seeded from `terminfo.capabilities` (or the 256-color baseline when omitted).
+  
+  Changes `term.update()` to accept an array of `InputEvent` values instead of `{ events }` or `{ width, height }`. Resizes are now `ResizeEvent`s tagged `type: "resize"`; capability events from `scan()` are folded into `term.capabilities`; all other input events are no-ops, so the full `events` array from `scan()` can be passed straight through. `update()` now returns a `Uint8Array` of bytes to write immediately (empty when there are none).
+  
+  #### Migration
+  
+  ```diff
+  -term.update({ events });
+  +const out = term.update(events);
+  +if (out.length) process.stdout.write(out);
+  ```
+  
+  ```diff
+  -term.update({ width, height });
+  +term.update([{ type: "resize", width, height }]);
+  ```
+  
+  To opt in to terminfo-based capability detection:
+  
+  ```diff
+  +const terminfo = await detectTerminal({ env: process.env });
+   const term = await createTerm({ width, height, terminfo });
+   const input = await createInput({ terminfo });
+  +process.stdout.write(terminfo.probe);
+  ```
+
+### Patch Changes
+
+- [#114](https://github.com/bombshell-dev/tty/pull/114) [`666546e`](https://github.com/bombshell-dev/tty/commit/666546e88a54885eb18c5fd5d288f3844483c58b) Thanks [@natemoo-re](https://github.com/natemoo-re)! - Fixes combining marks (accents, ZWJ, variation selectors, kitty-graphics placeholder diacritics) being silently dropped from rendered output instead of attaching to their base character's cell. Cells that overflow the 8-mark-per-cell limit now also surface a `COMBINING_MARKS_EXCEEDED` render error instead of truncating silently.
+
 ## 0.9.0
 
 ### Minor Changes
