@@ -328,6 +328,9 @@ describe("CSS color strings", () => {
       text("a", { color: "oklch(0.7 0.1 30)" }),
       text("a", { color: "RGB(255 0 0)" }),
       open("a", { bg: "hsl(0 0% 0%)", border: { color: "red" } }),
+      open("a", { color: "currentcolor" }),
+      open("a", { bg: "CurrentColor", border: {} }),
+      text("a", { color: "currentColor", bg: "currentcolor" }),
     ];
     // @ts-expect-error invalid hex digit count
     text("a", { color: "#ff8800a" });
@@ -335,9 +338,9 @@ describe("CSS color strings", () => {
     text("a", { color: "rebeccapurpel" });
     // @ts-expect-error unsupported color function
     text("a", { color: "color(srgb 1 0 0)" });
-    // @ts-expect-error reserved currentcolor
-    open("a", { bg: "currentcolor" });
-    expect(valid).toHaveLength(6);
+    // @ts-expect-error misspelled currentcolor
+    open("a", { bg: "currentcolour" });
+    expect(valid).toHaveLength(9);
   });
 });
 
@@ -574,5 +577,169 @@ describe("system colors", () => {
     // @ts-expect-error misspelled system color
     text("a", { color: "Canvass" });
     expect(valid).toHaveLength(2);
+  });
+});
+
+describe("foreground inheritance and currentcolor", () => {
+  it("inherits an ancestor open's color through nested opens to text", async () => {
+    let term = await createTerm({ width: 10, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("outer", { color: "#ff0000" }),
+        open("inner", { layout: { width: grow(), height: grow() } }),
+        text("Hi"),
+        close(),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[38;2;255;0;0m");
+  });
+
+  it("overrides the inherited color for itself and its descendants", async () => {
+    let term = await createTerm({ width: 10, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("outer", { color: "#ff0000" }),
+        open("inner", {
+          color: "#00ff00",
+          layout: { width: grow(), height: grow() },
+        }),
+        text("Hi"),
+        close(),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[38;2;0;255;0m");
+    expect(ansi).not.toContain("\x1b[38;2;255;0;0m");
+  });
+
+  it("does not carry a closed sibling's color into the next one", async () => {
+    let term = await createTerm({ width: 10, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("root", { layout: { width: grow(), height: grow() } }),
+        open("a", { color: "#ff0000" }),
+        text("Hi"),
+        close(),
+        open("b", { layout: { width: grow(), height: grow() } }),
+        text("Yo"),
+        close(),
+        close(),
+      ]).output,
+    );
+
+    let betweenHiAndYo = ansi.slice(ansi.indexOf("Hi") + 2, ansi.indexOf("Yo"));
+    expect(betweenHiAndYo).not.toContain("\x1b[38;2;255;0;0m");
+  });
+
+  it("treats color: currentcolor as inherit, same as omitting color", async () => {
+    let withKeyword = decode(
+      (await createTerm({ width: 10, height: 1 })).render([
+        open("outer", { color: "#ff0000" }),
+        open("inner", { color: "currentcolor" }),
+        text("Hi"),
+        close(),
+        close(),
+      ]).output,
+    );
+    let omitted = decode(
+      (await createTerm({ width: 10, height: 1 })).render([
+        open("outer", { color: "#ff0000" }),
+        open("inner"),
+        text("Hi"),
+        close(),
+        close(),
+      ]).output,
+    );
+
+    expect(withKeyword).toBe(omitted);
+  });
+
+  it("resolves text bg currentcolor to the inherited color", async () => {
+    let term = await createTerm({ width: 10, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("outer", { color: "#ff0000" }),
+        text("Hi", { bg: "currentcolor" }),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[48;2;255;0;0m");
+  });
+
+  it("resolves text bg currentcolor to the element's own explicit color over an ancestor's", async () => {
+    let term = await createTerm({ width: 10, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("outer", { color: "#ff0000" }),
+        text("Hi", { color: "#00ff00", bg: "currentcolor" }),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[48;2;0;255;0m");
+  });
+
+  it("resolves open bg currentcolor to its own color", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("box", {
+          layout: { width: fixed(4), height: fixed(1) },
+          color: "#ff0000",
+          bg: "currentcolor",
+        }),
+        close(),
+      ], { mode: "line" }).output,
+    );
+
+    expect(ansi).toContain("\x1b[48;2;255;0;0m");
+  });
+
+  it("packs text bg currentcolor like the field's own default without an ancestor color or theme", async () => {
+    let currentcolor = decode(
+      (await createTerm({ width: 4, height: 1 })).render([
+        text("Hi", { bg: "currentcolor" }),
+      ]).output,
+    );
+    let fieldDefault = decode(
+      (await createTerm({ width: 4, height: 1 })).render([
+        text("Hi", { bg: "CanvasText" }),
+      ]).output,
+    );
+
+    expect(currentcolor).toBe(fieldDefault);
+  });
+
+  it("resolves text bg currentcolor to the probed theme foreground once reported", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    term.update([
+      {
+        type: "capability",
+        key: "foreground-color",
+        value: { r: 10, g: 20, b: 30 },
+      },
+    ]);
+    let ansi = decode(
+      term.render([text("Hi", { bg: "currentcolor" })]).output,
+    );
+
+    expect(ansi).toContain("48;2;10;20;30");
+  });
+
+  it("resolves text bg currentcolor to an inherited palette color unchanged", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("outer", { color: "Mark" }),
+        text("Hi", { bg: "currentcolor" }),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[43m");
   });
 });

@@ -748,3 +748,52 @@ describe("system colors", () => {
     expect(at(parsed, 3, 0).fg).toBe("\x1b[38;2;200;210;220");
   });
 });
+
+describe("currentcolor", () => {
+  it("defaults border.color to currentcolor, inherited from an ancestor open", async () => {
+    let term = await createTerm({ width: 12, height: 5 });
+    let ansi = decode(
+      term.render([
+        open("outer", { color: RED }),
+        open("box", {
+          layout: { width: fixed(8), height: fixed(4) },
+          border: { top: 1, right: 1, bottom: 1, left: 1 },
+        }),
+        close(),
+        close(),
+      ], { mode: "line" }).output,
+    );
+    let parsed = cells(ansi);
+
+    for (let cell of glyphs(parsed, "┌┐└┘─│")) {
+      expect(cell.fg).toBe(FG.red);
+    }
+  });
+
+  it("resolves border.color: currentcolor to the element's own explicit color", async () => {
+    let parsed = await renderBox({
+      color: GREEN,
+      border: { color: "currentcolor", top: 1 },
+    });
+
+    expect(at(parsed, 3, 0).fg).toBe(FG.green);
+  });
+
+  it("resolves border.bg: currentcolor to the element's own resolved color", async () => {
+    let parsed = await renderBox({
+      color: BLUE,
+      border: { color: WHITE, bg: "currentcolor", top: 1 },
+    });
+
+    expect(at(parsed, 3, 0).bg).toBe(BG.blue);
+  });
+
+  it("resolves a structured side's color: currentcolor to the element's own color", async () => {
+    let parsed = await renderBox({
+      color: YELLOW,
+      border: { color: WHITE, top: { width: 1, color: "currentcolor" } },
+    });
+
+    expect(at(parsed, 3, 0).fg).toBe(FG.yellow);
+  });
+});

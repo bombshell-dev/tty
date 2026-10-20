@@ -831,8 +831,10 @@ channel permits them, angles (`deg`, `rad`, `grad`, `turn`) for hues, and the
 relative color syntax, and `device-cmyk()` are not supported and are invalid
 color strings.
 
-`currentcolor` is reserved. It is an invalid color string in this version and
-will be specified separately.
+**`currentcolor`.** The keyword `currentcolor` means "the directive's own
+resolved foreground color" (see **Foreground inheritance and `currentcolor`**
+below). It is accepted at every color field, including `open({ color })` and
+`text({ color })`, where it means "inherit" — the same as omitting the field.
 
 **System colors.** The CSS Color 4 system color keywords resolve to colors the
 terminal's theme controls rather than to sRGB values: either the terminal's
@@ -917,6 +919,43 @@ clipped per channel; no perceptual gamut mapping is performed. Alpha defaults to
 255 when a form does not supply it. A hex string and the equivalent `rgba()`
 call produce bit-identical packed values.
 
+**Foreground inheritance and `currentcolor`.** `open()` accepts a `color` field:
+the element's own foreground color. `color` is inherited: an element with no
+explicit `color` (or with `color: "currentcolor"`) uses the nearest ancestor
+`open()`'s resolved color; an explicit `color` other than `currentcolor`
+overrides it for that element and, by the same inheritance rule, every
+descendant that does not itself override it. `text()` resolves its own `color`
+field (and, when absent, inherits) the same way; a `text()` has no descendants,
+so its resolved color only affects itself. With no `color` anywhere in the
+enclosing chain, the inherited color is the terminal default foreground — the
+same color a directive gets today when `color` is omitted.
+
+`currentcolor` used in any field other than `color` — `open({ bg })`,
+`text({ bg })`, `border.color`, `border.bg`, or a structured border side's
+`color` or `bg` — resolves to that directive's own resolved color (its explicit
+`color`, or the color it inherits). That resolved color is then subject to the
+same field resolution as any other color value: a same-field default keyword or
+palette entry stays terminal-themed, a cross-field default keyword resolves
+against the probed theme (falling back to the field's own default when
+unprobed), and an sRGB color passes through unchanged. For example, an element
+with no `color` set anywhere above it has an inherited color of the terminal
+default foreground; `bg: "currentcolor"` on that element resolves exactly like
+`bg: "CanvasText"` — the probed foreground when available, the default
+background otherwise — while `border.color` left at its default resolves like
+`border.color: "CanvasText"` used in a foreground field, which stays
+terminal-themed (SGR `39`).
+
+`border.color` is optional and defaults to `currentcolor`, matching CSS. A
+structured border side without its own `color` falls back to the shared
+`border.color` as before, and so, transitively, to the inherited color when
+`border.color` is omitted.
+
+Foreground inheritance is resolved by `pack()` with a stack: pushed on each
+element open (the newly resolved color), popped on the matching close. It is
+scoped to the single pass over one frame's directive array — a sibling that
+follows a closed element does not see that element's color, and no inheritance
+state carries across frames (§6, §10.4).
+
 **Invalid color strings.** A string that does not match the color string grammar
 is invalid directive input (§9.1). `validate()` reports it as an invalid field
 value. The packer MUST reject a directive array containing an invalid color
@@ -928,10 +967,10 @@ The directive constructors check string literals at compile time: a literal
 beginning with `#` must match the hex form (the type-level equivalent of
 `#${string{3,4,6,8}}`); a literal containing `(` must begin with a supported
 function name; any other literal must be a named color keyword, `transparent`,
-or a system color keyword. Function arguments are not checked statically.
-Strings whose value is only known at runtime (colors read from a theme or
-configuration, for example) pass the type check as `string` and are checked by
-`validate()` and the packer at render time.
+`currentcolor`, or a system color keyword. Function arguments are not checked
+statically. Strings whose value is only known at runtime (colors read from a
+theme or configuration, for example) pass the type check as `string` and are
+checked by `validate()` and the packer at render time.
 
 ### 8.6 Term update
 
@@ -1161,16 +1200,21 @@ as a color word.
 The `open()` constructor currently accepts the following property groups in its
 `props` parameter:
 
+- **`color`** — the element's own foreground color, inherited by descendants
+  that do not override it (see **Foreground inheritance and `currentcolor`**,
+  §8.5). Accepts the color values of §8.5, including `currentcolor` (meaning
+  "inherit", same as omitting the field).
 - **`layout`** — sizing (width and height, specified via sizing helpers),
   padding (per-side), alignment (`alignX`: `"left"` | `"center"` | `"right"`;
   `alignY`: `"top"` | `"center"` | `"bottom"`, defaulting to left/top when
   omitted), direction (top-to-bottom or left-to-right), and gap
 - **`border`** — per-side border configuration. Each side field (`top`, `right`,
   `bottom`, `left`) accepts either a scalar width or a structured object
-  `{ width, color?, bg? }`. The shared `color` field is required and is the
-  fallback foreground for every side; the optional shared `bg` field is the
-  fallback border-cell background for every side. Color fields accept the color
-  values of §8.5 (packed ARGB number or CSS color string)
+  `{ width, color?, bg? }`. The shared `color` field is optional, defaulting to
+  `currentcolor` (§8.5), and is the fallback foreground for every side; the
+  optional shared `bg` field is the fallback border-cell background for every
+  side. Color fields accept the color values of §8.5 (packed ARGB number or CSS
+  color string)
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
 - **`clip`** — Declares the element as a clip region (see §7.5). Currently
@@ -1251,7 +1295,8 @@ CSS-like shorthand/longhand fashion before rendering:
 
 - A structured side with `color` MUST render with that foreground color. A
   scalar side, or a structured side that omits `color`, MUST fall back to the
-  shared `border.color`. The shared `color` remains required.
+  shared `border.color`, which itself defaults to `currentcolor` (§8.5) when
+  omitted.
 - A structured side with `bg` MUST render border cells of that side with that
   background color. A scalar side, or a structured side that omits `bg`, MUST
   fall back to the shared `border.bg` when it is provided.
@@ -1405,7 +1450,8 @@ foreground/background colors (`RuntimeCapabilities.theme`, terminfo-spec §6.4),
 used to resolve a cross-field default keyword (§8.5) to the terminal's actual
 default color. `term.render()` passes its current capability snapshot's `theme`;
 a caller that omits it gets the field-default fallback for every cross-field
-keyword.
+keyword. `pack()` also resolves `color` inheritance and `currentcolor` (§8.5)
+with a stack scoped to the single call.
 
 ---
 

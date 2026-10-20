@@ -252,7 +252,7 @@ describe("validate", () => {
     }
   });
 
-  it("rejects a border without shared color even with side colors", () => {
+  it("accepts a border without shared color even with side colors", () => {
     expect(validate([
       {
         directive: 0x02,
@@ -260,7 +260,34 @@ describe("validate", () => {
         border: { top: { width: 1, color: 0xFF0000 } },
       },
       close(),
-    ])).toBe(false);
+    ])).toBe(true);
+  });
+
+  it("accepts open({ color }), including currentcolor", () => {
+    expect(validate([
+      open("x", { color: 0xFF0000 }),
+      close(),
+    ])).toBe(true);
+    expect(validate([
+      open("x", { color: "currentcolor" }),
+      close(),
+    ])).toBe(true);
+  });
+
+  it("accepts currentcolor at every color field", () => {
+    expect(validate([
+      open("x", {
+        color: "currentcolor",
+        bg: "currentcolor",
+        border: {
+          color: "currentcolor",
+          bg: "currentcolor",
+          top: { width: 1, color: "currentcolor", bg: "currentcolor" },
+        },
+      }),
+      text("hi", { color: "currentcolor", bg: "currentcolor" }),
+      close(),
+    ])).toBe(true);
   });
 });
 
@@ -398,7 +425,7 @@ describe("CSS color fields", () => {
         "color(srgb 1 0 0)",
         "device-cmyk(0 0 0 1)",
         "Canvass",
-        "currentcolor",
+        "currentcolour",
         " red",
         "rgb(1 2)",
       ]
