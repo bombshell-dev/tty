@@ -397,7 +397,7 @@ describe("CSS color fields", () => {
       let spec of [
         "color(srgb 1 0 0)",
         "device-cmyk(0 0 0 1)",
-        "Canvas",
+        "Canvass",
         "currentcolor",
         " red",
         "rgb(1 2)",
@@ -407,6 +407,59 @@ describe("CSS color fields", () => {
         spec,
         false,
       ]);
+    }
+  });
+});
+
+describe("system color fields", () => {
+  it("accepts system color keywords at every color field", () => {
+    expect(validate([
+      open("x", {
+        bg: "Canvas",
+        border: {
+          color: "LinkText",
+          bg: "Mark",
+          top: { width: 1, color: "GrayText", bg: "HighlightText" },
+          right: 1,
+        },
+      }),
+      text("hi", { color: "CanvasText", bg: "SelectedItem" }),
+      close(),
+    ])).toBe(true);
+  });
+
+  it("accepts every CSS Color 4 system color case-insensitively", () => {
+    for (
+      let keyword of [
+        "AccentColor",
+        "AccentColorText",
+        "ActiveText",
+        "ButtonBorder",
+        "ButtonFace",
+        "ButtonText",
+        "Canvas",
+        "CanvasText",
+        "Field",
+        "FieldText",
+        "GrayText",
+        "Highlight",
+        "HighlightText",
+        "LinkText",
+        "Mark",
+        "MarkText",
+        "SelectedItem",
+        "SelectedItemText",
+        "VisitedText",
+      ]
+    ) {
+      for (
+        let spec of [keyword, keyword.toLowerCase(), keyword.toUpperCase()]
+      ) {
+        expect([spec, validate([text("hi", { color: spec })])]).toEqual([
+          spec,
+          true,
+        ]);
+      }
     }
   });
 });

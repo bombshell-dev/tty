@@ -75,6 +75,10 @@ function cells(ansi: string): ParsedCell[] {
         fg = seq.slice(0, -1);
       } else if (seq.startsWith("\x1b[48;2;") && seq.endsWith("m")) {
         bg = seq.slice(0, -1);
+      } else if (/^\[(3[0-7]|9[0-7])m$/.test(seq.slice(1))) {
+        fg = seq.slice(0, -1);
+      } else if (/^\[(4[0-7]|10[0-7])m$/.test(seq.slice(1))) {
+        bg = seq.slice(0, -1);
       }
 
       i = end + 1;
@@ -673,5 +677,74 @@ describe("hex colors", () => {
     // left: shared fg, shared bg
     expect(at(parsed, 0, 1).fg).toBe(FG.red);
     expect(at(parsed, 0, 1).bg).toBe(BG.blue);
+  });
+});
+
+describe("system colors", () => {
+  it("renders side colors from system colors with shared fallback", async () => {
+    let parsed = await renderBox({
+      border: {
+        color: "LinkText",
+        bg: "Mark",
+        top: { width: 1, color: "GrayText" },
+        right: 1,
+        bottom: { width: 1, bg: "HighlightText" },
+        left: 1,
+      },
+    });
+
+    expect(at(parsed, 0, 0).fg).toBe("\x1b[90");
+    expect(at(parsed, 3, 0).fg).toBe("\x1b[90");
+    expect(at(parsed, 3, 0).bg).toBe("\x1b[43");
+    expect(at(parsed, 7, 1).fg).toBe("\x1b[34");
+    expect(at(parsed, 7, 1).bg).toBe("\x1b[43");
+    expect(at(parsed, 3, 3).fg).toBe("\x1b[34");
+    expect(at(parsed, 3, 3).bg).toBe("\x1b[107");
+    expect(at(parsed, 0, 1).fg).toBe("\x1b[34");
+  });
+
+  it("overwrites the element bg with an explicit Canvas border bg", async () => {
+    let parsed = await renderBox({
+      bg: RED,
+      border: { color: WHITE, top: { width: 1, bg: "Canvas" }, left: 1 },
+    });
+
+    expect(at(parsed, 3, 0).bg).toBeUndefined();
+    expect(at(parsed, 0, 1).bg).toBe(BG.red);
+    expect(at(parsed, 3, 1).bg).toBe(BG.red);
+  });
+
+  it("renders the default foreground for a default keyword in border color", async () => {
+    let parsed = await renderBox({
+      border: { color: "Canvas", top: 1 },
+    });
+
+    expect(at(parsed, 3, 0).ch).toBe("─");
+    expect(at(parsed, 3, 0).fg).toBeUndefined();
+    expect(at(parsed, 3, 0).bg).toBeUndefined();
+  });
+
+  it("renders a probed default background as a truecolor border side fg once the theme reports it", async () => {
+    let term = await createTerm({ width: 12, height: 5 });
+    term.update([
+      {
+        type: "capability",
+        key: "background-color",
+        value: { r: 200, g: 210, b: 220 },
+      },
+    ]);
+    let ansi = decode(
+      term.render([
+        open("box", {
+          layout: { width: fixed(8), height: fixed(4) },
+          border: { color: "Canvas", top: 1 },
+        }),
+        close(),
+      ], { mode: "line" }).output,
+    );
+    let parsed = cells(ansi);
+
+    expect(at(parsed, 3, 0).ch).toBe("─");
+    expect(at(parsed, 3, 0).fg).toBe("\x1b[38;2;200;210;220");
   });
 });

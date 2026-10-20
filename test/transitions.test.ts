@@ -80,6 +80,48 @@ describe("transitions", () => {
     });
   });
 
+  describe("system colors", () => {
+    it("switches between sRGB and a system color at half progress", async () => {
+      let term = await createTerm({ width: 4, height: 1 });
+      let frame = (bg: number | string, deltaTime: number) =>
+        new TextDecoder().decode(
+          term.render([
+            open("box", {
+              layout: { width: fixed(4), height: fixed(1) },
+              bg,
+              transition: {
+                duration: 0.2,
+                easing: "linear",
+                properties: ["bg"],
+              },
+            }),
+            close(),
+          ], { deltaTime }).output,
+        );
+
+      let steps = [0, 0.05, 0.05, 0.05, 0.05, 0.05];
+      expect(frame(rgba(255, 0, 0), 0)).toBe(
+        "\x1b[0m\x1b[48;2;255;0;0m\x1b[1;1H    ",
+      );
+      expect(steps.map((dt) => frame("Highlight", dt))).toEqual([
+        "",
+        "",
+        "",
+        "\x1b[0m\x1b[44m\x1b[1;1H    ",
+        "",
+        "",
+      ]);
+      expect(steps.map((dt) => frame(rgba(0, 255, 0), dt))).toEqual([
+        "",
+        "",
+        "",
+        "\x1b[0m\x1b[48;2;0;255;0m\x1b[1;1H    ",
+        "",
+        "",
+      ]);
+    });
+  });
+
   describe("line mode", () => {
     it("runs color transitions in line mode", async () => {
       let term = await createTerm({ width: 20, height: 5 });

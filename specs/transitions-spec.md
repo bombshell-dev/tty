@@ -322,6 +322,11 @@ Group names expand as follows:
 - `size` → `width`, `height`
 - `all` → every individual property above
 
+A color property whose initial or target value is terminal-themed (a CSS system
+color, renderer-spec §8.5) changes discretely instead of interpolating: it holds
+the initial value while eased progress is below 0.5 and takes the target value
+from 0.5 on.
+
 ---
 
 ## 8. Wire Encoding

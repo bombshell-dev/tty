@@ -25,7 +25,11 @@ typedef struct {
 #define ATTR_BLINK 0x10000000
 #define ATTR_REVERSE 0x20000000
 #define ATTR_STRIKEOUT 0x40000000
-#define ATTR_DEFAULT 0x80000000 /* use terminal default color */
+#define ATTR_DEFAULT 0x80000000 /* terminal-themed: default, or palette */
+#define ATTR_PALETTE 0x00000100 /* with ATTR_DEFAULT: low byte is the index */
+
+/* Wire-only bg word: keep the existing cell bg. Never stored in a cell. */
+#define BG_KEEP 0x40000000
 
 #define ATTR_MASK 0xFF000000
 #define COLOR_MASK 0x00FFFFFF

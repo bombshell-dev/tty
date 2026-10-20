@@ -9,6 +9,10 @@
 #define CT_EASING_EASE_OUT 2
 #define CT_EASING_EASE_IN_OUT 3
 
+/* A Clay_Color with a negative red channel carries a terminal-themed color:
+ * green is the ANSI palette index, or negative for the terminal default. */
+static inline bool ct_color_is_terminal(Clay_Color c) { return c.r < 0; }
+
 bool ct_handler_linear(Clay_TransitionCallbackArguments args);
 bool ct_handler_ease_in(Clay_TransitionCallbackArguments args);
 bool ct_handler_ease_out(Clay_TransitionCallbackArguments args);

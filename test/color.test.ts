@@ -335,8 +335,244 @@ describe("CSS color strings", () => {
     text("a", { color: "rebeccapurpel" });
     // @ts-expect-error unsupported color function
     text("a", { color: "color(srgb 1 0 0)" });
-    // @ts-expect-error reserved system color
-    open("a", { bg: "Canvas" });
+    // @ts-expect-error reserved currentcolor
+    open("a", { bg: "currentcolor" });
     expect(valid).toHaveLength(6);
+  });
+});
+
+describe("system colors", () => {
+  let palette: [string, number | "default"][] = [
+    ["Canvas", "default"],
+    ["ButtonFace", "default"],
+    ["Field", "default"],
+    ["CanvasText", "default"],
+    ["ButtonText", "default"],
+    ["FieldText", "default"],
+    ["ActiveText", 1],
+    ["Mark", 3],
+    ["LinkText", 4],
+    ["Highlight", 4],
+    ["SelectedItem", 4],
+    ["VisitedText", 5],
+    ["AccentColor", 6],
+    ["GrayText", 8],
+    ["ButtonBorder", 8],
+    ["HighlightText", 15],
+    ["SelectedItemText", 15],
+    ["MarkText", 0],
+    ["AccentColorText", 0],
+  ];
+
+  let sgr = (index: number, base: number, bright: number) =>
+    `\x1b[${index < 8 ? base + index : bright + index - 8}m`;
+
+  async function textFrame(props: Parameters<typeof text>[1]) {
+    let term = await createTerm({ width: 8, height: 1 });
+    return decode(term.render([text("Hi", props)], { mode: "line" }).output);
+  }
+
+  it("maps each keyword to its palette entry or the default in fg and bg", async () => {
+    let plain = await textFrame({});
+    for (let [keyword, index] of palette) {
+      let fg = await textFrame({ color: keyword });
+      let bg = await textFrame({ bg: keyword });
+      if (index === "default") {
+        expect([keyword, fg]).toEqual([keyword, plain]);
+        expect([keyword, bg]).toEqual([keyword, plain]);
+      } else {
+        expect([keyword, fg]).toEqual([
+          keyword,
+          `\x1b[0m${sgr(index, 30, 90)}Hi\x1b[0m      `,
+        ]);
+        expect([keyword, bg]).toEqual([
+          keyword,
+          `\x1b[0m${sgr(index, 40, 100)}Hi\x1b[0m      `,
+        ]);
+      }
+    }
+  });
+
+  it("matches keywords case-insensitively", async () => {
+    expect(await textFrame({ color: "linktext", bg: "MARK" })).toBe(
+      "\x1b[0m\x1b[34m\x1b[43mHi\x1b[0m      ",
+    );
+    expect(await textFrame({ color: "LINKTEXT", bg: "graytext" })).toBe(
+      "\x1b[0m\x1b[34m\x1b[100mHi\x1b[0m      ",
+    );
+  });
+
+  it("combines palette colors with text attributes", async () => {
+    expect(await textFrame({ color: "VisitedText", attrs: 0x01 })).toBe(
+      "\x1b[0m\x1b[1m\x1b[35mHi\x1b[0m      ",
+    );
+  });
+
+  it("fills element bg from a palette keyword", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("box", {
+          layout: { width: fixed(4), height: fixed(1) },
+          bg: "Highlight",
+        }),
+        close(),
+      ], { mode: "line" }).output,
+    );
+
+    expect(ansi).toBe("\x1b[0m\x1b[44m    ");
+  });
+
+  it("overwrites an enclosing bg with an explicit Canvas element bg", async () => {
+    let term = await createTerm({ width: 8, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("outer", {
+          layout: { width: fixed(8), height: fixed(1) },
+          bg: "#ff0000",
+        }),
+        open("inner", {
+          layout: { width: fixed(4), height: fixed(1) },
+          bg: "Canvas",
+        }),
+        close(),
+        close(),
+      ], { mode: "line" }).output,
+    );
+
+    expect(ansi).toBe("\x1b[0m    \x1b[0m\x1b[48;2;255;0;0m    ");
+  });
+
+  it("overwrites an enclosing bg with a default keyword in a text bg", async () => {
+    let render = async (bg?: string) => {
+      let term = await createTerm({ width: 4, height: 1 });
+      return decode(
+        term.render([
+          open("box", {
+            layout: { width: fixed(4), height: fixed(1) },
+            bg: "Mark",
+          }),
+          text("Hi", bg === undefined ? {} : { bg }),
+          close(),
+        ], { mode: "line" }).output,
+      );
+    };
+
+    expect(await render()).toBe("\x1b[0m\x1b[43mHi  ");
+    expect(await render("Canvas")).toBe("\x1b[0mHi\x1b[0m\x1b[43m  ");
+    expect(await render("CanvasText")).toBe("\x1b[0mHi\x1b[0m\x1b[43m  ");
+  });
+
+  it("re-emits cells whose color changes between palette, default, and sRGB", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    let frame = (color: number | string) =>
+      decode(term.render([text("Hi", { color })]).output);
+
+    expect(frame("LinkText")).toContain("\x1b[34m\x1b[1;1HHi");
+    expect(frame("LinkText")).not.toContain("Hi");
+    expect(frame(rgba(0, 1, 4))).toContain("\x1b[38;2;0;1;4m\x1b[1;1HHi");
+    expect(frame("LinkText")).toContain("\x1b[34m\x1b[1;1HHi");
+    expect(frame("Mark")).toContain("\x1b[33m\x1b[1;1HHi");
+    expect(frame("CanvasText")).toContain("\x1b[0m\x1b[1;1HHi");
+    expect(frame("CanvasText")).not.toContain("Hi");
+    expect(frame("GrayText")).toContain("\x1b[90m\x1b[1;1HHi");
+  });
+
+  it("re-emits cells whose bg changes between palette, default, and sRGB", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    let frame = (bg: number | string) =>
+      decode(
+        term.render([
+          open("box", {
+            layout: { width: fixed(4), height: fixed(1) },
+            bg,
+          }),
+          close(),
+        ]).output,
+      );
+
+    expect(frame("Highlight")).toContain("\x1b[44m\x1b[1;1H    ");
+    expect(frame("Highlight")).not.toContain("    ");
+    expect(frame(rgba(0, 0, 0, 128))).toContain(
+      "\x1b[48;2;0;0;0m\x1b[1;1H    ",
+    );
+    expect(frame("Canvas")).toContain("\x1b[0m\x1b[1;1H    ");
+    expect(frame("Canvas")).not.toContain("    ");
+    expect(frame("HighlightText")).toContain("\x1b[107m\x1b[1;1H    ");
+  });
+
+  it("paints a probed default foreground as a truecolor text bg once the theme reports it", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    let before = decode(
+      term.render([text("Hi", { bg: "CanvasText" })]).output,
+    );
+    expect(before).not.toContain("48;2;");
+
+    term.update([
+      {
+        type: "capability",
+        key: "foreground-color",
+        value: { r: 10, g: 20, b: 30 },
+      },
+    ]);
+    let after = decode(
+      term.render([text("Hi", { bg: "CanvasText" })]).output,
+    );
+    expect(after).toContain("48;2;10;20;30");
+  });
+
+  it("paints a probed default foreground as a truecolor element bg once the theme reports it", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    term.update([
+      {
+        type: "capability",
+        key: "foreground-color",
+        value: { r: 10, g: 20, b: 30 },
+      },
+    ]);
+    let ansi = decode(
+      term.render([
+        open("box", {
+          layout: { width: fixed(4), height: fixed(1) },
+          bg: "CanvasText",
+        }),
+        close(),
+      ], { mode: "line" }).output,
+    );
+    expect(ansi).toContain("48;2;10;20;30");
+  });
+
+  it("paints a probed default background as a truecolor border side fg", async () => {
+    let term = await createTerm({ width: 4, height: 1 });
+    term.update([
+      {
+        type: "capability",
+        key: "background-color",
+        value: { r: 200, g: 210, b: 220 },
+      },
+    ]);
+    let ansi = decode(
+      term.render([
+        open("box", {
+          layout: { width: fixed(4), height: fixed(1) },
+          border: { color: "Canvas", top: { width: 1 } },
+        }),
+        close(),
+      ], { mode: "line" }).output,
+    );
+    expect(ansi).toContain("38;2;200;210;220");
+  });
+
+  it("checks system color literals at compile time", () => {
+    let valid = [
+      text("a", { color: "LinkText", bg: "canvas" }),
+      open("a", {
+        bg: "HIGHLIGHT",
+        border: { color: "GrayText", top: { width: 1, bg: "Mark" } },
+      }),
+    ];
+    // @ts-expect-error misspelled system color
+    text("a", { color: "Canvass" });
+    expect(valid).toHaveLength(2);
   });
 });

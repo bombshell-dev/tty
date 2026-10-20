@@ -44,6 +44,7 @@ struct Clayterm *ct_active_context = NULL;
 #define PROP_FLOATING 0x20
 #define PROP_TRANSITION 0x40
 #define PROP_CURSOR 0x80
+#define PROP_BG_TERMINAL 0x100
 
 /* ── Instance state ───────────────────────────────────────────────── */
 
@@ -173,7 +174,7 @@ static int setcell(struct Clayterm *ct, int x, int y, uint32_t ch, uint32_t fg,
   Cell *c = cell_at(ct, ct->back, x, y);
   c->ch = ch;
   c->fg = fg;
-  if (!(bg & ATTR_DEFAULT)) {
+  if (!(bg & BG_KEEP)) {
     c->bg = bg;
   }
   for (int i = 0; i < CELL_MAX_COMBINING; i++)
@@ -219,6 +220,12 @@ static void append_combining(struct Clayterm *ct, int x, int y, uint32_t cp) {
 
 /* ── Escape sequence generation ───────────────────────────────────── */
 
+static void emit_palette(struct Clayterm *ct, int index, int base, int bright) {
+  buf_str(&ct->out, "\x1b[");
+  buf_num(&ct->out, index < 8 ? base + index : bright + index - 8);
+  buf_put(&ct->out, "m", 1);
+}
+
 static void emit_attr(struct Clayterm *ct, uint32_t fg, uint32_t bg) {
   if (fg == ct->lastfg && bg == ct->lastbg)
     return;
@@ -242,8 +249,11 @@ static void emit_attr(struct Clayterm *ct, uint32_t fg, uint32_t bg) {
   if (fg & ATTR_STRIKEOUT)
     buf_str(&ct->out, "\x1b[9m");
 
-  /* foreground truecolor */
-  if (!(fg & ATTR_DEFAULT)) {
+  /* foreground: palette, truecolor, or default (left by the reset) */
+  if (fg & ATTR_DEFAULT) {
+    if (fg & ATTR_PALETTE)
+      emit_palette(ct, (int)(fg & 0xff), 30, 90);
+  } else {
     buf_str(&ct->out, "\x1b[38;2;");
     buf_num(&ct->out, (fg >> 16) & 0xff);
     buf_put(&ct->out, ";", 1);
@@ -253,8 +263,11 @@ static void emit_attr(struct Clayterm *ct, uint32_t fg, uint32_t bg) {
     buf_put(&ct->out, "m", 1);
   }
 
-  /* background truecolor */
-  if (!(bg & ATTR_DEFAULT)) {
+  /* background: same */
+  if (bg & ATTR_DEFAULT) {
+    if (bg & ATTR_PALETTE)
+      emit_palette(ct, (int)(bg & 0xff), 40, 100);
+  } else {
     buf_str(&ct->out, "\x1b[48;2;");
     buf_num(&ct->out, (bg >> 16) & 0xff);
     buf_put(&ct->out, ";", 1);
@@ -420,6 +433,8 @@ static void present_lines(struct Clayterm *ct) {
 /* ── Color conversion ─────────────────────────────────────────────── */
 
 static uint32_t color(Clay_Color c) {
+  if (ct_color_is_terminal(c))
+    return c.g < 0 ? ATTR_DEFAULT : ATTR_DEFAULT | ATTR_PALETTE | (uint8_t)c.g;
   uint8_t r = (uint8_t)c.r;
   uint8_t g = (uint8_t)c.g;
   uint8_t b = (uint8_t)c.b;
@@ -619,6 +634,15 @@ static float rdf(uint32_t *buf, int len, int *i) {
   float f;
   memcpy(&f, &v, 4);
   return f;
+}
+
+static Clay_Color unpack_terminal_color(uint32_t c) {
+  return (Clay_Color){
+      .r = -1,
+      .g = (c & ATTR_PALETTE) ? (float)(c & 0xff) : -1,
+      .b = 0,
+      .a = 255,
+  };
 }
 
 static Clay_Color unpack_color(uint32_t c) {
@@ -854,7 +878,10 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       }
 
       if (mask & PROP_BG_COLOR) {
-        decl.backgroundColor = unpack_color(rd(buf, len, &i));
+        uint32_t bg = rd(buf, len, &i);
+        decl.backgroundColor = (mask & PROP_BG_TERMINAL)
+                                   ? unpack_terminal_color(bg)
+                                   : unpack_color(bg);
       }
 
       if (mask & PROP_CORNER_RADIUS) {

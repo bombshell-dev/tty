@@ -802,10 +802,11 @@ wherever the directive model expects a color.
 `open({ bg })`, `border.color`, `border.bg`, the `color` and `bg` fields of
 structured border sides, and `text({ color, bg })` — accepts both forms. Each
 color string is resolved to a packed ARGB value at the transfer-encoding
-boundary (§9.2), so color strings MUST NOT appear in the transfer encoding. The
-wire format, snapshot encoding, and cell representation are unchanged by this
-acceptance: packed sRGB ARGB remains the only color representation the renderer
-sees.
+boundary (§9.2), so color strings MUST NOT appear in the transfer encoding.
+Every color string except a system color resolves to packed sRGB ARGB, and its
+wire, snapshot, and cell encoding is bit-identical to the equivalent `rgba()`
+value. System colors resolve to terminal-themed colors instead (see **System
+colors** below).
 
 **Color string grammar.** A color string is one of the following CSS Color
 Module Level 4 forms. Function names and keywords are case-insensitive. Leading
@@ -817,6 +818,8 @@ or trailing whitespace is not permitted.
   pair (or digit, doubled).
 - **Named colors.** The CSS named color keywords (`red`, `rebeccapurple`, ...),
   and `transparent`, which is black with alpha 0.
+- **System colors.** The CSS Color 4 system color keywords listed under **System
+  colors** below.
 - **`rgb()` / `rgba()`.** Modern space-separated syntax with optional `/ alpha`,
   and the legacy comma-separated syntax.
 - **`hsl()` / `hsla()`.** Modern and legacy syntax.
@@ -828,11 +831,83 @@ channel permits them, angles (`deg`, `rad`, `grad`, `turn`) for hues, and the
 relative color syntax, and `device-cmyk()` are not supported and are invalid
 color strings.
 
-CSS system colors (`Canvas`, `CanvasText`, `LinkText`, ...) and `currentcolor`
-are reserved. They are invalid color strings in this version. System colors are
-reserved for mapping to the terminal's themable ANSI 16-color palette, which a
-packed sRGB value cannot express; that mapping, and `currentcolor`, will be
-specified separately.
+`currentcolor` is reserved. It is an invalid color string in this version and
+will be specified separately.
+
+**System colors.** The CSS Color 4 system color keywords resolve to colors the
+terminal's theme controls rather than to sRGB values: either the terminal's
+default foreground or background color, or an entry of the terminal's ANSI
+16-color palette. The renderer never learns the RGB value of a terminal-themed
+color; the terminal applies its own theme when it draws the cell.
+
+| Keyword                                 | Resolves to                 |
+| --------------------------------------- | --------------------------- |
+| `Canvas`, `ButtonFace`, `Field`         | terminal default background |
+| `CanvasText`, `ButtonText`, `FieldText` | terminal default foreground |
+| `ActiveText`                            | palette 1 (red)             |
+| `Mark`                                  | palette 3 (yellow)          |
+| `LinkText`, `Highlight`, `SelectedItem` | palette 4 (blue)            |
+| `VisitedText`                           | palette 5 (magenta)         |
+| `AccentColor`                           | palette 6 (cyan)            |
+| `GrayText`, `ButtonBorder`              | palette 8 (bright black)    |
+| `HighlightText`, `SelectedItemText`     | palette 15 (bright white)   |
+| `MarkText`, `AccentColorText`           | palette 0 (black)           |
+
+Each default keyword names the terminal default color of one specific attribute:
+`Canvas`, `ButtonFace`, and `Field` name the default background; `CanvasText`,
+`ButtonText`, and `FieldText` name the default foreground. **Used in its own
+field** — a background-default keyword in a background field (`open({ bg })`,
+`text({ bg })`, `border.bg`, a border side's `bg`), or a foreground-default
+keyword in a foreground field (`text({ color })`, `border.color`, a border
+side's `color`) — it resolves to that field's terminal default, unchanged from
+the table above.
+
+**Used in the other field** — a foreground-default keyword in a background
+field, or a background-default keyword in a foreground field, including a border
+side's `color` — it resolves to the terminal's probed color for the attribute it
+names, not to that field's default. The renderer reads this from the OSC 10/11
+theme probe, surfaced as `RuntimeCapabilities.theme.foreground` / `.background`
+(terminfo-spec §6.4) and passed into `pack()` as the theme snapshot
+`term.render()` holds at render time (§12.5). The result is an ordinary opaque
+sRGB color (alpha 255): it packs exactly like the equivalent `rgba()` value,
+renders as truecolor, and transitions interpolate it like any other RGB color —
+unlike the terminal-themed colors described below. When the theme has not yet
+reported that color, the keyword falls back to its field's own terminal default
+instead (the same-field behavior above). A theme report that arrives after a
+frame renders takes effect starting with the next render.
+
+For example, once the terminal has reported its default foreground color,
+`text({ bg: "CanvasText" })` paints that color as an opaque truecolor
+background. Until then it falls back to the default background: a terminal
+offers no way to paint its default foreground color as a cell background without
+knowing its RGB value, and the renderer never guesses one.
+
+A terminal-themed color (a same-field default, or a palette entry) is opaque. A
+palette color in a foreground field is emitted as SGR `30`–`37` for palette 0–7
+and `90`–`97` for palette 8–15; in a background field, as SGR `40`–`47` and
+`100`–`107`. A terminal default color is emitted as SGR `39` (foreground) or
+`49` (background), or by omitting the foreground or background SGR after an SGR
+reset, which leaves the same default in effect.
+
+A terminal default background is a color, not the absence of one. An explicit
+`Canvas` background (or `ButtonFace`, `Field`, or any default keyword in a
+background field) MUST overwrite cells with the terminal default background,
+including cells an enclosing element painted. This is distinct from an omitted
+`bg`, which keeps the background already present in each cell (§12.2).
+
+Cell diffing treats terminal-themed colors like any other attribute: a cell
+whose color changes between a palette color, a terminal default, and an sRGB
+color in consecutive frames MUST be re-emitted, and an unchanged cell MUST NOT
+be. The renderer does not resolve a palette color to RGB to compare it with an
+sRGB color.
+
+A transition (see the Transitions Specification) cannot interpolate between a
+terminal-themed color and any other color. When either endpoint of an
+interpolated color is terminal-themed, the color changes discretely: it holds
+the initial value while eased progress is below 0.5 and takes the target value
+from 0.5 on. A cross-field default keyword resolved to a probed theme color is
+not terminal-themed — it is an ordinary opaque sRGB color — so it interpolates
+normally; only the unprobed fallback and same-field defaults are discrete.
 
 **Resolution.** A color string resolves to sRGB, then to a packed ARGB value:
 each of R, G, B is clamped to [0, 255] and rounded to the nearest integer; alpha
@@ -852,11 +927,11 @@ emitting a partially decoded or garbage color value.
 The directive constructors check string literals at compile time: a literal
 beginning with `#` must match the hex form (the type-level equivalent of
 `#${string{3,4,6,8}}`); a literal containing `(` must begin with a supported
-function name; any other literal must be a named color keyword or `transparent`.
-Function arguments are not checked statically. Strings whose value is only known
-at runtime (colors read from a theme or configuration, for example) pass the
-type check as `string` and are checked by `validate()` and the packer at render
-time.
+function name; any other literal must be a named color keyword, `transparent`,
+or a system color keyword. Function arguments are not checked statically.
+Strings whose value is only known at runtime (colors read from a theme or
+configuration, for example) pass the type check as `string` and are checked by
+`validate()` and the packer at render time.
 
 ### 8.6 Term update
 
@@ -1068,6 +1143,18 @@ were added after the initial protocol) but has never been restructured. It is
 likely to remain stable in structure while continuing to grow. However, specific
 opcode values, mask definitions, and field layouts are implementation details
 and are not locked down by this specification.
+
+**Color words.** Text colors and border side colors travel as one 32-bit
+attribute word each, in the same encoding the renderer stores in its cells. When
+bit 31 is clear, the low 24 bits are an sRGB color (`0x00RRGGBB`). When bit 31
+is set, the color is terminal-themed: `0x80000000` is the terminal default, and
+`0x80000100 | n` is ANSI palette entry `n` (0–15). Text foreground carries bit
+31 in the text attribute byte rather than in the color word. A background word
+of `0x40000000` means "keep the existing cell background" and is used for an
+omitted `bg`; it never appears in a cell. Element backgrounds keep their full
+packed ARGB word, because alpha 0 suppresses the fill; a terminal-themed element
+background sets an additional property-mask bit that marks its background word
+as a color word.
 
 ### 12.2 Directive property groups
 
@@ -1310,9 +1397,15 @@ structural errors (unbalanced open/close pairs, invalid field types — includin
 color fields, which must be a packed ARGB number or a §8.5 CSS color string).
 Exported and used in tests.
 
-**`pack(ops, mem, offset)`** — An internal function that serializes a directive
-array into the transfer encoding described in Section 12.1. Currently exported
-but not public API; its exposure is incidental to the module structure.
+**`pack(ops, mem, offset, limit?, theme?)`** — An internal function that
+serializes a directive array into the transfer encoding described in Section
+12.1. Currently exported but not public API; its exposure is incidental to the
+module structure. The optional trailing `theme` carries the probed default
+foreground/background colors (`RuntimeCapabilities.theme`, terminfo-spec §6.4),
+used to resolve a cross-field default keyword (§8.5) to the terminal's actual
+default color. `term.render()` passes its current capability snapshot's `theme`;
+a caller that omits it gets the field-default fallback for every cross-field
+keyword.
 
 ---
 
