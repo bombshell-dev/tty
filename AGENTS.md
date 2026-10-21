@@ -18,10 +18,21 @@
   `input-spec.md`). They are architecturally independent. Do not introduce
   dependencies between them.
 
+- Specs describe what _is_. No "current", "earlier", or "planned" language;
+  differences from prior versions go in commits and PR descriptions.
+
+- No code change lands with its spec out of date.
+
 - Each test file tests exactly one spec. Do not put tests for one spec into
   another spec's test file.
 
+- Layout tests assert ASCII pictures of the grid
+  (`expect(trim(print(ansi, w, h))).toEqual(...)`), not raw bytes.
+
 ## Commit and PR conventions
+
+Before opening a PR, check the change against `docs/review-patterns.md` and run
+`deno task fmt`.
 
 Do not include any agent marketing material (e.g. "Generated with...",
 "Co-Authored-By: \<agent>") in commits, pull requests, issues, or comments.
@@ -40,6 +51,9 @@ Do not include any agent marketing material (e.g. "Generated with...",
 - Each frame is a complete snapshot. The renderer carries no UI tree state
   between frames — only cell buffers for diffing.
 
+- Public API values are string literals (`"center-center"`), not numeric
+  constants or enums. Use functions when a value is parameterized.
+
 - Directives are plain objects. No classes, no methods, no prototype chains. The
   flat array pattern is normative.
 
@@ -48,3 +62,10 @@ Do not include any agent marketing material (e.g. "Generated with...",
 - No global mutable state. All state belongs on a struct instance (e.g.
   `Clayterm`). Use Clay's `userData` pointer or similar mechanisms to route
   callbacks back to the owning instance.
+
+- Renderer state (e.g. capabilities) lives in native state. Do not copy it
+  across the JS/WASM boundary on every call.
+
+- Never fabricate a default for unknown input. On overflow, keep structures
+  balanced and report through the error channel; never silently corrupt or
+  truncate.
