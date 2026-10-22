@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "cell.h"
+#include "graphics.h"
 
 struct Clayterm;
 
@@ -15,7 +16,7 @@ struct Clayterm;
 
 /* WASM exports */
 int clayterm_size(int w, int h);
-struct Clayterm *init(void *mem, int w, int h);
+struct Clayterm *init(void *mem, int w, int h, struct Graphics *gfx);
 int set_capabilities(struct Clayterm *ct, uint32_t caps);
 int pointer_shape(struct Clayterm *ct);
 void set_pointer_shape(struct Clayterm *ct, int shape);
