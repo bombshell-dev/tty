@@ -40,6 +40,17 @@ const PROP_FLOATING = 0x20;
 const PROP_TRANSITION = 0x40;
 const PROP_CURSOR = 0x80;
 
+const ALIGN_SELF: Record<AlignSelf, number> = {
+  auto: 0,
+  normal: 1,
+  stretch: 2,
+  center: 3,
+  start: 4,
+  end: 5,
+  "flex-start": 6,
+  "flex-end": 7,
+};
+
 const encoder = new TextEncoder();
 
 function packAxis(view: DataView, offset: number, axis: SizingAxis): number {
@@ -73,6 +84,17 @@ function packAxis(view: DataView, offset: number, axis: SizingAxis): number {
       view.setUint32(o, 3, true);
       o += 4;
       view.setFloat32(o, axis.value, true);
+      o += 4;
+      view.setFloat32(o, 0, true);
+      o += 4;
+      break;
+    case "stretch":
+      // Public stretch() maps to Clay's existing GROW primitive. The
+      // normative guarantee is cross-axis fill; main-axis behavior remains
+      // grow-like per the flex-layout-controls spec.
+      view.setUint32(o, 1, true);
+      o += 4;
+      view.setFloat32(o, 0, true);
       o += 4;
       view.setFloat32(o, 0, true);
       o += 4;
@@ -192,6 +214,9 @@ export function pack(
             : 0;
 
           view.setUint32(o, alignX | (alignY << 8), true);
+          o += 4;
+
+          view.setUint32(o, ALIGN_SELF[l.alignSelf ?? "auto"], true);
           o += 4;
         }
 
@@ -357,7 +382,8 @@ export type SizingAxis =
   | { type: "fit"; min?: number; max?: number }
   | { type: "grow"; min?: number; max?: number }
   | { type: "percent"; value: number }
-  | { type: "fixed"; value: number };
+  | { type: "fixed"; value: number }
+  | { type: "stretch" };
 
 export const fit = (min = 0, max = 0): SizingAxis => ({
   type: "fit",
@@ -374,6 +400,17 @@ export const percent = (value: number): SizingAxis => ({
   value,
 });
 export const fixed = (value: number): SizingAxis => ({ type: "fixed", value });
+export const stretch = (): SizingAxis => ({ type: "stretch" });
+
+export type AlignSelf =
+  | "auto"
+  | "normal"
+  | "stretch"
+  | "center"
+  | "start"
+  | "end"
+  | "flex-start"
+  | "flex-end";
 
 export interface CloseElement {
   directive: typeof OP_CLOSE_ELEMENT;
@@ -398,6 +435,7 @@ export interface OpenElement {
     direction?: "ltr" | "ttb";
     alignX?: "left" | "center" | "right";
     alignY?: "top" | "center" | "bottom";
+    alignSelf?: AlignSelf;
   };
   bg?: number;
   cornerRadius?: { tl?: number; tr?: number; bl?: number; br?: number };
@@ -540,7 +578,7 @@ function packSize(ops: Op[]): number {
         n += 4; // opcode
         n += 4 + Math.ceil(encoder.encode(op.id).length / 4) * 4; // id string
         n += 4; // mask
-        if (op.layout) n += 6 * 4 + 4 + 4 + 4; // 2 axes (3 words each) + pad + gap + align
+        if (op.layout) n += 6 * 4 + 4 + 4 + 4 + 4; // 2 axes (3 words each) + pad + gap + align + alignSelf
         if (op.bg !== undefined) n += 4;
         if (op.cornerRadius) n += 4;
         if (op.border) n += 36; // widths word + 4 sides × (fg + bg)
