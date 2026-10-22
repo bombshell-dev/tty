@@ -1,8 +1,6 @@
 #include "transitions.h"
 #include "clayterm.h"
 
-extern struct Clayterm *ct_active_context;
-
 static float clampf(float v, float lo, float hi) {
   if (v < lo) {
     return lo;
@@ -83,8 +81,9 @@ static bool apply(Clay_TransitionCallbackArguments args, float eased,
         (uint16_t)lerpf(args.initial.borderWidth.betweenChildren,
                         args.target.borderWidth.betweenChildren, eased);
   }
-  if (ct_active_context && !done) {
-    ct_active_context->animating_count++;
+  struct Clayterm *ct = Clay_GetCurrentContext()->errorHandler.userData;
+  if (ct && !done) {
+    ct->animating_count++;
   }
   return done;
 }

@@ -2,6 +2,7 @@
 
 #include "mem.h"
 
+#ifdef CLAY_WASM
 void *memcpy(void *dst, const void *src, size_t n) {
   unsigned char *d = (unsigned char *)dst;
   const unsigned char *s = (const unsigned char *)src;
@@ -23,5 +24,7 @@ size_t strlen(const char *s) {
     n++;
   return n;
 }
+
+#endif
 
 int align8(int n) { return (n + 7) & ~7; }

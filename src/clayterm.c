@@ -1,6 +1,6 @@
-/* clayterm.c — WASM terminal rendering engine for Clay UI
+/* clayterm.c — terminal rendering engine for Clay UI
  *
- * Public API (exported to WASM):
+ * Host entry points:
  *   clayterm_size  — compute arena size for given dimensions
  *   init           — initialize a Clayterm instance in provided memory
  *   reduce         — decode command buffer, run Clay layout, render to ANSI
@@ -13,20 +13,12 @@
 
 #include "clayterm.h"
 #include "transitions.h"
-#include "../clay/clay.h"
+#include "clay.h"
 #include "buffer.h"
 #include "cell.h"
 #include "mem.h"
 #include "utf8.h"
 #include "wcwidth.h"
-
-/* Module-level pointer to the Term currently executing reduce().
- * Set/cleared around each render pass so transition handlers (which Clay
- * invokes with no userData — see Clay_TransitionCallbackArguments) can
- * report back to the right Term's animating_count. Revisit once
- * nicbarker/clay#603 lands userData on transition callbacks; then the
- * handler can resolve its Term from args directly and this can go away. */
-struct Clayterm *ct_active_context = NULL;
 
 /* ── Command buffer protocol ──────────────────────────────────────── */
 
@@ -66,6 +58,7 @@ typedef struct {
 
 struct Clayterm {
   int w, h;
+  Clay_Context *context;
   Cell *front;
   Cell *back;
   Buffer out;
@@ -151,7 +144,8 @@ static void cursor_hover(Clay_ElementId id, Clay_PointerData pointer,
                          void *shape) {
   (void)id;
   (void)pointer;
-  ct_active_context->hover_shape = (int)(uintptr_t)shape;
+  struct Clayterm *ct = Clay_GetCurrentContext()->errorHandler.userData;
+  ct->hover_shape = (int)(uintptr_t)shape;
 }
 
 /* ── Cell buffer ops ──────────────────────────────────────────────── */
@@ -734,10 +728,10 @@ int error_message_length(struct Clayterm *ct, int index) {
   return ct->errors[index].errorText.length;
 }
 
-int error_message_ptr(struct Clayterm *ct, int index) {
+const char *error_message_ptr(struct Clayterm *ct, int index) {
   if (index < 0 || index >= ct->error_count)
     return 0;
-  return (int)ct->errors[index].errorText.chars;
+  return ct->errors[index].errorText.chars;
 }
 
 struct Clayterm *init(void *mem, int w, int h) {
@@ -752,10 +746,12 @@ struct Clayterm *init(void *mem, int w, int h) {
   int clay_bytes = align64((int)Clay_MinMemorySize());
   Clay_Arena arena =
       Clay_CreateArenaWithCapacityAndMemory(clay_bytes, clay_mem);
-  Clay_Initialize(arena, (Clay_Dimensions){(float)w, (float)h},
-                  (Clay_ErrorHandler){clay_error, ct});
+  Clay_Context *context =
+      Clay_Initialize(arena, (Clay_Dimensions){(float)w, (float)h},
+                      (Clay_ErrorHandler){clay_error, ct});
 
   *ct = (struct Clayterm){
+      .context = context,
       .w = w,
       .h = h,
       .front = (Cell *)base,
@@ -795,7 +791,7 @@ void set_pointer_shape(struct Clayterm *ct, int shape) {
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
             float deltaTime, float px, float py, int pointer) {
   int i = 0;
-  ct_active_context = ct;
+  Clay_SetCurrentContext(ct->context);
   ct->error_count = 0;
   ct->animating_count = 0;
   ct->caret_text_chars = NULL;
@@ -1126,8 +1122,6 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
     buf_str(&ct->out, POINTER_SHAPES[ct->pointer_shape]);
     buf_str(&ct->out, "\x1b\\");
   }
-
-  ct_active_context = NULL;
 }
 
 char *output(struct Clayterm *ct) { return ct->out.data; }
@@ -1159,19 +1153,20 @@ int pointer_over_id_string_length(int index) {
   return ids.internalArray[index].stringId.length;
 }
 
-int pointer_over_id_string_ptr(int index) {
+const char *pointer_over_id_string_ptr(int index) {
   Clay_ElementIdArray ids = Clay_GetPointerOverIds();
   if (index >= ids.length)
     return 0;
-  return (int)ids.internalArray[index].stringId.chars;
+  return ids.internalArray[index].stringId.chars;
 }
 
-void measure(int ret, int txt) {
-  /* Read Clay_StringSlice from txt address.
-   * Clay_StringSlice layout: { int32_t length, const char *chars, ... }
-   * We only need length and chars. */
-  int32_t slen = *(int32_t *)txt;
-  const char *chars = *(const char **)(txt + 4);
+static Clay_Dimensions measure_text(Clay_StringSlice text,
+                                    Clay_TextElementConfig *config,
+                                    void *userData) {
+  (void)config;
+  (void)userData;
+  int32_t slen = text.length;
+  const char *chars = text.chars;
 
   int w = 0;
   const char *p = chars;
@@ -1194,8 +1189,12 @@ void measure(int ret, int txt) {
     rem -= n;
   }
 
-  /* Write Clay_Dimensions { float width, float height } to ret */
-  float *dims = (float *)ret;
-  dims[0] = (float)w;
-  dims[1] = 1.0f;
+  return (Clay_Dimensions){(float)w, 1.0f};
 }
+
+#ifdef CLAY_WASM
+void measure(int ret, int txt) {
+  *(Clay_Dimensions *)(uintptr_t)ret =
+      measure_text(*(Clay_StringSlice *)(uintptr_t)txt, NULL, NULL);
+}
+#endif
