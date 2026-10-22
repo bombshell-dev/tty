@@ -147,7 +147,7 @@ caller has no way to know that a transition it triggered is still in progress.
 ### 4.5 Boundary preservation
 
 Transition configuration MUST be fully serializable. No function pointers,
-closures, or callback registries cross the TS→WASM boundary during a render
+closures, or callback registries cross the TS→engine boundary during a render
 transaction.
 
 This preserves INV-2 (single transaction per frame): one binary buffer in, one
@@ -171,7 +171,7 @@ deterministic rendering possible for tests and snapshots.
 
 **INV-T3. No callbacks across the boundary.** Transition configuration MUST be
 fully serializable. No function pointers, closures, or callback registries cross
-the TS→WASM boundary during a render transaction.
+the TS→engine boundary during a render transaction.
 
 **INV-T4. Identity is drawn from element IDs.** Transition state is associated
 with elements by their declared `id`. Callers using transitions on an element
@@ -474,12 +474,11 @@ state. Multiple Terms created in the same process remain isolated.
 
 ### 12.4 Resolving the active Term inside the handler
 
-Clay's transition-handler signature does not carry a `userData` pointer or
-element ID. Each `reduce()` call records the currently-active Term pointer in a
-module-level variable (`ct_active_context`) and clears it at the end. The
-handler reads this variable to reach the Term's `animating_count`. A single
-render pass cannot overlap with another (renders are synchronous), so there is
-no concurrency concern.
+Transition handlers resolve their owning Term through per-instance context.
+Backend integration MUST preserve this ownership when Clay invokes a handler.
+Sharing a native addon across Terms or Node.js workers MUST NOT cause a handler
+to read or mutate another Term's animation state. Any layout-library execution
+that cannot run concurrently MUST be serialized by the backend.
 
 ---
 

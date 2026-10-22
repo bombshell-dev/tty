@@ -53,7 +53,7 @@ Transitions are specified separately in the
 ### Out of scope
 
 - Internal C code organization, function names, or file structure
-- WASM memory layout or compilation details beyond behavioral requirements
+- Backend memory layout or compilation details beyond behavioral requirements
 - Performance targets or benchmark methodology
 - Packaging, CI, or distribution workflow details
 - Higher-level UI framework concerns (e.g., component lifecycle, reconciliation)
@@ -91,8 +91,8 @@ output described by the frame's directives. ANSI bytes include
 cursor-positioning sequences, SGR (Select Graphic Rendition) attribute
 sequences, and UTF-8 text.
 
-**Renderer core.** The WASM module and its TS entry points that together
-implement the render transaction. The renderer core owns layout computation,
+**Renderer core.** The C engine and its TS entry points that together implement
+the render transaction. The renderer core owns layout computation,
 render-command walking, cell-buffer diffing, and ANSI byte generation.
 
 **Caller.** Any code that invokes Clayterm's public API to produce terminal
@@ -121,13 +121,12 @@ Clayterm implements a rendering pipeline with the following stages:
 1. **Directive acceptance.** The caller provides a complete directive array
    representing the desired UI state for a single frame.
 
-2. **Transfer.** The renderer transfers the frame description into the WASM
-   module. The transfer mechanism is an implementation detail. The normative
-   requirement is that the transfer occurs as part of a single render
-   transaction; the caller does not interact with the transfer mechanism
-   directly.
+2. **Transfer.** The renderer transfers the frame description into the C engine.
+   The transfer mechanism is an implementation detail. The normative requirement
+   is that the transfer occurs as part of a single render transaction; the
+   caller does not interact with the transfer mechanism directly.
 
-3. **Render transaction.** The WASM module processes the frame description.
+3. **Render transaction.** The C engine processes the frame description.
    Internally, it drives a layout engine to compute element positions and sizes,
    walks the resulting render commands to populate a cell buffer, and diffs the
    cell buffer against the previous frame.
@@ -140,7 +139,7 @@ Clayterm implements a rendering pipeline with the following stages:
 
 ### 4.2 Single-transaction rendering
 
-A frame MUST be rendered in a single transaction that crosses the TS→WASM
+A frame MUST be rendered in a single transaction that crosses the TS→engine
 boundary once. The caller provides the complete directive array, invokes the
 render transaction, and reads the output. There are no intermediate callbacks,
 yields, or partial results.
@@ -163,6 +162,26 @@ Changed cells are then copied from the back buffer to the front buffer so that
 both buffers are identical at the end of the transaction. This mechanism is
 internal to the renderer and not directly observable to the caller.
 
+### 4.5 Backend selection and isolation
+
+The C engine supports WebAssembly and a Node-API native addon (`.node`). The
+public TypeScript signatures and rendering semantics are identical for both
+backends. Backend selection is internal; callers do not supply backend options
+or native pointers.
+
+In Node.js, a packaged native addon matching the host platform and architecture
+is preferred. When no matching native addon is packaged, the library uses WASM.
+Other runtimes use WASM. If a matching addon is present but fails to load or
+initialize, the factory rejects with that error rather than silently switching
+backends. Native selection MUST NOT require preparing or instantiating WASM. The
+same selection policy applies to input parsing and terminfo parsing.
+
+Each Term owns its renderer state, layout context, capabilities, and buffers.
+Rendering, updating, or collecting one instance MUST NOT affect another
+instance, including instances in separate Node.js workers. Sharing a native
+library MUST NOT introduce shared mutable renderer state or unsynchronized
+layout execution.
+
 ---
 
 ## 5. Contract Layer Boundary
@@ -176,7 +195,7 @@ can depend on.
 This specification **does not** define the following as normative:
 
 - **The internal transfer encoding.** The mechanism by which directives are
-  serialized for the WASM module — its byte format, opcode structure, and field
+  serialized for the C engine — its byte format, opcode structure, and field
   encoding — is an implementation detail. The normative commitment is that the
   transfer happens within a single render transaction; the encoding is described
   in Section 12.1 as current implementation surface.
@@ -213,7 +232,7 @@ It MUST NOT write to stdout, read from stdin, open file descriptors, or interact
 with the terminal device. The renderer produces bytes; the caller writes them.
 
 **INV-2. Single transaction per frame.** Each frame MUST be rendered in a single
-transaction that crosses the TS→WASM boundary once. The caller provides the
+transaction that crosses the TS→engine boundary once. The caller provides the
 complete frame as a directive array and receives ANSI bytes in return.
 
 **INV-3. Frame-snapshot independence.** The renderer MUST NOT require the caller
@@ -235,9 +254,9 @@ function scope.
 
 **INV-7. Separation of concerns.** The rendering concern and the input-parsing
 concern MUST remain independent. Neither MUST depend on the other's state,
-types, or API surface. They MAY share a compiled WASM binary for loading
-efficiency, but this is an implementation convenience, not an architectural
-coupling. Both MAY consume the shared capability layer defined in the
+types, or API surface. They MAY share a compiled binary for loading efficiency,
+but this is an implementation convenience, not an architectural coupling. Both
+MAY consume the shared capability layer defined in the
 [Terminfo Specification](terminfo-spec.md); the renderer reads capabilities and
 the input parser surfaces probe responses as `CapabilityEvent` values, but
 neither observes the other beyond the capability facts it carries.
@@ -263,10 +282,10 @@ The directive array is the sole required input to a render transaction.
 When the caller invokes a render transaction:
 
 1. The renderer accepts the directive array and transfers the frame description
-   into the WASM module.
-2. The WASM module processes the frame: it computes layout, walks render
-   commands, populates the cell buffer, diffs against the previous frame, and
-   writes ANSI bytes for changed cells.
+   into the C engine.
+2. The C engine processes the frame: it computes layout, walks render commands,
+   populates the cell buffer, diffs against the previous frame, and writes ANSI
+   bytes for changed cells.
 3. Control returns to the caller with the ANSI byte output available.
 
 The render transaction is synchronous from the caller's perspective once
@@ -297,9 +316,9 @@ output beyond that point MUST copy it.
 A Term instance is created for specific terminal dimensions. The caller provides
 width and height at creation time.
 
-Creation of a Term is asynchronous because it may involve WASM module
-preparation. A Term instance MAY be used for any number of render transactions.
-The Term retains its cell buffers across frames for diffing purposes.
+Creation of a Term is asynchronous because it may involve backend preparation. A
+Term instance MAY be used for any number of render transactions. The Term
+retains its cell buffers across frames for diffing purposes.
 
 A Term instance's dimensions MAY be changed after creation through the update
 transaction (§7.7). A resized Term remains valid: it continues to accept render
@@ -437,9 +456,10 @@ be a no-op for that step.
 
 **Resize semantics.** A non-no-op resize step:
 
-1. Reallocates renderer state for the new dimensions within the Term's existing
-   WASM instance and linear memory, growing the memory if required. The renderer
-   MUST NOT create a new WASM module or instance.
+1. Reinitializes renderer state for the new dimensions within the Term's
+   existing backend instance, growing its allocation if required. The renderer
+   MUST NOT replace the backend instance. For WASM, it MUST reuse the module
+   instance and linear memory.
 2. Discards all diff state. The next render transaction MUST emit the frame as a
    complete redraw, so that no cell laid out at the previous dimensions can
    linger on screen.
@@ -458,14 +478,17 @@ terminal immediately. An empty array is valid when the update changes no
 rendered state (TINV-5). The caller writes the bytes to its output stream before
 the next render.
 
-**Memory.** WASM linear memory can only grow. An update to smaller dimensions
-retains the high-water-mark allocation; memory is not reclaimed until the Term
-itself is discarded. This is accepted behavior, not a defect.
+**Memory.** A backend MAY retain its high-water-mark allocation after an update
+to smaller dimensions. WASM linear memory can only grow. Native allocations MUST
+be released when their owning instance and any views retaining those allocations
+are no longer reachable.
 
-**Output invalidation.** Growing linear memory detaches existing buffer views.
-Output `Uint8Array`s returned by render transactions prior to a resize update
-MUST NOT be used after it (this strengthens the validity window in §7.3: output
-is valid until the next `render()` **or** `update()` call).
+**Output invalidation.** Growing WASM linear memory detaches existing buffer
+views. Native output views MUST keep their backing allocation alive even when a
+resize replaces the allocation or the Term becomes unreachable. Output
+`Uint8Array`s returned by render transactions prior to a resize update MUST NOT
+be used after it (this strengthens the validity window in §7.3: output is valid
+until the next `render()` **or** `update()` call).
 
 ### 7.8 Capability consumption
 
@@ -820,12 +843,12 @@ A snapshot is semantically equivalent to splicing its source ops into the array
 at the snapshot's position. The renderer MUST produce identical layout and
 output regardless of whether ops are provided directly or via a snapshot.
 
-### 9.2 Transfer to the WASM module
+### 9.2 Transfer to the C engine
 
 As part of the render transaction, the directive array is transferred into a
-form that the WASM module can process. This transfer is handled internally by
-the renderer and is not an operation the caller performs or observes. The
-transfer mechanism is an implementation detail described in Section 12.1.
+form that the C engine can process. This transfer is handled internally by the
+renderer and is not an operation the caller performs or observes. The transfer
+mechanism is an implementation detail described in Section 12.1.
 
 If a frame exceeds transfer-buffer capacity while packing string content, the
 renderer MUST throw a descriptive `RangeError` that identifies the condition as
@@ -884,8 +907,8 @@ _This section is normative._
 The renderer MUST NOT write to any output stream. The renderer MUST NOT read
 from any input stream. The renderer produces bytes; the caller decides when and
 how to write them. This enables the renderer to operate in any environment where
-WebAssembly is available, including browsers, server-side runtimes, and embedded
-contexts.
+a supported backend is available, including browsers through WebAssembly and
+Node.js through a native addon or WebAssembly.
 
 ### 11.2 The renderer does not manage terminal state
 
@@ -1073,8 +1096,8 @@ CSS-like shorthand/longhand fashion before rendering:
   the terminal default remains in effect where no element background applies.
 
 Fallback resolution is performed on the TypeScript side before the frame is
-transferred; the WASM renderer consumes explicit per-side attributes and does
-not implement the public fallback rules.
+transferred; the renderer consumes explicit per-side attributes and does not
+implement the public fallback rules.
 
 **Independent sides and corners.** Each enabled side renders as a straight edge
 (`─` for horizontal sides, `│` for vertical sides). A corner glyph MUST be
@@ -1095,10 +1118,10 @@ corner cells; corner glyph shape selection (including rounded corners via
 
 **Border width and layout interaction.** The renderer automatically reserves
 space for each enabled border side. For each side, the effective padding passed
-to the layout engine is `userPadding + borderWidth`; the WASM renderer applies
-this adjustment when decoding the element declaration. Border glyphs are drawn
-at the same positions as before; the change is purely in how much layout space
-Clay allocates for the element.
+to the layout engine is `userPadding + borderWidth`; the renderer applies this
+adjustment when decoding the element declaration. Border glyphs are drawn at the
+same positions as before; the change is purely in how much layout space Clay
+allocates for the element.
 
 Semantics of the additive rule:
 
@@ -1220,24 +1243,27 @@ _This section is non-normative. These notes describe current implementation
 details that aid understanding but do not define contract. They may change
 without notice._
 
-**WASM module structure.** The renderer is implemented in C and compiled to
-WebAssembly as a single module. The module contains both rendering and
-input-parsing functionality; they share a binary but maintain independent state.
+**Backend structure.** The engine is implemented in C and compiled to a WASM
+module or a Node-API native addon. Rendering and input parsing share a compiled
+binary but maintain independent state.
 
-**WASM loading.** The WASM binary is inlined as a base64-encoded string in a
-generated module and instantiated per Term or Input with fresh memory.
+**WASM loading.** The WASM binary is Brotli-compressed and Z85-encoded in a
+generated module. It is prepared lazily when the WASM backend is selected and
+instantiated per Term or Input with fresh memory.
 
-**Memory layout.** WASM linear memory is initialized with 256 pages (16MB). The
-renderer state struct and the transfer buffer are allocated in WASM linear
-memory. The specific layout is an implementation detail.
+**Native loading.** The Node.js adapter loads a `.node` shared library and owns
+per-instance allocations. Packed directives and raw input bytes cross the
+boundary through byte buffers; native pointers are not exposed to callers. Text
+measurement calls C directly rather than calling back into JavaScript.
 
-**Capability state.** `RuntimeCapabilities` is currently held in TypeScript and
-folded by `update()`; the WASM renderer state carries no capability fields
-because no renderer output depends on them yet (§7.8). When a
-capability-consuming feature lands, the authoritative state is expected to move
-into WASM linear memory alongside the renderer state, so that `render()` reads
-it without per-frame transfer; `term.capabilities` remains a frozen snapshot
-decoded on access.
+**Memory layout.** Renderer state and the transfer buffer occupy backend-owned
+memory. Pointer widths, alignment, allocation sizes, and struct layouts follow
+the target ABI; WASM offsets MUST NOT be treated as native addresses.
+
+**Capability state.** TypeScript folds capability events in `update()`. The
+renderer holds the capability flags it consumes in per-instance C state; those
+flags are updated on capability changes and restored after resize, rather than
+being transferred on every frame.
 
 **Layout engine.** The underlying layout engine is Clay, included as a
 dependency. Clay provides flexbox-like layout computation with support for

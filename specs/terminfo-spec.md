@@ -50,7 +50,7 @@ event stream.
 
 **`Capabilities`.** A plain TypeScript interface holding the static capability
 state of one terminal, resolved at detection time. Frozen after `detectTerminal`
-returns. No WASM backing.
+returns. No backend-owned backing memory.
 
 **`TerminalInfo`.** The value returned by `detectTerminal()`. Carries the frozen
 `Capabilities`, the probe query batch (`probe`), and the raw terminfo
@@ -151,8 +151,8 @@ directions: a probe denial overrides a statically-set capability.
 `detectTerminal()` without touching any stream. The host writes the bytes.
 `detectTerminal()` resolves — never rejects — on timeout, non-TTY streams, a
 missing, oversized, or malformed terminfo file, or abort. Environmental
-conditions degrade to the §7.1 baseline. The only rejection is caller error
-(§10.1).
+conditions degrade to the §7.1 baseline. Rejections are limited to caller error
+(§10.1) and backend loading or initialization failure (§8).
 
 **TINV-5. Immediate update output.** `term.update()` returns a `Uint8Array` of
 bytes to write now. It MUST NOT defer output to the next `render()` call. An
@@ -404,9 +404,16 @@ responses (TINV-3).
 
 _This section is normative._
 
-Parsing is implemented in C and exported from the wasm module. It is internal:
-`detectTerminal()` is the only caller, and nothing below is part of the public
-API.
+Parsing is implemented in C and exposed through WASM or a Node-API addon.
+Node.js prefers a matching packaged addon and uses WASM when none is packaged. A
+matching addon that fails to load or initialize rejects detection. Other
+runtimes use WASM. Native detection does not prepare or instantiate WASM.
+Results own their byte data independently of backend allocations and remain
+valid after parser cleanup. Both backends produce identical capability values,
+probe bytes, and key tables for the same inputs.
+
+The C parsing interface is internal: `detectTerminal()` is the only caller, and
+nothing below is part of the public API.
 
 ```c
 int terminfo_parse(const uint8_t *bytes, int len, struct TermInfo *out);
@@ -515,8 +522,8 @@ type KeyTable = Uint8Array;
 `detectTerminal()`:
 
 1. Rejects with a `RangeError` if `entry` is provided and exceeds
-   `MAX_TERMINFO_ENTRY` bytes. This is the only rejection: it reports invalid
-   caller input, not an environmental condition.
+   `MAX_TERMINFO_ENTRY` bytes. This reports invalid caller input. Backend
+   loading or initialization failures also reject (§8).
 2. Locates and reads the compiled terminfo entry for the terminal (unless raw
    bytes are provided via `entry`), following the ncurses search path:
    `$TERMINFO`, `$HOME/.terminfo`, `$TERMINFO_DIRS` (empty entry = compiled-in
@@ -529,7 +536,8 @@ type KeyTable = Uint8Array;
    `keys`.
 4. Applies environment evidence (§7.2) from the injectable `env`.
 5. Constructs `probe` without performing any IO.
-6. Resolves the `TerminalInfo`. Apart from step 1, it never rejects.
+6. Resolves the `TerminalInfo`. Apart from step 1 and backend loading or
+   initialization failure, it never rejects.
 
 Every environmental dependency is injectable (`env`, `entry`), making the
 function fully testable without a TTY or real terminfo files.
