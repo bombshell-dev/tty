@@ -40,7 +40,7 @@ export const POINTER_UP = 1;
 export const POINTER_DOWN = 2;
 
 export interface Native {
-  memory: WebAssembly.Memory;
+  memory: { readonly buffer: ArrayBufferLike };
   statePtr: number;
   opsBuf: number;
   /**
@@ -77,13 +77,45 @@ export interface Native {
   errorMessage(ct: number, index: number): string;
 }
 
-import { compiled } from "./wasm.ts";
+import { nodeAddon } from "./node-addon.ts";
 
 export async function createTermNative(
   w: number,
   h: number,
   caps: RenderCapabilities,
 ): Promise<Native> {
+  let addon = nodeAddon();
+  if (addon) {
+    let handle = addon.createTerm(w, h);
+    let flags = (caps: RenderCapabilities) =>
+      (caps.syncOutput ? RENDER_CAP_SYNC_OUTPUT : 0) |
+      (caps.pointerShape ? RENDER_CAP_POINTER_SHAPE : 0);
+    addon.caps(handle, flags(caps));
+    return {
+      memory: {
+        get buffer() {
+          return handle.buffer;
+        },
+      },
+      statePtr: 0,
+      get opsBuf() {
+        return handle.transfer;
+      },
+      update: (w, h) => addon.resize(handle, w, h),
+      setCapabilities: (caps) => addon.caps(handle, flags(caps)) !== 0,
+      reduce: (_ct, _buf, len, mode, row, dt, px, py, pointer) =>
+        addon.reduce(handle, len, mode, row, dt, px, py, pointer),
+      output: () => addon.output(handle),
+      length: () => addon.length(handle),
+      animating: () => addon.animating(handle),
+      errorCount: () => addon.errorCount(handle),
+      errorType: (_ct, i) => addon.errorType(handle, i),
+      errorMessage: (_ct, i) => addon.errorMessage(handle, i),
+      getPointerOverIds: () => addon.pointerIds(handle),
+      getElementBounds: (id) => addon.bounds(handle, id),
+    };
+  }
+  let { compiled } = await import("./wasm.ts");
   let memory = new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
 

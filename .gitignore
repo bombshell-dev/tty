@@ -3,3 +3,5 @@
 /wasm.ts
 /build/
 /node_modules/
+
+/native/

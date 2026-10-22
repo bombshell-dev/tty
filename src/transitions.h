@@ -2,7 +2,7 @@
 #define CLAYTERM_TRANSITIONS_H
 
 #include <stdbool.h>
-#include "../clay/clay.h"
+#include "clay.h"
 
 #define CT_EASING_LINEAR 0
 #define CT_EASING_EASE_IN 1

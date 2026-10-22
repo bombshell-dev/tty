@@ -1,6 +1,6 @@
-/* module.c — single compilation unit for clayterm WASM module */
+/* module.c — single compilation unit for the C engine */
 
-#include "../clay/clay.h"
+#include "clay.h"
 
 #include "mem.c"
 #include "terminfo.c"

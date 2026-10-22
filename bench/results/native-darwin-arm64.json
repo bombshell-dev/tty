@@ -1,0 +1,116 @@
+{
+  "date": "2026-10-22T22:49:09.001Z",
+  "node": "v26.5.1",
+  "platform": "darwin",
+  "arch": "arm64",
+  "cpu": "Apple M1 Max",
+  "nativeBuild": {
+    "compiler": "Homebrew clang version 20.1.7",
+    "flags": [
+      "-std=c11",
+      "-O2",
+      "-fPIC",
+      "-fvisibility=hidden",
+      "-shared",
+      "-DCLAY_IMPLEMENTATION",
+      "-DCLAY_DEBUG_MODE_ENABLED=0",
+      "-DNAPI_VERSION=8",
+      "-I/opt/homebrew/Cellar/node/26.5.1/include/node",
+      "-Ibuild/native-clay",
+      "-Isrc",
+      "-I.",
+      "src/node.c",
+      "-o",
+      "native/tty-darwin-arm64.node",
+      "-undefined",
+      "dynamic_lookup"
+    ],
+    "target": {
+      "execPath": "/opt/homebrew/Cellar/node/26.5.1/bin/node",
+      "platform": "darwin",
+      "arch": "arm64"
+    }
+  },
+  "inputCorpusBytes": 48000,
+  "throughputUs": {
+    "wasm": {
+      "mixedRender": 33.39634266666667,
+      "steadyDiff": 30.212458199999947,
+      "inputCorpus": 1670.8449111111097
+    },
+    "native": {
+      "mixedRender": 26.340029043478253,
+      "steadyDiff": 26.477101565217353,
+      "inputCorpus": 1681.3273111111102
+    }
+  },
+  "startupMs": {
+    "createTerm": {
+      "wasm": {
+        "moduleMs": 25.953958999999998,
+        "processMs": 100.11466699999801
+      },
+      "native": {
+        "moduleMs": 22.732124999999996,
+        "processMs": 100.05950000000303
+      }
+    },
+    "createInput": {
+      "wasm": {
+        "moduleMs": 26.13754099999999,
+        "processMs": 101.25383299999885
+      },
+      "native": {
+        "moduleMs": 22.614333000000002,
+        "processMs": 100.41666699999769
+      }
+    },
+    "firstRender": {
+      "wasm": {
+        "moduleMs": 28.475874999999995,
+        "processMs": 100.53512499999488
+      },
+      "native": {
+        "moduleMs": 22.836707999999994,
+        "processMs": 100.23500000000058
+      }
+    }
+  },
+  "runs": {
+    "wasm": [
+      {
+        "mixedRender": 33.10799136842103,
+        "steadyDiff": 30.48475840000001,
+        "inputCorpus": 1667.2384333333312
+      },
+      {
+        "mixedRender": 38.37136450000003,
+        "steadyDiff": 30.086016799999925,
+        "inputCorpus": 1670.8449111111097
+      },
+      {
+        "mixedRender": 33.39634266666667,
+        "steadyDiff": 30.212458199999947,
+        "inputCorpus": 1701.5585168539292
+      }
+    ],
+    "native": [
+      {
+        "mixedRender": 27.1918116521739,
+        "steadyDiff": 26.717739130434772,
+        "inputCorpus": 1680.124077777782
+      },
+      {
+        "mixedRender": 26.311413043478247,
+        "steadyDiff": 26.432021739130423,
+        "inputCorpus": 1759.1124069767407
+      },
+      {
+        "mixedRender": 26.340029043478253,
+        "steadyDiff": 26.477101565217353,
+        "inputCorpus": 1681.3273111111102
+      }
+    ]
+  },
+  "methodology": "O2 builds; identical API workloads; 3 alternating processes/backend; 300ms warmup and 7x150ms samples/workload/process; startup 20 fresh processes/backend after 3 warmups; medians; startup module time includes import"
+}

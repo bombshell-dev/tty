@@ -12,7 +12,7 @@ for decoding raw terminal byte sequences into structured events.
 
 Input parsing is architecturally independent from rendering (see
 [Renderer Specification](renderer-spec.md), INV-7). The two concerns share a
-compiled WASM binary for loading efficiency, but neither depends on the other's
+compiled binary for loading efficiency, but neither depends on the other's
 state, types, or API surface. Both consume the shared capability layer defined
 in the [Terminfo Specification](terminfo-spec.md); the input parser is
 additionally that layer's runtime write path (see Section 6).
@@ -47,7 +47,7 @@ guide future stabilization.
 
 ## 3. Terminology
 
-**Input parser.** A WASM-backed instance that accepts raw terminal bytes and
+**Input parser.** A C-engine-backed instance that accepts raw terminal bytes and
 produces structured events. Each parser maintains its own internal state for
 multi-byte sequence buffering and ESC timeout tracking.
 
@@ -68,8 +68,15 @@ event. Discriminated on a `type` field.
 createInput(options?): Promise<Input>
 ```
 
-Creates an input parser instance. The returned promise resolves when the WASM
-module is ready.
+Creates an input parser instance. The returned promise resolves when its backend
+is ready. Node.js prefers a matching packaged Node-API addon, falling back to
+WASM only when no matching addon is packaged. A matching addon that fails to
+load or initialize rejects creation. Other runtimes use WASM. Selecting the
+native backend does not prepare or instantiate WASM.
+
+Each parser owns its state and buffers. Separate parsers, including parsers in
+separate Node.js workers, MUST remain isolated. Backend selection does not
+change scan results, timeout behavior, or terminfo integration.
 
 Options:
 

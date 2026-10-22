@@ -176,7 +176,7 @@ export function readEvent(view: DataView, ptr: number): NativeInputEvent {
 }
 
 export interface InputNative {
-  memory: WebAssembly.Memory;
+  memory: { readonly buffer: ArrayBufferLike };
   state: number;
   buffer: number;
   scan(st: number, buf: number, len: number, now: number): number;
@@ -193,13 +193,36 @@ function align8(n: number): number {
   return (n + 7) & ~7;
 }
 
-import { compiled } from "./wasm.ts";
+import { nodeAddon } from "./node-addon.ts";
 
 export async function createInputNative(
   escLatency: number,
   keys?: Uint8Array,
   initialColors?: number,
 ): Promise<InputNative> {
+  let addon = nodeAddon();
+  if (addon) {
+    let handle = addon.createInput(
+      escLatency,
+      initialColors ?? 256,
+      keys ?? new Uint8Array(),
+    );
+    let metadata = new DataView(handle.buffer);
+    return {
+      memory: {
+        get buffer() {
+          return handle.buffer;
+        },
+      },
+      state: 0,
+      buffer: handle.transfer,
+      scan: (_st, _buf, len, now) => addon.scan(handle, len, now),
+      count: () => metadata.getInt32(0, true),
+      event: (_st, i) => metadata.getInt32(4, true) + i * handle.eventSize,
+      delay: () => metadata.getInt32(8, true),
+    };
+  }
+  let { compiled } = await import("./wasm.ts");
   let memory = new WebAssembly.Memory({ initial: 4 });
 
   let instance = await WebAssembly.instantiate(compiled, {

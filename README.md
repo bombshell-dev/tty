@@ -17,9 +17,47 @@ bytes and get bytes back. This makes it trivially embeddable in any framework,
 any runtime, any event loop. There are no opinions about how you do I/O, just
 pure computation.
 
-**Runs everywhere** — The entire engine is compiled to WebAssembly, so
-`@bomb.sh/tty` will run anywhere JavaScript runs with no native dependencies,
-and no build step for consumers.
+**Portable engine** — WebAssembly provides a portable backend without native
+dependencies. Node.js uses a matching packaged `.node` addon when available,
+with the same TypeScript API. When no matching addon is packaged, it uses
+WebAssembly.
+
+### Local native build and benchmarks
+
+Initialize the pinned Clay dependency, then build both backends:
+
+```sh
+git submodule update --init --recursive
+make
+make native
+node bench/native.bench.ts
+```
+
+The Wasm build requires Clang with a wasm32 target and `wasm-ld`. The native
+build supports macOS and Linux and requires a C11 compiler, Deno, Node.js, and
+Node development headers. Set `NODE_INCLUDE_DIR` if `node_api.h` is not in
+`../include/node` relative to the Node executable; `CC` selects the compiler.
+
+`make native` writes a platform-specific addon to `native/`. Node.js selects
+that addon automatically; Deno and Bun use Wasm. A present addon that fails to
+load reports the error. `deno task build:npm <version>` includes the locally
+built addon in the npm artifact. Builds for other platforms require their own
+native artifacts; cross-platform binary distribution is not automated.
+
+The benchmark uses isolated copies of the same TypeScript code, with an addon
+present only in the native copy. It measures the rendering workloads from
+`bench/render.bench.ts`, mixed input throughput, and startup in fresh Node
+processes. Raw results and methodology are written to
+`build/native-benchmark.json`.
+
+Run the existing suite in Wasm and native Node.js, plus native renderer lifetime
+and worker checks:
+
+```sh
+deno task test
+deno run -A tasks/build-npm.ts 0.0.0-test --test
+node --expose-gc --test test/native-renderer.node.ts
+```
 
 ### Examples
 
@@ -49,15 +87,15 @@ it converts a stream of raw bytes into structured events.
 ### Output
 
 With every frame, the entire UI tree is packed into a flat byte array and sent
-to WASM in a single call. On the C side, Clay runs layout, render commands are
-walked into a cell buffer, and the buffer is diffed against the previous frame.
-Only the cells that actually changed produce output. The result is an ANSI
-escape sequence that can be written directly to stdout. One trip to WASM per
-frame, double buffered, and only the bytes that need to change hit the output
-stream.
+to the C engine in a single call. On the C side, Clay runs layout, render
+commands are walked into a cell buffer, and the buffer is diffed against the
+previous frame. Only the cells that actually changed produce output. The result
+is an ANSI escape sequence that can be written directly to stdout. One engine
+render call per frame, double buffered, and only the bytes that need to change
+hit the output stream.
 
-Because the WASM module is pure computation with no I/O, it runs anywhere
-WebAssembly does: Deno, Node, Bun, browsers, or any other runtime.
+The engine performs pure computation with no terminal I/O. Its Wasm backend runs
+in Deno, Node, Bun, browsers, or any other runtime.
 
 ```
  TypeScript                        WASM (C)
@@ -77,10 +115,10 @@ WebAssembly does: Deno, Node, Bun, browsers, or any other runtime.
 
 ### Input
 
-Raw bytes from stdin are fed into a WASM-based parser that recognizes VT/ANSI
-escape sequences, UTF-8 codepoints, and mouse protocols (VT200, SGR, urxvt). The
-parser maintains its own internal buffer so partial sequences that arrive across
-read boundaries are reassembled automatically. A lone ESC byte is held for a
+Raw bytes from stdin are fed into a C parser that recognizes VT/ANSI escape
+sequences, UTF-8 codepoints, and mouse protocols (VT200, SGR, urxvt). The parser
+maintains its own internal buffer so partial sequences that arrive across read
+boundaries are reassembled automatically. A lone ESC byte is held for a
 configurable latency window (default 25ms) before being emitted, giving
 multi-byte sequences time to arrive.
 

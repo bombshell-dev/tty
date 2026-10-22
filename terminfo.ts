@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 
-import { compiled } from "./wasm.ts";
+import { nodeAddon } from "./node-addon.ts";
 import { offsets, struct, uint32 } from "./typedef.ts";
 
 export const MAX_TERMINFO_ENTRY = 32768;
@@ -140,8 +140,8 @@ function rgbOf(packed: number): Rgb {
 /**
  * Detect the terminal's capabilities from the compiled terminfo entry and
  * process environment. Pure: performs no IO beyond reading the terminfo file.
- * Rejects only when `entry` exceeds MAX_TERMINFO_ENTRY (caller error);
- * environmental failures resolve to the baseline. See specs/terminfo-spec.md.
+ * Oversized caller entries and backend initialization failures reject;
+ * environmental detection failures resolve to the baseline. See specs/terminfo-spec.md.
  */
 export async function detectTerminal(
   options: DetectOptions = {},
@@ -159,66 +159,27 @@ export async function detectTerminal(
     bytes = await loadTerminfo({ term: options.term, env });
   }
 
-  let memory = new WebAssembly.Memory({ initial: 2 });
-  let instance = await WebAssembly.instantiate(compiled, {
-    env: { memory },
-    clay: {
-      measureTextFunction() {},
-      queryScrollOffsetFunction(ret: number) {
-        let v = new DataView(memory.buffer);
-        v.setFloat32(ret, 0, true);
-        v.setFloat32(ret + 4, 0, true);
-      },
-    },
-  });
-
-  let exports = instance.exports as unknown as {
-    __heap_base: WebAssembly.Global;
-    terminfo_size(): number;
-    terminfo_init(mem: number): number;
-    terminfo_parse(bytes: number, len: number, ti: number): number;
-    terminfo_grant(ti: number, flags: number): void;
-  };
-
-  let top = ((exports.__heap_base.value as number) + 7) & ~7;
-  function alloc(size: number): number {
-    let ptr = top;
-    top += (size + 7) & ~7;
-    let pages = Math.ceil(top / WASM_PAGE_BYTES);
-    let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
-    if (pages > current) memory.grow(pages - current);
-    return ptr;
+  let addon = nodeAddon();
+  let parsed;
+  if (addon) {
+    let [status, colors, flags] = addon.terminfo(bytes ?? new Uint8Array());
+    parsed = {
+      colors,
+      flags,
+      keys: status === 0 ? bytes!.slice() : new Uint8Array(),
+    };
+  } else {
+    parsed = await parseWasm(bytes);
   }
-
-  let structPtr = alloc(exports.terminfo_size());
-  exports.terminfo_init(structPtr);
-
-  let keys: KeyTable = new Uint8Array(0);
-  if (bytes) {
-    let bytesPtr = alloc(MAX_TERMINFO_ENTRY);
-    new Uint8Array(memory.buffer).set(bytes, bytesPtr);
-    if (exports.terminfo_parse(bytesPtr, bytes.byteLength, structPtr) === 0) {
-      keys = bytes.slice();
-    }
+  let { colors, keys } = parsed;
+  let flags = parsed.flags;
+  if (env.COLORTERM === "truecolor" || env.COLORTERM === "24bit") {
+    flags |= FLAG_TRUECOLOR;
   }
-
-  let colorterm = env.COLORTERM;
-  if (colorterm === "truecolor" || colorterm === "24bit") {
-    exports.terminfo_grant(structPtr, FLAG_TRUECOLOR);
-  }
-
-  /* Environment evidence (terminfo-spec §7.2): a running tmux consumes
-   * DEC mode 2026 from applications inside it, so its presence is
-   * positive sync-output evidence even for tmux releases that do not
-   * answer the DECRPM probe. */
-  if (env.TMUX) {
-    exports.terminfo_grant(structPtr, FLAG_SYNC);
-  }
-
-  let view = new DataView(memory.buffer);
-  let flags = view.getUint32(structPtr + TI.flags, true);
+  // A running tmux is positive synchronized-output evidence (§7.2).
+  if (env.TMUX) flags |= FLAG_SYNC;
   let capabilities: Capabilities = Object.freeze({
-    colors: view.getUint32(structPtr + TI.colors, true),
+    colors,
     trueColor: !!(flags & FLAG_TRUECOLOR),
     bce: !!(flags & FLAG_BACK_COLOR_ERASE),
     autoMargin: !!(flags & FLAG_AUTO_RIGHT_MARGIN),
@@ -325,3 +286,58 @@ async function loadTerminfo(
 
 /* Re-export Rgb helper for consumers that need it. */
 export { rgbOf };
+
+async function parseWasm(
+  bytes?: Uint8Array,
+): Promise<{ colors: number; flags: number; keys: KeyTable }> {
+  let { compiled } = await import("./wasm.ts");
+  let memory = new WebAssembly.Memory({ initial: 2 });
+  let instance = await WebAssembly.instantiate(compiled, {
+    env: { memory },
+    clay: {
+      measureTextFunction() {},
+      queryScrollOffsetFunction(ret: number) {
+        let v = new DataView(memory.buffer);
+        v.setFloat32(ret, 0, true);
+        v.setFloat32(ret + 4, 0, true);
+      },
+    },
+  });
+
+  let exports = instance.exports as unknown as {
+    __heap_base: WebAssembly.Global;
+    terminfo_size(): number;
+    terminfo_init(mem: number): number;
+    terminfo_parse(bytes: number, len: number, ti: number): number;
+    terminfo_grant(ti: number, flags: number): void;
+  };
+
+  let top = ((exports.__heap_base.value as number) + 7) & ~7;
+  function alloc(size: number): number {
+    let ptr = top;
+    top += (size + 7) & ~7;
+    let pages = Math.ceil(top / WASM_PAGE_BYTES);
+    let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
+    if (pages > current) memory.grow(pages - current);
+    return ptr;
+  }
+
+  let structPtr = alloc(exports.terminfo_size());
+  exports.terminfo_init(structPtr);
+
+  let keys: KeyTable = new Uint8Array(0);
+  if (bytes) {
+    let bytesPtr = alloc(MAX_TERMINFO_ENTRY);
+    new Uint8Array(memory.buffer).set(bytes, bytesPtr);
+    if (exports.terminfo_parse(bytesPtr, bytes.byteLength, structPtr) === 0) {
+      keys = bytes.slice();
+    }
+  }
+
+  let view = new DataView(memory.buffer);
+  return {
+    colors: view.getUint32(structPtr + TI.colors, true),
+    flags: view.getUint32(structPtr + TI.flags, true),
+    keys,
+  };
+}

@@ -8,7 +8,7 @@ CFLAGS = --target=wasm32 -nostdlib -O2 \
          -mbulk-memory \
          -DCLAY_IMPLEMENTATION -DCLAY_WASM \
          -DCLAY_DEBUG_MODE_ENABLED=0 \
-         -Isrc -I.
+         -Isrc -Ibuild/clay -I.
 
 EXPORTS = \
   -Wl,--export=__heap_base \
@@ -58,23 +58,23 @@ all: $(TARGET) wasm.ts
 
 DEPS = $(wildcard src/*.c src/*.h)
 
-# Apply every patch in patches/ to the clay submodule before compiling. clay.h
-# is reset to pristine first, so the applied set always matches patches/*.patch
-# exactly (idempotent, applied in sorted order). Reverted by `make clean`.
-# Opt-outs like CLAY_DEBUG_MODE_ENABLED=0 are selected via CFLAGS above.
-# Drop individual patches as their changes ship in upstream clay.
-$(TARGET): $(DEPS) $(CLAY_PATCHES)
-	@git -C clay checkout -- clay.h
-	@for p in $(CLAY_PATCHES); do \
-	  git -C clay apply ../$$p || { echo "ERROR: failed to apply $$p to clay/clay.h" >&2; exit 1; }; \
-	done
+# Patch a generated copy; never reset or edit the upstream submodule checkout.
+build/clay/clay.h: clay/clay.h $(CLAY_PATCHES)
+	@mkdir -p build/clay
+	git -C clay show HEAD:clay.h > $@
+	@for p in $(CLAY_PATCHES); do patch -s -d build/clay -p1 < $$p || exit 1; done
+
+$(TARGET): $(DEPS) build/clay/clay.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC)
+
+native: build/clay/clay.h
+	deno run --allow-read --allow-write --allow-env --allow-run tasks/build-native.ts
 
 wasm.ts: $(TARGET)
 	deno run --allow-read --allow-write tasks/bundle-wasm.ts
 
 clean:
 	rm -f $(TARGET) wasm.ts
-	-git -C clay checkout -- clay.h
+	rm -rf build/clay build/native-clay native
 
-.PHONY: all clean
+.PHONY: all clean native

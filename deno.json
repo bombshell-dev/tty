@@ -2,7 +2,7 @@
   "name": "@bomb.sh/tty",
   "license": "MIT",
   "tasks": {
-    "test": "deno test --allow-read --allow-write",
+    "test": "deno test --allow-read --allow-write test",
     "fmt": "deno fmt && clang-format -i src/*.c src/*.h",
     "fmt:check": "deno fmt --check && clang-format --dry-run --Werror src/*.c src/*.h",
     "build:npm": "deno run -A tasks/build-npm.ts",
