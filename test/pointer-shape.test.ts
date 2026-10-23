@@ -155,6 +155,15 @@ describe("pointer shape", () => {
       ]);
     });
 
+    it("takes the shape of the element that owns a cell on a shared edge", () => {
+      expect(sequences(term.render(layout(), over(10, 0)).output)).toEqual([
+        osc22("pointer"),
+      ]);
+      expect(sequences(term.render(layout(), over(20, 2)).output)).toEqual([
+        osc22("default"),
+      ]);
+    });
+
     it("follows a declared shape that changes under a still pointer", () => {
       term.render(layout(), LINK);
       expect(
