@@ -24,7 +24,7 @@ export interface Transition {
   interactive?: boolean;
 }
 
-/* Command buffer opcodes — mirrors ops.h */
+/* Command buffer opcodes — mirrors src/clayterm.h. */
 const OP_OPEN_ELEMENT = 0x02;
 const OP_TEXT = 0x03;
 const OP_CLOSE_ELEMENT = 0x04;

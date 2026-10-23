@@ -28,23 +28,6 @@
  * handler can resolve its Term from args directly and this can go away. */
 struct Clayterm *ct_active_context = NULL;
 
-/* ── Command buffer protocol ──────────────────────────────────────── */
-
-#define OP_BEGIN_LAYOUT 0x01
-#define OP_OPEN_ELEMENT 0x02
-#define OP_TEXT 0x03
-#define OP_CLOSE_ELEMENT 0x04
-#define OP_END_LAYOUT 0x05
-
-#define PROP_LAYOUT 0x01
-#define PROP_BG_COLOR 0x02
-#define PROP_CORNER_RADIUS 0x04
-#define PROP_BORDER 0x08
-#define PROP_CLIP 0x10
-#define PROP_FLOATING 0x20
-#define PROP_TRANSITION 0x40
-#define PROP_CURSOR 0x80
-
 /* ── Instance state ───────────────────────────────────────────────── */
 
 #define MAX_ERRORS 32
@@ -117,9 +100,6 @@ struct Clayterm {
 
 /* Memory layout inside the arena provided by the host:
  *   [Clayterm struct] [front cells] [back cells] [output buffer]
- *
- * Output buffer is sized at 64 bytes per cell — enough for worst-case
- * full-screen redraws with truecolor SGR sequences on every cell.
  */
 /* 128 bytes per cell: ~84 bytes worst-case for CUP + SGR sequences, plus up
  * to 4 (base SMP char) + 8×4 (combining marks) = 36 bytes of cluster text. */
@@ -772,6 +752,7 @@ struct Clayterm *init(void *mem, int w, int h) {
   cells_fill(ct->back, w, h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);
 
   // initialize front buffer with zeros. Every cell will be
+  // redrawn on the first render.
   cells_fill(ct->front, w, h, 0, 0, 0);
   return ct;
 }
@@ -815,7 +796,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
     uint32_t op = rd(buf, len, &i);
 
     switch (op) {
-    case OP_OPEN_ELEMENT: {
+    case CLAYTERM_OP_OPEN_ELEMENT: {
       /* read id string */
       uint32_t id_len = rd(buf, len, &i);
       int id_words = (id_len + 3) / 4;
@@ -834,7 +815,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       uint32_t mask = rd(buf, len, &i);
       Clay_ElementDeclaration decl = {0};
 
-      if (mask & PROP_LAYOUT) {
+      if (mask & CLAYTERM_PROP_LAYOUT) {
         decl.layout.sizing.width = decode_axis(buf, len, &i);
         decl.layout.sizing.height = decode_axis(buf, len, &i);
 
@@ -853,11 +834,11 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
         decl.layout.childAlignment.y = (al >> 8) & 0xff;
       }
 
-      if (mask & PROP_BG_COLOR) {
+      if (mask & CLAYTERM_PROP_BG_COLOR) {
         decl.backgroundColor = unpack_color(rd(buf, len, &i));
       }
 
-      if (mask & PROP_CORNER_RADIUS) {
+      if (mask & CLAYTERM_PROP_CORNER_RADIUS) {
         uint32_t cr = rd(buf, len, &i);
         decl.cornerRadius.topLeft = (float)(cr & 0xff);
         decl.cornerRadius.topRight = (float)((cr >> 8) & 0xff);
@@ -865,7 +846,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
         decl.cornerRadius.bottomRight = (float)((cr >> 24) & 0xff);
       }
 
-      if (mask & PROP_BORDER) {
+      if (mask & CLAYTERM_PROP_BORDER) {
         uint32_t bw = rd(buf, len, &i);
         decl.border.width.left = bw & 0xff;
         decl.border.width.right = (bw >> 8) & 0xff;
@@ -887,13 +868,13 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
         i += 8;
       }
 
-      if (mask & PROP_CLIP) {
+      if (mask & CLAYTERM_PROP_CLIP) {
         uint32_t cl = rd(buf, len, &i);
         decl.clip.horizontal = cl & 0xff;
         decl.clip.vertical = (cl >> 8) & 0xff;
       }
 
-      if (mask & PROP_FLOATING) {
+      if (mask & CLAYTERM_PROP_FLOATING) {
         decl.floating.offset.x = rdf(buf, len, &i);
         decl.floating.offset.y = rdf(buf, len, &i);
         decl.floating.expand.width = rdf(buf, len, &i);
@@ -911,7 +892,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
         decl.floating.zIndex = (int16_t)(fd >> 8);
       }
 
-      if (mask & PROP_TRANSITION) {
+      if (mask & CLAYTERM_PROP_TRANSITION) {
         float duration = rdf(buf, len, &i);
         uint32_t props_and_flags = rd(buf, len, &i);
         uint16_t props = props_and_flags & 0xFFFF;
@@ -928,7 +909,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       }
 
       uint32_t cursor = POINTER_SHAPE_COUNT;
-      if (mask & PROP_CURSOR)
+      if (mask & CLAYTERM_PROP_CURSOR)
         cursor = rd(buf, len, &i);
 
       Clay__ConfigureOpenElement(decl);
@@ -938,7 +919,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       break;
     }
 
-    case OP_TEXT: {
+    case CLAYTERM_OP_TEXT: {
       uint32_t col = rd(buf, len, &i);
       uint32_t bg = rd(buf, len, &i);
       uint32_t cfg = rd(buf, len, &i);
@@ -987,7 +968,7 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
       break;
     }
 
-    case OP_CLOSE_ELEMENT:
+    case CLAYTERM_OP_CLOSE_ELEMENT:
       Clay__CloseElement();
       break;
 
