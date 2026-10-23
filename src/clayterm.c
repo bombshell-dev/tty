@@ -1,14 +1,15 @@
 /* clayterm.c — WASM terminal rendering engine for Clay UI
  *
  * Public API (exported to WASM):
- *   clayterm_size  — compute arena size for given dimensions
- *   init           — initialize a Clayterm instance in provided memory
- *   reduce         — decode command buffer, run Clay layout, render to ANSI
- *   output         — pointer to output byte buffer
- *   length         — length of output byte buffer
- *   measure        — Clay text measurement callback
+ *   clayterm_size   — compute arena size for given dimensions
+ *   clayterm_init   — initialize a Clayterm instance in provided memory
+ *   clayterm_resize — rebuild dimension-dependent storage in place
+ *   reduce          — decode command buffer, run Clay layout, render to ANSI
+ *   output          — pointer to output byte buffer
+ *   length          — length of output byte buffer
+ *   measure         — Clay text measurement callback
  *   error_count, error_type, error_message_length, error_message_ptr
- *                  — per-render Clay error accessors
+ *                   — per-render Clay error accessors
  */
 
 #include "clayterm.h"
@@ -71,8 +72,8 @@ struct Clayterm {
   Clay_ErrorData errors[MAX_ERRORS];
   int error_count;
   int animating_count;
-  /* CAP_* bits pushed by the host via set_capabilities(); init() zeroes
-   * them, so the host re-pushes after every re-init */
+  /* RENDER_CAP_* bits pushed by the host via set_capabilities(), retained
+   * across resize updates. */
   uint32_t caps;
   /* Pointer shape (renderer-spec 7.10): hover_shape is what this frame's
    * hit test resolved, pointer_shape is what was last emitted. Both index
@@ -647,8 +648,8 @@ static int align64(int n) { return (n + 63) & ~63; }
  * with the grid instead of shipping Clay's fixed 8192-element default. 2x cells
  * bounds sane trees (leaves >= 1 cell, branching >= 2); the ceiling preserves
  * today's capacity for large grids, the floor keeps headroom on tiny ones.
- * Must run before Clay_MinMemorySize in both clayterm_size and init so the
- * size the host queries always matches the arena init consumes. */
+ * Must run before Clay_MinMemorySize in both clayterm_size and
+ * clayterm_resize so the queried size matches the arena setup. */
 static void set_clay_capacity(int w, int h) {
   int elems = w * h * 2;
   if (elems < 2048)
@@ -720,33 +721,48 @@ int error_message_ptr(struct Clayterm *ct, int index) {
   return (int)ct->errors[index].errorText.chars;
 }
 
-struct Clayterm *init(void *mem, int w, int h) {
-  set_clay_capacity(w, h);
+struct Clayterm *clayterm_init(void *mem, int w, int h) {
   struct Clayterm *ct = (struct Clayterm *)mem;
+  *ct = (struct Clayterm){0};
+  clayterm_resize(ct, w, h);
+  return ct;
+}
+
+/* Rebuild viewport storage without resetting instance state such as
+ * capabilities and the emitted pointer shape. */
+void clayterm_resize(struct Clayterm *ct, int w, int h) {
+  set_clay_capacity(w, h);
   int cell_count = w * h;
   int cell_bytes = align8(cell_count * (int)sizeof(Cell));
   int out_bytes = align8(cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD);
-  char *base = (char *)mem + align8((int)sizeof(struct Clayterm));
+  char *base = (char *)ct + align8((int)sizeof(struct Clayterm));
+
+  ct->w = w;
+  ct->h = h;
+  ct->front = (Cell *)base;
+  ct->back = (Cell *)(base + cell_bytes);
+  ct->out = (Buffer){base + cell_bytes * 2, 0,
+                     cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD};
+  ct->lastfg = 0xffffffff;
+  ct->lastbg = 0xffffffff;
+  ct->lastx = -1;
+  ct->lasty = -1;
+
+  /* Discard results from the old layout. Traversal scratch is reset by
+   * reduce() before use; the caret text pointer may refer to reused storage. */
+  ct->error_count = 0;
+  ct->animating_count = 0;
+  ct->caret_text_chars = NULL;
+  ct->had_caret_last_frame = 0;
 
   char *clay_mem = base + cell_bytes * 2 + out_bytes;
   int clay_bytes = align64((int)Clay_MinMemorySize());
   Clay_Arena arena =
       Clay_CreateArenaWithCapacityAndMemory(clay_bytes, clay_mem);
+  /* Clay reads its previous context during initialization. Fill cells only
+   * afterward: the resized cell buffers may overlap that old context. */
   Clay_Initialize(arena, (Clay_Dimensions){(float)w, (float)h},
                   (Clay_ErrorHandler){clay_error, ct});
-
-  *ct = (struct Clayterm){
-      .w = w,
-      .h = h,
-      .front = (Cell *)base,
-      .back = (Cell *)(base + cell_bytes),
-      .out = {base + cell_bytes * 2, 0,
-              cell_count * OUT_BYTES_PER_CELL + OUT_FRAME_OVERHEAD},
-      .lastfg = 0xffffffff,
-      .lastbg = 0xffffffff,
-      .lastx = -1,
-      .lasty = -1,
-  };
 
   // initialize back buffer with spaces and default fg/bg
   cells_fill(ct->back, w, h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);
@@ -754,7 +770,6 @@ struct Clayterm *init(void *mem, int w, int h) {
   // initialize front buffer with zeros. Every cell will be
   // redrawn on the first render.
   cells_fill(ct->front, w, h, 0, 0, 0);
-  return ct;
 }
 
 int set_capabilities(struct Clayterm *ct, uint32_t caps) {
@@ -765,12 +780,6 @@ int set_capabilities(struct Clayterm *ct, uint32_t caps) {
     ct->pointer_shape = 0;
   ct->caps = caps;
   return restore;
-}
-
-int pointer_shape(struct Clayterm *ct) { return ct->pointer_shape; }
-
-void set_pointer_shape(struct Clayterm *ct, int shape) {
-  ct->pointer_shape = shape;
 }
 
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
