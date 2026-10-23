@@ -217,14 +217,11 @@ export async function createTermNative(
       return ids;
     },
     getElementBounds(id: string): BoundingBox | undefined {
-      let enc = new TextEncoder();
-      let bytes = enc.encode(id);
+      let bytes = new TextEncoder().encode(id);
       new Uint8Array(memory.buffer).set(bytes, opsBuf);
       let out = opsBuf + 256;
       let found = ct.get_element_bounds(opsBuf, bytes.length, out);
-      if (!found) {
-        return undefined;
-      }
+      if (!found) return undefined;
       let view = new DataView(memory.buffer);
       return {
         x: view.getFloat32(out + BOUNDING_BOX.x, true),
