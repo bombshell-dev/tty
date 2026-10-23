@@ -48,7 +48,3 @@ const INDEX: ReadonlyMap<unknown, number> = new Map(
 export function pointerShapeIndex(shape: unknown): number | undefined {
   return INDEX.get(shape);
 }
-
-export const POINTER_SHAPE_RESET: Uint8Array = new TextEncoder().encode(
-  "\x1b]22;default\x1b\\",
-);

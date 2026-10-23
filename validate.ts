@@ -242,7 +242,7 @@ export function validated(term: Term): Term {
       return term.render(ops, options);
     },
     update(events) {
-      return term.update(events);
+      term.update(events);
     },
   };
 }

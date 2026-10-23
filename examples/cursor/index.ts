@@ -115,7 +115,7 @@ await main(function* () {
       break;
     }
     if (event.type === "capability") {
-      writeStdout(term.update([event]));
+      term.update([event]);
     }
     if (event.type === "pointerenter") {
       ctx.entered.add(event.id);
