@@ -1198,6 +1198,10 @@ events as part of the render result:
 - `pointerclick` — a pointer-up occurred over an element that was also under the
   pointer at pointer-down
 
+Pointer coordinates are cell coordinates. The pointer is over an element when
+its cell lies inside the element's bounding box, so a cell on an edge two
+elements share belongs only to the element that draws it.
+
 This surface is functional but should not be treated as stable contract. The
 calling convention was discovered through iteration, the event model has
 acknowledged gaps, and the approach may evolve.
