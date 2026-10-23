@@ -748,8 +748,11 @@ struct Clayterm *init(void *mem, int w, int h) {
       .lasty = -1,
   };
 
+  // initialize back buffer with spaces and default fg/bg
   cells_fill(ct->back, w, h, ' ', ATTR_DEFAULT, ATTR_DEFAULT);
 
+  // initialize front buffer with zeros. Every cell will be
+  // redrawn on the first render.
   cells_fill(ct->front, w, h, 0, 0, 0);
   return ct;
 }
