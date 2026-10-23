@@ -13,6 +13,19 @@ struct Clayterm;
 #define RENDER_CAP_SYNC_OUTPUT (1u << 0)
 #define RENDER_CAP_POINTER_SHAPE (1u << 1)
 
+/* Packed directives and their property-group masks. */
+#define CLAYTERM_OP_OPEN_ELEMENT 0x02
+#define CLAYTERM_OP_TEXT 0x03
+#define CLAYTERM_OP_CLOSE_ELEMENT 0x04
+#define CLAYTERM_PROP_LAYOUT 0x01
+#define CLAYTERM_PROP_BG_COLOR 0x02
+#define CLAYTERM_PROP_CORNER_RADIUS 0x04
+#define CLAYTERM_PROP_BORDER 0x08
+#define CLAYTERM_PROP_CLIP 0x10
+#define CLAYTERM_PROP_FLOATING 0x20
+#define CLAYTERM_PROP_TRANSITION 0x40
+#define CLAYTERM_PROP_CURSOR 0x80
+
 /* WASM exports */
 int clayterm_size(int w, int h);
 struct Clayterm *init(void *mem, int w, int h);
