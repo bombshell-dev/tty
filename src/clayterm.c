@@ -980,10 +980,12 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   Clay_RenderCommandArray cmds = Clay_EndLayout(deltaTime);
 
   /* pointer: 0 = absent, 1 = up, 2 = down. The hit test runs against this
-   * frame's layout and fires cursor_hover for declaring elements. */
+   * frame's layout and fires cursor_hover for declaring elements. Clay's
+   * point-in-rect test includes both edges, and a cell's corner sits on the
+   * edge of every element that ends there, so hit-test the cell's center. */
   ct->hover_shape = 0;
   if (pointer)
-    Clay_SetPointerState((Clay_Vector2){px, py}, pointer == 2);
+    Clay_SetPointerState((Clay_Vector2){px + 0.5f, py + 0.5f}, pointer == 2);
 
   /* reset output state */
   ct->out.length = 0;

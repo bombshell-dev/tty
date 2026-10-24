@@ -886,6 +886,53 @@ hi
     });
   });
 
+  describe("pointer events", () => {
+    let siblings: Op[] = [
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ltr" },
+      }),
+      open("left", { layout: { width: fixed(20), height: grow() } }),
+      close(),
+      open("right", { layout: { width: fixed(20), height: grow() } }),
+      close(),
+      close(),
+    ];
+
+    let rows: Op[] = [
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      open("row0", { layout: { width: grow(), height: fixed(1) } }),
+      close(),
+      open("row1", { layout: { width: grow(), height: fixed(1) } }),
+      close(),
+      close(),
+    ];
+
+    function click(frame: Op[], x: number, y: number): string[] {
+      term.render(frame, { pointer: { x, y, down: true } });
+      return term.render(frame, { pointer: { x, y, down: false } }).events
+        .filter((event) => event.type === "pointerclick")
+        .map((event) => event.id);
+    }
+
+    it("clicks only the sibling that owns the first cell past a shared edge", () => {
+      let ids = click(siblings, 20, 0);
+      expect(ids).toContain("right");
+      expect(ids).not.toContain("left");
+    });
+
+    it("clicks only the row that owns the first row past a shared edge", () => {
+      let ids = click(rows, 0, 1);
+      expect(ids).toContain("row1");
+      expect(ids).not.toContain("row0");
+    });
+
+    it("reports no element for a pointer past the last column", () => {
+      expect(click(siblings, 40, 0)).toEqual([]);
+    });
+  });
+
   describe("synchronized output", () => {
     let frame: Op[] = [
       open("root", { layout: { width: grow(), height: grow() } }),
