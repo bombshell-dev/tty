@@ -767,7 +767,8 @@ hi
     it("emits a complete redraw on the first render after update", () => {
       term.render(frame);
       expect(term.render(frame).output.length).toBe(0);
-      term.update([{ type: "resize", width: 20, height: 5 }]);
+      expect(term.update([{ type: "resize", width: 20, height: 5 }]))
+        .toBeUndefined();
       let out = decode(term.render(frame).output);
       expect(trim(print(out, 20, 5))).toContain("Hi");
       expect(out.length).toBeGreaterThan(0);
@@ -805,11 +806,42 @@ hi
       });
     });
 
+    it("applies updates synchronously and renders the state accumulated across calls", () => {
+      expect(term.update([
+        { type: "resize", width: 30, height: 8 },
+        { type: "capability", key: "sync-output", value: true },
+      ])).toBeUndefined();
+      expect(term.capabilities.syncOutput).toBe(true);
+
+      expect(term.update([
+        { type: "capability", key: "sync-output", value: false },
+        { type: "resize", width: 12, height: 3 },
+      ])).toBeUndefined();
+      expect(term.capabilities.syncOutput).toBe(false);
+
+      expect(term.update([
+        { type: "capability", key: "sync-output", value: true },
+      ])).toBeUndefined();
+      expect(term.capabilities.syncOutput).toBe(true);
+
+      let result = term.render(frame);
+      let output = decode(result.output);
+      expect(trim(print(output, 12, 3))).toEqual("Hi\n\n");
+      expect(result.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 12,
+        height: 3,
+      });
+      expect(output.startsWith("\x1b[?2026h")).toBe(true);
+      expect(output.endsWith("\x1b[?2026l")).toBe(true);
+    });
+
     it("treats an update array with no resize as a no-op for layout", () => {
       term.render(frame);
       term.update([{ type: "capability", key: "sync-output", value: false }]);
       expect(term.render(frame).output.length).toBe(0);
-      term.update([]);
+      expect(term.update([])).toBeUndefined();
       expect(term.render(frame).output.length).toBe(0);
     });
 
@@ -827,7 +859,7 @@ hi
         { type: "keydown", key: "a", code: "a", text: "a" },
         { type: "mousemove", button: "left", x: 1, y: 1 },
       ]);
-      expect(out).toEqual(new Uint8Array(0));
+      expect(out).toBeUndefined();
       expect(term.capabilities).toEqual(before);
       expect(term.render(frame).output.length).toBe(0);
     });
