@@ -1,16 +1,26 @@
 CC = clang
-TARGET = clayterm.wasm
-SRC = src/module.c
+
+CFLAGS_BASE = --target=wasm32 -nostdlib \
+              -ffunction-sections -fdata-sections \
+              -mbulk-memory \
+              -Isrc -I.
+
+INPUT_OPT  ?= -O2
+LAYOUT_OPT ?= -O2
+
 CLAY_PATCHES = $(sort $(wildcard patches/*.patch))
 
-CFLAGS = --target=wasm32 -nostdlib -O2 \
-         -ffunction-sections -fdata-sections \
-         -mbulk-memory \
-         -DCLAY_IMPLEMENTATION -DCLAY_WASM \
-         -DCLAY_DEBUG_MODE_ENABLED=0 \
-         -Isrc -I.
+LAYOUT_CFLAGS = $(CFLAGS_BASE) $(LAYOUT_OPT) -DCLAY_IMPLEMENTATION -DCLAY_WASM \
+                -DCLAY_DEBUG_MODE_ENABLED=0
+INPUT_CFLAGS  = $(CFLAGS_BASE) $(INPUT_OPT)
 
-EXPORTS = \
+LDFLAGS_COMMON = -Wl,--no-entry \
+                 -Wl,--import-memory \
+                 -Wl,--stack-first \
+                 -Wl,--strip-all \
+                 -Wl,--gc-sections
+
+LAYOUT_EXPORTS = \
   -Wl,--export=__heap_base \
   -Wl,--export=clayterm_size \
   -Wl,--export=init \
@@ -31,7 +41,10 @@ EXPORTS = \
   -Wl,--export=error_count \
   -Wl,--export=error_type \
   -Wl,--export=error_message_length \
-  -Wl,--export=error_message_ptr \
+  -Wl,--export=error_message_ptr
+
+INPUT_EXPORTS = \
+  -Wl,--export=__heap_base \
   -Wl,--export=input_size \
   -Wl,--export=input_init \
   -Wl,--export=input_scan \
@@ -44,37 +57,46 @@ EXPORTS = \
   -Wl,--export=terminfo_grant \
   -Wl,--export=terminfo_confirm
 
-LDFLAGS = -Wl,--no-entry \
-          -Wl,--import-memory \
-          -Wl,--stack-first \
-          -Wl,--strip-all \
-          -Wl,--gc-sections \
-          -Wl,--undefined=Clay__MeasureText \
-          -Wl,--undefined=Clay__QueryScrollOffset \
-          $(EXPORTS)
+LAYOUT_LDFLAGS = $(LDFLAGS_COMMON) \
+                 -Wl,--undefined=Clay__MeasureText \
+                 -Wl,--undefined=Clay__QueryScrollOffset \
+                 $(LAYOUT_EXPORTS)
 
-all: $(TARGET) wasm.ts
-	@echo "Built $(TARGET) ($$(wc -c < $(TARGET)) bytes raw, $$(gzip -c $(TARGET) | wc -c) bytes gzip)"
+INPUT_LDFLAGS = $(LDFLAGS_COMMON) \
+                $(INPUT_EXPORTS)
 
 DEPS = $(wildcard src/*.c src/*.h)
+
+all: layout.wasm input.wasm layout.wasm.ts input.wasm.ts
+	@echo "Built layout.wasm ($$(wc -c < layout.wasm) bytes raw, $$(gzip -c layout.wasm | wc -c) bytes gzip)"
+	@echo "Built input.wasm  ($$(wc -c < input.wasm) bytes raw, $$(gzip -c input.wasm | wc -c) bytes gzip)"
 
 # Apply every patch in patches/ to the clay submodule before compiling. clay.h
 # is reset to pristine first, so the applied set always matches patches/*.patch
 # exactly (idempotent, applied in sorted order). Reverted by `make clean`.
 # Opt-outs like CLAY_DEBUG_MODE_ENABLED=0 are selected via CFLAGS above.
 # Drop individual patches as their changes ship in upstream clay.
-$(TARGET): $(DEPS) $(CLAY_PATCHES)
+.PHONY: clay-patch
+clay-patch: $(CLAY_PATCHES)
 	@git -C clay checkout -- clay.h
 	@for p in $(CLAY_PATCHES); do \
 	  git -C clay apply ../$$p || { echo "ERROR: failed to apply $$p to clay/clay.h" >&2; exit 1; }; \
 	done
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC)
 
-wasm.ts: $(TARGET)
-	deno run --allow-read --allow-write tasks/bundle-wasm.ts
+layout.wasm: $(DEPS) clay-patch
+	$(CC) $(LAYOUT_CFLAGS) $(LAYOUT_LDFLAGS) -o $@ src/module-layout.c
+
+input.wasm: $(DEPS)
+	$(CC) $(INPUT_CFLAGS) $(INPUT_LDFLAGS) -o $@ src/module-input.c
+
+layout.wasm.ts: layout.wasm
+	deno run --allow-read --allow-write tasks/bundle-wasm.ts layout.wasm layout.wasm.ts
+
+input.wasm.ts: input.wasm
+	deno run --allow-read --allow-write tasks/bundle-wasm.ts input.wasm input.wasm.ts
 
 clean:
-	rm -f $(TARGET) wasm.ts
+	rm -f layout.wasm input.wasm layout.wasm.ts input.wasm.ts
 	-git -C clay checkout -- clay.h
 
 .PHONY: all clean

@@ -193,7 +193,7 @@ function align8(n: number): number {
   return (n + 7) & ~7;
 }
 
-import { compiled } from "./wasm.ts";
+import { compiled } from "./input.wasm.ts";
 
 export async function createInputNative(
   escLatency: number,
@@ -204,14 +204,6 @@ export async function createInputNative(
 
   let instance = await WebAssembly.instantiate(compiled, {
     env: { memory },
-    clay: {
-      measureTextFunction() {},
-      queryScrollOffsetFunction(ret: number) {
-        let v = new DataView(memory.buffer);
-        v.setFloat32(ret, 0, true);
-        v.setFloat32(ret + 4, 0, true);
-      },
-    },
   });
 
   let exports = instance.exports as unknown as {
