@@ -26,6 +26,7 @@
     "npm:@sinclair/typebox@*": "0.34.48",
     "npm:@sinclair/typebox@0.34": "0.34.48",
     "npm:effection@^4.0.2": "4.0.2",
+    "npm:hueful@~0.8.1": "0.8.1",
     "npm:tinybench@5": "5.1.0",
     "npm:valrs@*": "0.1.0"
   },
@@ -491,6 +492,9 @@
         "debug"
       ]
     },
+    "hueful@0.8.1": {
+      "integrity": "sha512-5JmU/74TAKM9BCRcwY046VImUb6dhvrsB2kvj5eEJ1eaCKu6EPPxtONF/kueY9PdzYgUz3g5zrrj+YENz2xy3A=="
+    },
     "human-id@4.2.1": {
       "integrity": "sha512-zPGsiS+dWoTZtZ4AtpA9Y+BdSFSNWvnouNlWNoUFyAM6xHOHmdCvqO3k8AIbdamCOv4gUFUVNPf6rJFfc4UiJw==",
       "bin": true
@@ -609,6 +613,7 @@
       "npm:@codspeed/tinybench-plugin@^5.4.0",
       "npm:@sinclair/typebox@0.34",
       "npm:effection@^4.0.2",
+      "npm:hueful@~0.8.1",
       "npm:tinybench@5"
     ],
     "packageJson": {
