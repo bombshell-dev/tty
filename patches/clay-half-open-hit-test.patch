@@ -1,0 +1,16 @@
+Count only the top and left edges of a bounding box as inside it, so a
+point on an edge two elements share hits one of them (renderer-spec 7.11).
+
+diff --git a/clay.h b/clay.h
+index 7c967bb..8a1dc56 100644
+--- a/clay.h
++++ b/clay.h
+@@ -1776,7 +1776,7 @@ Clay__MeasureTextCacheItem *Clay__MeasureTextCached(Clay_String *text, Clay_Text
+ }
+ 
+ bool Clay__PointIsInsideRect(Clay_Vector2 point, Clay_BoundingBox rect) {
+-    return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
++    return point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height;
+ }
+ 
+ Clay_LayoutElementHashMapItem* Clay__AddHashMapItem(Clay_ElementId elementId, Clay_LayoutElement* layoutElement) {
