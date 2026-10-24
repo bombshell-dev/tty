@@ -773,6 +773,10 @@ void set_pointer_shape(struct Clayterm *ct, int shape) {
   ct->pointer_shape = shape;
 }
 
+/* The first cell whose center lies at or past a layout edge (renderer-spec
+ * 7.11), so an element draws on exactly the cells the hit test gives it. */
+static int cell_edge(float v) { return (int)__builtin_ceilf(v - 0.5f); }
+
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
             float deltaTime, float px, float py, int pointer) {
   int i = 0;
@@ -980,9 +984,9 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   Clay_RenderCommandArray cmds = Clay_EndLayout(deltaTime);
 
   /* pointer: 0 = absent, 1 = up, 2 = down. The hit test runs against this
-   * frame's layout and fires cursor_hover for declaring elements. Clay's
-   * point-in-rect test includes both edges, and a cell's corner sits on the
-   * edge of every element that ends there, so hit-test the cell's center. */
+   * frame's layout and fires cursor_hover for declaring elements. It samples
+   * the cell's center, the point cell coverage is defined by (renderer-spec
+   * 7.11). */
   ct->hover_shape = 0;
   if (pointer)
     Clay_SetPointerState((Clay_Vector2){px + 0.5f, py + 0.5f}, pointer == 2);
@@ -1003,10 +1007,10 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   for (int32_t j = 0; j < cmds.length; j++) {
     Clay_RenderCommand *cmd = Clay_RenderCommandArray_Get(&cmds, j);
     Clay_BoundingBox box = cmd->boundingBox;
-    int x0 = (int)box.x;
-    int y0 = (int)box.y;
-    int x1 = (int)(box.x + box.width);
-    int y1 = (int)(box.y + box.height);
+    int x0 = cell_edge(box.x);
+    int y0 = cell_edge(box.y);
+    int x1 = cell_edge(box.x + box.width);
+    int y1 = cell_edge(box.y + box.height);
 
     switch (cmd->commandType) {
     case CLAY_RENDER_COMMAND_TYPE_RECTANGLE:
