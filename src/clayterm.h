@@ -29,7 +29,8 @@ struct Clayterm;
 /* WASM exports */
 int clayterm_size(int w, int h);
 struct Clayterm *init(void *mem, int w, int h);
-int set_capabilities(struct Clayterm *ct, uint32_t caps);
+int set_capabilities(struct Clayterm *ct, uint32_t caps, uint32_t colors,
+                     int truecolor);
 int pointer_shape(struct Clayterm *ct);
 void set_pointer_shape(struct Clayterm *ct, int shape);
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,

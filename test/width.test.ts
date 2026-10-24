@@ -58,6 +58,8 @@ describe("width", () => {
 
   it("replaces surrogate codepoints from malformed UTF-8 with U+FFFD", async () => {
     let native = await createTermNative(10, 3, {
+      colors: 256,
+      trueColor: false,
       syncOutput: false,
       pointerShape: false,
     });

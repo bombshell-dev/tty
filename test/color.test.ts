@@ -1,5 +1,6 @@
 import { close, fixed, grow, open, rgba, text } from "../ops.ts";
 import { createTerm } from "../term.ts";
+import { TRUECOLOR_INFO } from "./caps.ts";
 import { describe, expect, it } from "./suite.ts";
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -72,7 +73,11 @@ function firstCell(cells: Cell[], ch: string): Cell {
 
 describe("foreground", () => {
   it("emits uncolored text with no foreground", async () => {
-    let term = await createTerm({ width: 12, height: 1 });
+    let term = await createTerm({
+      width: 12,
+      height: 1,
+      terminfo: TRUECOLOR_INFO,
+    });
     let ansi = decode(term.render([text("hi")]).output);
 
     expect(ansi).toContain("hi");
@@ -82,7 +87,11 @@ describe("foreground", () => {
 
 describe("background", () => {
   it("fills border cells with the requested border-level bg", async () => {
-    let term = await createTerm({ width: 12, height: 4 });
+    let term = await createTerm({
+      width: 12,
+      height: 4,
+      terminfo: TRUECOLOR_INFO,
+    });
     let bg = randomBgColor();
     let ansi = decode(
       term.render([
@@ -112,7 +121,11 @@ describe("background", () => {
   });
 
   it("leaves existing border-cell bg unchanged when border bg is omitted", async () => {
-    let term = await createTerm({ width: 12, height: 4 });
+    let term = await createTerm({
+      width: 12,
+      height: 4,
+      terminfo: TRUECOLOR_INFO,
+    });
     let bg = randomBgColor();
     let ansi = decode(
       term.render([
@@ -140,7 +153,11 @@ describe("background", () => {
   });
 
   it("fills glyph cells with the requested text-level bg", async () => {
-    let term = await createTerm({ width: 20, height: 1 });
+    let term = await createTerm({
+      width: 20,
+      height: 1,
+      terminfo: TRUECOLOR_INFO,
+    });
     let bg = randomBgColor();
     let ansi = decode(
       term.render([
@@ -155,7 +172,11 @@ describe("background", () => {
   });
 
   it("resets border bg on subsequent frames without border bg", async () => {
-    let term = await createTerm({ width: 12, height: 4 });
+    let term = await createTerm({
+      width: 12,
+      height: 4,
+      terminfo: TRUECOLOR_INFO,
+    });
     let bg = randomBgColor();
 
     // Frame 1: border with bg
@@ -198,7 +219,11 @@ describe("background", () => {
   });
 
   it("resets the background before writing trailing cells", async () => {
-    let term = await createTerm({ width: 20, height: 1 });
+    let term = await createTerm({
+      width: 20,
+      height: 1,
+      terminfo: TRUECOLOR_INFO,
+    });
     let bg = randomBgColor();
     let ansi = decode(
       term.render([
