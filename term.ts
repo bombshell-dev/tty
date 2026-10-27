@@ -115,6 +115,8 @@ export type PointerEvent =
 
 export interface ElementInfo {
   bounds: BoundingBox;
+  /** Substitute for this element and its descendants in the next render. */
+  replay: Op;
 }
 
 const ERROR_TYPES = [
@@ -138,6 +140,10 @@ export interface ClayError {
 
 export interface RenderInfo {
   get(id: string): ElementInfo | undefined;
+}
+
+function expiredLookup(): undefined {
+  return undefined;
 }
 
 export interface RenderResult {
@@ -191,6 +197,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
   let wasDown = false;
   let lastRenderAt: number | undefined;
   let wasAnimating = false;
+  let currentInfo: RenderInfo | undefined;
 
   return {
     get capabilities(): RuntimeCapabilities {
@@ -215,7 +222,6 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       } else {
         dt = now - lastRenderAt;
       }
-      lastRenderAt = now;
       let pointer = options?.pointer;
       native.reduce(
         native.statePtr,
@@ -228,6 +234,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         pointer?.y ?? 0,
         pointer ? (pointer.down ? POINTER_DOWN : POINTER_UP) : POINTER_ABSENT,
       );
+      lastRenderAt = now;
 
       let output = new Uint8Array(
         memory.buffer,
@@ -271,13 +278,18 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       prev = current;
       wasDown = down;
 
+      let lookup = (id: string): ElementInfo | undefined => {
+        if (currentInfo !== info) return undefined;
+        return native.getElementInfo(id);
+      };
       let info: RenderInfo = {
-        get(id: string): ElementInfo | undefined {
-          let bounds = native.getElementBounds(id);
-          if (bounds) return { bounds };
-          return undefined;
+        // Expiry is observable without mutating metadata handed to callers.
+        // The lookup itself also guards callers that saved the function.
+        get get() {
+          return currentInfo === info ? lookup : expiredLookup;
         },
       };
+      currentInfo = info;
 
       let errors: ClayError[] = [];
       let count = native.errorCount(native.statePtr);

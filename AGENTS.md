@@ -49,7 +49,8 @@ Do not include any agent marketing material (e.g. "Generated with...",
   renderer-spec.md §7.10).
 
 - Each frame is a complete snapshot. The renderer carries no UI tree state
-  between frames — only cell buffers for diffing.
+  between frames. Retained directives support element replay; cell buffers
+  support diffing.
 
 - Public API values are string literals (`"center-center"`), not numeric
   constants or enums. Use functions when a value is parameterized.

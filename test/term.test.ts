@@ -2,16 +2,7 @@
 import { beforeEach, describe, expect, it } from "./suite.ts";
 import { createTerm, type Term } from "../term.ts";
 import type { InputEvent } from "../input.ts";
-import {
-  close,
-  fixed,
-  grow,
-  type Op,
-  open,
-  rgba,
-  snapshot,
-  text,
-} from "../ops.ts";
+import { close, fixed, grow, type Op, open, rgba, text } from "../ops.ts";
 import { print } from "./print.ts";
 import { trueColorDetect } from "./caps.ts";
 
@@ -400,19 +391,23 @@ describe("term", () => {
     expect(out).toContain("┌──────────┐");
   });
 
-  describe("snapshot", () => {
-    it("produces identical output to direct ops", async () => {
+  describe("replay", () => {
+    it("renews a complete styled, clipped tree and then replays a descendant", async () => {
+      let direct = await createTerm({ width: 12, height: 4 });
+      let cached = await createTerm({ width: 12, height: 4 });
+      let leafId = "leaf:" + "long-id-".repeat(40);
+      let leaf = [
+        open(leafId, { layout: { width: fixed(8), height: fixed(1) } }),
+        text("ABCDEFGH", { color: rgba(255, 200, 0), attrs: 1 }),
+        close(),
+      ];
       let ops = [
         open("root", {
           layout: { width: grow(), height: grow(), direction: "ttb" },
           bg: rgba(0, 0, 128),
         }),
-        open("child", {
-          layout: {
-            width: grow(),
-            padding: { left: 1 },
-            direction: "ttb",
-          },
+        open("panel", {
+          layout: { width: fixed(8), height: fixed(3), direction: "ttb" },
           border: {
             color: rgba(255, 255, 255),
             left: 1,
@@ -421,74 +416,262 @@ describe("term", () => {
             bottom: 1,
           },
         }),
-        text("snapshot test"),
+        open("clip", {
+          layout: { width: fixed(4), height: fixed(1) },
+          clip: { horizontal: true, vertical: true },
+        }),
+        ...leaf,
         close(),
+        close(),
+        text("tail"),
         close(),
       ];
+      direct.render(ops);
+      let previous = cached.render(ops);
+      let expectedGrid = "┌──────┐\n│ABCD  │\n└──────┘\ntail";
+      expect(trim(print(decode(previous.output), 12, 4))).toEqual(expectedGrid);
 
-      let direct = await createTerm({ width: 40, height: 10 });
-      let snapped = await createTerm({ width: 40, height: 10 });
+      for (let i = 0; i < 8; i++) {
+        let replay: Op = previous.info.get("root")!.replay;
+        expect(previous.info.get(leafId)).toBeDefined();
+        expect(previous.info.get("missing:".repeat(100))).toBeUndefined();
+        let mode = i % 2 === 0 ? "line" as const : undefined;
+        let expected = direct.render(ops, { mode });
+        previous = cached.render([replay], { mode });
+        expect(decode(previous.output)).toEqual(decode(expected.output));
+        expect(previous.errors).toEqual([]);
+        for (let id of ["root", "panel", "clip", leafId]) {
+          expect(previous.info.get(id)?.bounds).toEqual(
+            expected.info.get(id)?.bounds,
+          );
+        }
+        if (mode === "line") {
+          expect(trim(print(decode(previous.output), 12, 4))).toEqual(
+            expectedGrid,
+          );
+        } else {
+          expect(previous.output.length).toBe(0);
+        }
+      }
 
-      let expected = direct.render(ops, { mode: "line" }).output;
-      let actual = snapped.render([snapshot(ops)], { mode: "line" }).output;
-
-      expect(decode(actual)).toEqual(decode(expected));
+      let old = previous;
+      let result = cached.render([
+        open("new-parent", { layout: { width: grow(), height: grow() } }),
+        previous.info.get(leafId)!.replay,
+        close(),
+      ], { mode: "line" });
+      expect(trim(print(decode(result.output), 12, 4))).toEqual(
+        "ABCDEFGH\n\n\n",
+      );
+      expect(result.info.get("panel")).toBeUndefined();
+      expect(result.info.get(leafId)?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 1,
+      });
+      expect(old.info.get("new-parent")).toBeUndefined();
     });
 
-    it("renders inside another element", async () => {
-      let child = snapshot([
-        open("child", {
-          layout: { width: grow(), direction: "ttb" },
-        }),
-        text("inner"),
+    it("relayouts reordered replays alongside fresh siblings and new parents after resize", async () => {
+      let direct = await createTerm({ width: 10, height: 3 });
+      let cached = await createTerm({ width: 10, height: 3 });
+      let a = [
+        open("a", { layout: { width: fixed(3), height: fixed(1) } }),
+        text("AAA"),
         close(),
-      ]);
+      ];
+      let b = [
+        open("b", { layout: { width: grow(), height: fixed(1) } }),
+        text("B"),
+        close(),
+      ];
+      let root = open("root", {
+        layout: { width: grow(), height: grow(), direction: "ltr" },
+      });
+      direct.render([root, ...a, ...b, close()]);
+      let previous = cached.render([root, ...a, ...b, close()]);
 
-      let direct = await createTerm({ width: 20, height: 5 });
-      let snapped = await createTerm({ width: 20, height: 5 });
+      for (
+        let [width, height, left] of [[10, 3, 1], [10, 3, 2], [14, 2, 0], [
+          8,
+          2,
+          1,
+        ]]
+      ) {
+        let replayA = previous.info.get("a")!.replay;
+        let replayB = previous.info.get("b")!.replay;
+        direct.update([{ type: "resize", width, height }]);
+        cached.update([{ type: "resize", width, height }]);
+        let frame = (first: Op[], second: Op[]) => [
+          root,
+          open("prefix", { layout: { width: fixed(left), height: fixed(1) } }),
+          text(".".repeat(left)),
+          close(),
+          open(`parent-${width}-${left}`, {
+            layout: { width: grow(), height: fixed(1) },
+          }),
+          ...first,
+          close(),
+          ...second,
+          close(),
+        ];
+        let expected = direct.render(frame(b, a), { mode: "line" });
+        previous = cached.render(frame([replayB], [replayA]), { mode: "line" });
+        expect(decode(previous.output)).toEqual(decode(expected.output));
+        expect(trim(print(decode(previous.output), width, height))).toEqual(
+          ".".repeat(left) + "B" + " ".repeat(width - left - 4) + "AAA" +
+            "\n".repeat(height - 1),
+        );
+        expect(previous.info.get("b")?.bounds).toEqual({
+          x: left,
+          y: 0,
+          width: width - left - 3,
+          height: 1,
+        });
+        expect(previous.info.get("a")?.bounds.x).toBe(width - 3);
+        expect(previous.errors).toEqual([]);
+      }
+    });
 
-      let wrapper = (content: Op[]) => [
+    it("resolves caret placement and pointer events in the new render context", async () => {
+      let direct = await createTerm({ width: 8, height: 2 });
+      let cached = await createTerm({ width: 8, height: 2 });
+      let field = [
+        open("field", { layout: { width: fixed(4), height: fixed(1) } }),
+        text("edit", { caret: 2 }),
+        close(),
+      ];
+      let frame = (left: number, content: Op[]) => [
         open("root", {
-          layout: {
-            width: grow(),
-            height: grow(),
-            direction: "ttb",
-          },
-          border: {
-            color: rgba(255, 255, 255),
-            left: 1,
-            right: 1,
-            top: 1,
-            bottom: 1,
-          },
+          layout: { width: grow(), height: grow(), padding: { left } },
         }),
         ...content,
         close(),
       ];
+      direct.render(frame(0, field));
+      let previous = cached.render(frame(0, field));
+      let ansi = decode(previous.output);
+      let steps = [
+        { left: 0, pointer: { x: 1, y: 0, down: true }, event: "pointerenter" },
+        {
+          left: 3,
+          pointer: { x: 4, y: 0, down: false },
+          event: "pointerclick",
+        },
+        { left: 1, pointer: undefined, event: "pointerleave" },
+      ];
+      for (let { left, pointer, event } of steps) {
+        let expected = direct.render(frame(left, field), { pointer });
+        previous = cached.render(
+          frame(left, [previous.info.get("field")!.replay]),
+          { pointer },
+        );
+        expect(decode(previous.output)).toEqual(decode(expected.output));
+        expect(previous.events).toEqual(expected.events);
+        expect(previous.events).toContainEqual({ type: event, id: "field" });
+        ansi += decode(previous.output);
+        expect(trim(print(ansi, 8, 2))).toEqual(" ".repeat(left) + "edi̲t\n");
+      }
+    });
 
-      let expected = direct.render(
-        wrapper([
-          open("child", {
-            layout: { width: grow(), direction: "ttb" },
-          }),
-          text("inner"),
+    it("preserves the completed frame when a later replay exceeds source bounds", async () => {
+      let cached = await createTerm({ width: 8, height: 2 });
+      let control = await createTerm({ width: 8, height: 2 });
+      let older = [open("older"), text("before"), close()];
+      let latest = [
+        open("root", { layout: { width: grow(), height: grow() } }),
+        open("kept", { layout: { width: fixed(4), height: fixed(1) } }),
+        text("KEEP"),
+        close(),
+        close(),
+      ];
+      control.render(older);
+      let ansi = decode(cached.render(older).output);
+      let down = { pointer: { x: 1, y: 0, down: true } };
+      control.render(latest, down);
+      let previous = cached.render(latest, down);
+      let output = decode(previous.output);
+      ansi += output;
+      let replay = previous.info.get("root")!.replay;
+
+      expect(() =>
+        Reflect.apply(cached.render, cached, [[
+          replay,
+          { ...replay, offset: 0xFFFFFFFC },
+        ]])
+      ).toThrow(RangeError);
+      expect(decode(previous.output)).toEqual(output);
+      expect(previous.info.get("kept")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 4,
+        height: 1,
+      });
+      expect(previous.info.get("older")).toBeUndefined();
+
+      let up = { pointer: { x: 1, y: 0, down: false } };
+      let expected = control.render(latest, up);
+      let recovered = cached.render([replay], up);
+      expect(decode(recovered.output)).toEqual(decode(expected.output));
+      expect(recovered.events).toEqual(expected.events);
+      expect(recovered.events).toContainEqual({
+        type: "pointerclick",
+        id: "kept",
+      });
+      expect(recovered.errors).toEqual([]);
+      expect(recovered.info.get("kept")?.bounds).toEqual(
+        expected.info.get("kept")?.bounds,
+      );
+      ansi += decode(recovered.output);
+      expect(trim(print(ansi, 8, 2))).toEqual("KEEP\n");
+    });
+
+    it("preserves replay after transfer and expanded-frame capacity failures", async () => {
+      let cached = await createTerm({ width: 8, height: 1 });
+      cached.render([open("older"), text("before"), close()]);
+      // Each payload fits the transfer budget; two expanded payloads exceed it.
+      let payload = "X".repeat(1_100_000);
+      let previous = cached.render([
+        open("payload", { layout: { width: fixed(8), height: fixed(1) } }),
+        open("left", { layout: { width: fixed(4), height: fixed(1) } }),
+        text(payload.slice(0, payload.length / 2)),
+        close(),
+        open("right", { layout: { width: fixed(4), height: fixed(1) } }),
+        text(payload.slice(payload.length / 2)),
+        close(),
+        close(),
+      ]);
+      expect(trim(print(decode(previous.output), 8, 1))).toEqual("XXXXXXXX");
+      let replay = previous.info.get("payload")!.replay;
+      expect(() => cached.render([text(payload + payload)])).toThrow(
+        RangeError,
+      );
+      expect(() =>
+        cached.render([
+          open("root", { layout: { width: grow(), height: grow() } }),
+          replay,
+          text(payload),
           close(),
-        ]),
-        { mode: "line" },
-      ).output;
-
-      let actual = snapped.render(
-        wrapper([child]),
-        { mode: "line" },
-      ).output;
-
-      expect(decode(actual)).toEqual(decode(expected));
-      expect(trim(print(decode(actual), 20, 5))).toEqual(`
-┌──────────────────┐
-│inner             │
-│                  │
-│                  │
-└──────────────────┘`.trim());
+        ])
+      ).toThrow(RangeError);
+      expect(() =>
+        cached.render([
+          previous.info.get("left")!.replay,
+          text(payload),
+          previous.info.get("right")!.replay,
+        ])
+      ).toThrow(RangeError);
+      expect(previous.info.get("payload")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 1,
+      });
+      let recovered = cached.render([replay]);
+      expect(recovered.output.length).toBe(0);
+      expect(recovered.errors).toEqual([]);
+      expect(recovered.info.get("payload")).toBeDefined();
     });
   });
 

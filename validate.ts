@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
 import type { Op } from "./ops.ts";
 import { POINTER_SHAPES } from "./pointer-shape.ts";
-import type { RenderOptions, RenderResult, Term } from "./term.ts";
+import type { RenderInfo, RenderOptions, RenderResult, Term } from "./term.ts";
 
 /* ── Range helpers (match bit-packing in pack()) ──────────────────── */
 
@@ -209,14 +209,33 @@ const TextOp = Type.Object({
   attrs: Type.Optional(u8),
 });
 
-const Ops = Type.Array(Type.Union([OpenElement, TextOp, CloseElement]));
+const Replay = Type.Object({
+  directive: Type.Literal(0x05),
+  offset: Type.Integer({ minimum: 0, maximum: 0xFFFFFFFF, multipleOf: 4 }),
+  length: Type.Integer({ minimum: 4, maximum: 0xFFFFFFFF, multipleOf: 4 }),
+});
+
+const Ops = Type.Array(Type.Union([OpenElement, TextOp, CloseElement, Replay]));
 
 /* ── Compiled validator ───────────────────────────────────────────── */
 
 const compiled = TypeCompiler.Compile(Ops);
 
+function hasBalancedElements(ops: Op[]): boolean {
+  let depth = 0;
+  for (let op of ops) {
+    if (op.directive === 0x02) {
+      depth++;
+    } else if (op.directive === 0x04) {
+      if (depth === 0) return false;
+      depth--;
+    }
+  }
+  return depth === 0;
+}
+
 export function validate(ops: unknown): ops is Op[] {
-  return compiled.Check(ops);
+  return compiled.Check(ops) && hasBalancedElements(ops);
 }
 
 export function assert(ops: unknown): asserts ops is Op[] {
@@ -228,9 +247,21 @@ export function assert(ops: unknown): asserts ops is Op[] {
       .join("\n");
     throw new TypeError(`Invalid ops:\n${msg}`);
   }
+  if (!hasBalancedElements(ops)) {
+    throw new TypeError("Invalid ops: unbalanced open()/close() directives.");
+  }
 }
 
 /* ── Term wrapper ─────────────────────────────────────────────────── */
+
+// Present only on replays obtained through validated(). The source lookup
+// retires when another render completes, even through another Term reference.
+const replayFrame = Symbol("replay frame");
+
+interface ReplayFrame {
+  info: RenderInfo;
+  lookup: RenderInfo["get"];
+}
 
 export function validated(term: Term): Term {
   return {
@@ -239,7 +270,34 @@ export function validated(term: Term): Term {
     },
     render(ops: Op[], options?: RenderOptions): RenderResult {
       assert(ops);
-      return term.render(ops, options);
+      for (let op of ops) {
+        if (op.directive !== 0x05) continue;
+        let frame: ReplayFrame | undefined = Reflect.get(op, replayFrame);
+        if (!frame || frame.info.get !== frame.lookup) {
+          throw new TypeError(
+            "Replay is not from the latest completed render. " +
+              "Obtain a fresh replay from the latest result.info.get(id).",
+          );
+        }
+      }
+
+      let result = term.render(ops, options);
+      let source = result.info;
+      let frame: ReplayFrame = { info: source, lookup: source.get };
+      result.info = {
+        get(id) {
+          let element = source.get(id);
+          if (!element) return undefined;
+          return {
+            bounds: element.bounds,
+            // Preserve the original source if validators are nested.
+            replay: replayFrame in element.replay
+              ? element.replay
+              : { ...element.replay, [replayFrame]: frame },
+          };
+        },
+      };
+      return result;
     },
     update(events) {
       term.update(events);

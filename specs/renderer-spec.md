@@ -149,19 +149,18 @@ yields, or partial results.
 
 Each render transaction operates on a complete, self-contained snapshot of the
 UI. The renderer MUST NOT maintain an internal component tree or UI state across
-frames. The only state the renderer retains between frames is the cell buffer
-used for diffing, which is an implementation detail of output minimization and
-not observable to the caller except through reduced output size.
+frames. Elements from the previous render MAY be supplied through their replay
+directives (§8.3.4). The caller still supplies the complete frame on every
+render.
 
 ### 4.4 Double-buffered diffing
 
 The renderer maintains two cell buffers: a front buffer (the previously rendered
 frame) and a back buffer (the frame being rendered). After populating the back
 buffer from the current frame's render commands, the renderer compares it
-against the front buffer and emits ANSI bytes only for cells that differ.
-Changed cells are then copied from the back buffer to the front buffer so that
-both buffers are identical at the end of the transaction. This mechanism is
-internal to the renderer and not directly observable to the caller.
+against the front buffer and emits ANSI bytes only for cells that differ. The
+completed frame becomes the comparison baseline for the next render. This
+mechanism is internal to the renderer and not directly observable to the caller.
 
 ---
 
@@ -218,7 +217,8 @@ complete frame as a directive array and receives ANSI bytes in return.
 
 **INV-3. Frame-snapshot independence.** The renderer MUST NOT require the caller
 to maintain or provide state across frames beyond calling `render()` on the same
-Term instance. Each directive array fully describes its frame.
+Term instance. Each directive array fully describes its frame, directly or
+through valid element replay directives.
 
 **INV-4. ANSI byte output.** The output of a render transaction MUST be a byte
 sequence of valid UTF-8–encoded ANSI escape codes that is directly writable to a
@@ -549,8 +549,8 @@ shape:
   element in `"capture"` mode hides the elements beneath it; one in
   `"passthrough"` mode lets them decide.
 
-Elements inside a `snapshot()` participate as direct directives would.
-Resolution and output are identical in line mode (§8.2.2).
+Replayed elements participate as direct directives would. Resolution and output
+are identical in line mode (§8.2.2).
 
 **Output.** The Term tracks the shape it last emitted, starting at `default`.
 When the resolved shape differs, the render MUST append `ESC ] 22 ; <shape> ST`
@@ -704,25 +704,31 @@ occupied by a grapheme cluster with combining marks MUST be treated as changed
 The set of styling properties accepted by `props` is part of the current
 implementation surface and may be extended.
 
-#### 8.3.4 snapshot
+#### 8.3.4 Element replay
 
+```ts
+let sidebar = previous.info.get("sidebar")!;
+let next = term.render([
+  open("root", rootProps),
+  sidebar.replay,
+  close(),
+]);
 ```
-snapshot(ops: Op[]): Op
-```
 
-Creates a snapshot by pre-packing the given directive array into its transfer
-encoding. The returned value is an `Op` and can appear anywhere in a directive
-array where the original ops would have appeared. The internal representation is
-opaque.
+Each `ElementInfo` MUST contain a `replay` field whose value is an `Op`. It can
+be placed directly in a directive array as a substitute for that entire element,
+from its `open()` through its matching `close()`, including all descendants. Its
+representation is opaque. Callers can reuse unchanged elements without
+rebuilding their directives or packing their contents into the transfer buffer.
 
-When the renderer encounters a snapshot during transfer, it copies the
-pre-packed bytes directly into the command buffer without re-encoding. The
-snapshot's ops MUST be structurally balanced (every `open` matched by a
-`close`).
+A replay is equivalent to supplying the element's original directives in that
+position. Layout, pointer handling, caret placement, and transitions use the new
+render's context and options. Replayed elements and their descendants provide
+fresh `ElementInfo` in the result.
 
-Snapshots enable higher-level frameworks to implement dirty tracking: a
-component whose inputs have not changed can reuse a previously created snapshot,
-avoiding the cost of re-packing its subtree each frame.
+A replay is valid until the next render completes. `update()` and renders that
+throw do not expire it. To reuse the element again, obtain its replay from the
+new result. Using an expired replay is invalid input (§9.1).
 
 ### 8.4 Sizing helpers
 
@@ -805,10 +811,10 @@ _This section is normative._
 ### 9.1 Directive-array pattern
 
 The rendering input is an ordered array of directive objects. Each directive is
-a plain JavaScript/TypeScript object created by a constructor function (Section
-8.3). Directives are not classes, do not carry methods, and do not participate
-in a prototype chain. They MAY be spread, composed, stored, or inspected as
-ordinary objects.
+a plain JavaScript/TypeScript object created by a constructor function or
+returned as an element's replay (Section 8.3). Directives are not classes, do
+not carry methods, and do not participate in a prototype chain. They MAY be
+spread, composed, stored, or inspected as ordinary objects.
 
 The array is processed in order. Open and close directives form an implicit
 tree. The renderer processes them sequentially.
@@ -818,9 +824,10 @@ that do not match a preceding open, is invalid input. Callers SHOULD validate
 directive arrays before rendering. The renderer's behavior when given an invalid
 directive array is unspecified by this specification.
 
-A snapshot is semantically equivalent to splicing its source ops into the array
-at the snapshot's position. The renderer MUST produce identical layout and
-output regardless of whether ops are provided directly or via a snapshot.
+A replay is semantically equivalent to splicing the referenced element's
+directives into the array at the replay's position. The renderer MUST produce
+identical layout and output for direct and replayed directives given the same
+rendering history and options.
 
 ### 9.2 Transfer to the WASM module
 
@@ -835,6 +842,9 @@ a transfer-buffer, frame-capacity, or packing overflow. The renderer MUST NOT
 expose only the raw host-level TypedArray message `"offset is out of bounds"`
 for this condition. The error message SHOULD direct callers to render a smaller
 visible slice or reduce frame content.
+
+The same capacity policy applies when replayed content makes the frame exceed
+renderer capacity, even if its transfer data fits.
 
 ### 9.3 Directive identity
 
@@ -1138,6 +1148,7 @@ interface RenderInfo {
 
 interface ElementInfo {
   bounds: BoundingBox;
+  replay: Op;
 }
 
 interface BoundingBox {
@@ -1152,6 +1163,9 @@ Each `ElementInfo` provides post-layout metadata. The `bounds` field is the
 element's computed bounding box in character cells, as determined by the layout
 engine after the render transaction completes. `x` and `y` are zero-indexed from
 the top-left corner of the layout root.
+
+The `replay` field substitutes for the entire element as defined in §8.3.4. A
+result's `info` MUST NOT return metadata belonging to a later render.
 
 Querying an element with an empty-string id or an id not present in the frame
 returns `undefined`.
@@ -1209,6 +1223,10 @@ acknowledged gaps, and the approach may evolve.
 **`validate(ops)`** — A public API function that checks a directive array for
 structural errors (unbalanced open/close pairs, invalid field types). Exported
 and used in tests.
+
+**`validated(term)`** — An optional wrapper that validates directives before
+rendering, including rejecting expired replay directives. These diagnostics are
+not required when calling the unwrapped Term.
 
 **`pack(ops, mem, offset)`** — An internal function that serializes a directive
 array into the transfer encoding described in Section 12.1. Currently exported
