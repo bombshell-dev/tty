@@ -8,6 +8,7 @@
 #include "cell.c"
 #include "utf8.c"
 #include "wcwidth.c"
+#include "frame.c"
 #include "clayterm.c"
 #include "transitions.c"
 #include "trie.c"

@@ -200,6 +200,161 @@ describe("term", () => {
       expect(result.info.get("nonexistent")).toBeUndefined();
       expect(result.info.get("")).toBeUndefined();
     });
+
+    it("finds only rendered elements when ids disappear and return after empty frames", async () => {
+      let term = await createTerm({ width: 8, height: 1 });
+      // These distinct Clay string hashes (308121343 and 573026047) share
+      // bucket 3839 in the 8192-bucket element index, exercising colliding IDs.
+      let a = "item-20";
+      let b = "item-73";
+      let cases: [string[], string][] = [
+        [[a, b], "A  B"],
+        [[b, a], "B  A"],
+        [[a], "A"],
+        [[], ""],
+        [[b], "B"],
+        [[], ""],
+        [[a, b], "A  B"],
+        [[b, a], "B  A"],
+      ];
+
+      for (let [ids, expected] of cases) {
+        let ops = ids.length
+          ? [
+            open("root", {
+              layout: { width: grow(), height: grow(), direction: "ltr" },
+            }),
+            ...ids.flatMap((id) => [
+              open(id, { layout: { width: fixed(3), height: fixed(1) } }),
+              text(id === a ? "A" : "B"),
+              close(),
+            ]),
+            close(),
+          ]
+          : [];
+        let result = term.render(ops, { mode: "line" });
+        expect(trim(print(decode(result.output), 8, 1))).toEqual(expected);
+        for (let id of [a, b]) {
+          let position = ids.indexOf(id);
+          if (position === -1) {
+            expect(result.info.get(id)).toBeUndefined();
+          } else {
+            expect(result.info.get(id)?.bounds).toEqual({
+              x: position * 3,
+              y: 0,
+              width: 3,
+              height: 1,
+            });
+          }
+        }
+        if (!ids.length) expect(result.info.get("root")).toBeUndefined();
+        expect(result.errors).toEqual([]);
+      }
+    });
+
+    it("looks up fresh bounds for reused ids after changing layout and resizing", async () => {
+      let term = await createTerm({ width: 12, height: 3 });
+      let frame = (left: number, top: number) => [
+        open("root", {
+          layout: {
+            width: grow(),
+            height: grow(),
+            padding: { left, top },
+          },
+        }),
+        open("child", { layout: { width: grow(), height: grow() } }),
+        text("X"),
+        close(),
+        close(),
+      ];
+
+      for (let i = 0; i < 4; i++) {
+        let shifted = i % 2 === 1;
+        let result = term.render(shifted ? frame(3, 1) : frame(1, 0), {
+          mode: "line",
+        });
+        expect(trim(print(decode(result.output), 12, 3))).toEqual(
+          shifted ? "\n   X\n" : " X\n\n",
+        );
+        expect(result.info.get("missing-id:".repeat(80))).toBeUndefined();
+        expect(result.info.get("child")?.bounds).toEqual(
+          shifted
+            ? { x: 3, y: 1, width: 9, height: 2 }
+            : { x: 1, y: 0, width: 11, height: 3 },
+        );
+      }
+
+      term.update([{ type: "resize", width: 20, height: 4 }]);
+      let result = term.render(frame(2, 1), { mode: "line" });
+      expect(trim(print(decode(result.output), 20, 4))).toEqual("\n  X\n\n");
+      expect(result.info.get("missing-id:".repeat(80))).toBeUndefined();
+      expect(result.info.get("child")?.bounds).toEqual({
+        x: 2,
+        y: 1,
+        width: 18,
+        height: 3,
+      });
+      expect(result.info.get("root")?.bounds).toEqual({
+        x: 0,
+        y: 0,
+        width: 20,
+        height: 4,
+      });
+    });
+
+    it("keeps metadata and pointer ids intact across lookups and changing frames", async () => {
+      let term = await createTerm({ width: 8, height: 1 });
+      let previousId: string | undefined;
+      let firstEvents;
+      for (let i = 0; i < 4; i++) {
+        let id = `item:α:${i}`;
+        let result = term.render([
+          open("root:metadata", {
+            layout: { width: grow(), height: grow() },
+          }),
+          open(id, { layout: { width: fixed(4), height: fixed(1) } }),
+          text(`row${i}`),
+          close(),
+          close(),
+        ], { pointer: { x: 1, y: 0, down: false }, mode: "line" });
+
+        expect(trim(print(decode(result.output), 8, 1))).toEqual(`row${i}`);
+        expect(result.info.get("missing-id:".repeat(80))).toBeUndefined();
+        expect(result.info.get("root:metadata")?.bounds).toEqual({
+          x: 0,
+          y: 0,
+          width: 8,
+          height: 1,
+        });
+        expect(result.info.get(id)?.bounds).toEqual({
+          x: 0,
+          y: 0,
+          width: 4,
+          height: 1,
+        });
+        expect(result.info.get("")).toBeUndefined();
+        expect(result.info.get(id)?.bounds.width).toBe(4);
+        expect(result.events).toContainEqual({ type: "pointerenter", id });
+        if (previousId) {
+          expect(result.info.get(previousId)).toBeUndefined();
+          expect(result.events).toContainEqual({
+            type: "pointerleave",
+            id: previousId,
+          });
+        } else {
+          firstEvents = result.events;
+        }
+        previousId = id;
+      }
+      expect(firstEvents).toContainEqual({
+        type: "pointerenter",
+        id: "root:metadata",
+      });
+      expect(firstEvents).toContainEqual({
+        type: "pointerenter",
+        id: "item:α:0",
+      });
+    });
   });
 
   it("renders a floating frame with structured attach points", () => {
@@ -679,6 +834,100 @@ hi
       // cursor on; frame 2 MUST emit `?25l` to turn it back off,
       // otherwise the caret marker would linger at frame 1's cell.
       expect(trim(print(frame1 + frame2, 3, 1))).toEqual("Hi");
+    });
+
+    it("tracks caret movement and hiding across repeated frames", async () => {
+      let term = await createTerm({ width: 4, height: 1 });
+      let ansi = "";
+      for (
+        let [caret, expected] of [
+          [0, "A̲BC"],
+          [0, "A̲BC"],
+          [1, "AB̲C"],
+          [undefined, "ABC"],
+          [undefined, "ABC"],
+          [2, "ABC̲"],
+          [undefined, "ABC"],
+        ] as const
+      ) {
+        ansi += decode(
+          term.render([
+            open("root", { layout: { width: grow(), height: grow() } }),
+            text("ABC", { caret }),
+            close(),
+          ]).output,
+        );
+        expect(trim(print(ansi, 4, 1))).toEqual(expected);
+      }
+    });
+
+    it("resolves caret tails afresh when text and its directive position change", async () => {
+      let term = await createTerm({ width: 6, height: 3 });
+      let frames = [
+        {
+          content: [text("Hi", { caret: 2 })],
+          expected: "Hi ̲\n\n",
+        },
+        {
+          content: [text("none")],
+          expected: "none\n\n",
+        },
+        {
+          content: [text("prefix"), text("abc def", { caret: 7 })],
+          expected: "prefix\nabc\ndef ̲",
+        },
+        {
+          content: [text("z", { caret: 1 })],
+          expected: "z ̲\n\n",
+        },
+        {
+          content: [text("", { caret: 0 })],
+          expected: " ̲\n\n",
+        },
+      ];
+      let ansi = "";
+      for (let { content, expected } of [...frames, ...frames]) {
+        ansi += decode(
+          term.render([
+            open("root", {
+              layout: { width: grow(), height: grow(), direction: "ttb" },
+            }),
+            ...content,
+            close(),
+          ]).output,
+        );
+        expect(trim(print(ansi, 6, 3))).toEqual(expected);
+      }
+    });
+
+    it("hides a visible caret after resize when the next frame has no caret", async () => {
+      let term = await createTerm({ width: 3, height: 1 });
+      let frame = (caret?: number) => [
+        open("root", { layout: { width: grow(), height: grow() } }),
+        text("Hi", { caret }),
+        close(),
+      ];
+      let ansi = decode(term.render(frame(1)).output);
+      term.update([{ type: "resize", width: 5, height: 1 }]);
+      ansi += decode(term.render(frame()).output);
+      expect(trim(print(ansi, 5, 1))).toEqual("Hi");
+      expect(term.render(frame()).output.length).toBe(0);
+    });
+
+    it("hides a visible caret after an intervening line-mode frame", async () => {
+      let term = await createTerm({ width: 4, height: 1 });
+      let frame = (caret?: number) => [
+        open("root", { layout: { width: grow(), height: grow() } }),
+        text("Hi", { caret }),
+        close(),
+      ];
+      let ansi = decode(term.render(frame(1)).output);
+      // The host positions line-mode output at the beginning of its region.
+      ansi += "\x1b[1;1H" +
+        decode(term.render(frame(), { mode: "line" }).output);
+      ansi += decode(term.render(frame()).output);
+      expect(trim(print(ansi, 4, 1))).toEqual("Hi");
+      expect(term.render(frame()).output.length).toBe(0);
     });
   });
 

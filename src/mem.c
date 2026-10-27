@@ -24,4 +24,4 @@ size_t strlen(const char *s) {
   return n;
 }
 
-int align8(int n) { return (n + 7) & ~7; }
+uint32_t align8(uint32_t n) { return (n + 7u) & ~7u; }

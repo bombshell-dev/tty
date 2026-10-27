@@ -26,22 +26,27 @@ struct Clayterm;
 #define CLAYTERM_PROP_TRANSITION 0x40
 #define CLAYTERM_PROP_CURSOR 0x80
 
+#define CLAYTERM_REDUCE_OK 0
+#define CLAYTERM_REDUCE_CAPACITY 1
+#define CLAYTERM_REDUCE_INVALID 2
+
 /* WASM exports */
-int clayterm_size(int w, int h);
-struct Clayterm *clayterm_init(void *mem, int w, int h);
+int clayterm_size(int w, int h, int runlist_capacity);
+struct Clayterm *clayterm_init(void *mem, int w, int h, int runlist_capacity);
 void clayterm_resize(struct Clayterm *ct, int w, int h);
 void set_capabilities(struct Clayterm *ct, uint32_t caps);
-void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
-            float deltaTime, float px, float py, int pointer);
+int reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
+           float deltaTime, float px, float py, int pointer);
 char *output(struct Clayterm *ct);
 int length(struct Clayterm *ct);
-int animating(struct Clayterm *ct);
+uint32_t animating(struct Clayterm *ct);
 void measure(int ret, int txt);
 
-int get_element_bounds(const char *name, int name_len, float *out);
+int get_element_bounds(struct Clayterm *ct, const char *name, int name_len,
+                       float *out);
 
-int pointer_over_count(void);
-int pointer_over_id_string_length(int index);
-int pointer_over_id_string_ptr(int index);
+int pointer_over_count(struct Clayterm *ct);
+int pointer_over_id_string_length(struct Clayterm *ct, int index);
+int pointer_over_id_string_ptr(struct Clayterm *ct, int index);
 
 #endif
