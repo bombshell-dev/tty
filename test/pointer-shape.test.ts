@@ -127,11 +127,21 @@ describe("pointer shape", () => {
     });
 
     it("emits only when the resolved shape changes", () => {
-      expect(sequences(term.render(layout(), LINK).output)).toEqual([
-        osc22("pointer"),
-      ]);
-      expect(sequences(term.render(layout(), LINK).output)).toEqual([]);
-      expect(sequences(term.render(layout(), over(3, 5)).output)).toEqual([]);
+      for (let i = 0; i < 3; i++) {
+        expect(sequences(term.render(layout(), LINK).output)).toEqual([
+          osc22("pointer"),
+        ]);
+        expect(sequences(term.render(layout(), LINK).output)).toEqual([]);
+        expect(sequences(term.render(layout(), over(3, 5)).output)).toEqual([]);
+        expect(sequences(term.render(layout(), FIELD).output)).toEqual([
+          osc22("text"),
+        ]);
+        expect(sequences(term.render(layout(), FIELD).output)).toEqual([]);
+        expect(sequences(term.render(layout(), PLAIN).output)).toEqual([
+          osc22("default"),
+        ]);
+        expect(sequences(term.render(layout(), PLAIN).output)).toEqual([]);
+      }
     });
 
     it("emits in line mode", () => {

@@ -134,7 +134,7 @@ describe("clip", () => {
     }
     let unnest = nest.map(() => close());
 
-    let result = term.render([
+    let frame = [
       open("root", {
         layout: { width: grow(), height: grow(), direction: "ltr" },
       }),
@@ -161,14 +161,31 @@ describe("clip", () => {
       text("│\n│\n│"),
       close(),
       close(),
-    ]);
+    ];
 
-    expect(trim(print(decode(result.output), 14, 6)).trim()).toEqual(`
+    let clean = [
+      open("root", {
+        layout: { width: grow(), height: grow(), direction: "ttb" },
+      }),
+      text("unclipped text"),
+      close(),
+    ];
+    let ansi = "";
+    for (let clipped of [true, false, true, false]) {
+      let result = term.render(clipped ? frame : clean);
+      ansi += decode(result.output);
+      expect(trim(print(ansi, 14, 6)).trim()).toEqual(
+        clipped
+          ? `
 ┌─┐┌────│
 │ ││clip│
 └─┘└────│
-`.trim());
-
-    expect(result.errors.map((e) => e.type)).toContain("CLIP_DEPTH_EXCEEDED");
+`.trim()
+          : "unclipped text",
+      );
+      expect(result.errors.map((e) => e.type)).toEqual(
+        clipped ? ["CLIP_DEPTH_EXCEEDED"] : [],
+      );
+    }
   });
 });
