@@ -202,7 +202,7 @@ export async function createTerm(options: TermOptions): Promise<Term> {
         ops,
         memory.buffer,
         native.opsBuf,
-        memory.buffer.byteLength,
+        native.opsBuf + native.opsCapacity,
       );
       let mode = options?.mode === "line" ? 1 : 0;
       let row = options?.row ?? 1;
@@ -307,9 +307,9 @@ export async function createTerm(options: TermOptions): Promise<Term> {
             throw new RangeError(`invalid terminal dimensions ${w}x${h}`);
           }
           if (w !== width || h !== height) {
+            native.update(w, h);
             width = w;
             height = h;
-            native.update(width, height);
             prev = new Set();
             pressed = new Set();
             wasDown = false;

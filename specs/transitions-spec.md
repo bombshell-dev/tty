@@ -460,26 +460,24 @@ Each handler:
 2. Applies its easing curve to progress.
 3. Lerps each property named in the `properties` bitmask from `initial` to
    `target`.
-4. Increments the Term context's `animating_count` unless progress is 1.0.
+4. Increments the current frame's `animating_count` unless progress is 1.0.
 5. Returns `true` if progress is 1.0 (transition complete), `false` otherwise.
 
-At the start of each `render()`, the Term resets `animating_count` to zero. At
-the end, the value is copied into the result struct as the `animating` flag
-(`true` if count > 0).
+At the start of each `render()`, the current frame's `animating_count` is reset
+to zero. At the end, the value is copied into the result struct as the
+`animating` flag (`true` if count > 0).
 
 ### 12.3 Per-Term isolation
 
-The `animating_count` lives on the Term's C-side context, not as module-level
-state. Multiple Terms created in the same process remain isolated.
+The `animating_count` belongs to a frame owned by the Term's C-side context.
+Multiple Terms created in the same process remain isolated.
 
 ### 12.4 Resolving the active Term inside the handler
 
 Clay's transition-handler signature does not carry a `userData` pointer or
-element ID. Each `reduce()` call records the currently-active Term pointer in a
-module-level variable (`ct_active_context`) and clears it at the end. The
-handler reads this variable to reach the Term's `animating_count`. A single
-render pass cannot overlap with another (renders are synchronous), so there is
-no concurrency concern.
+element ID. The handler obtains the active Clay context through
+`Clay_GetCurrentContext()` and reads the owning Term from the context's error
+handler `userData`. It increments that Term's current frame counter.
 
 ---
 

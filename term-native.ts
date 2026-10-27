@@ -43,6 +43,7 @@ export interface Native {
   memory: WebAssembly.Memory;
   statePtr: number;
   opsBuf: number;
+  opsCapacity: number;
   /**
    * Rebuild dimension-dependent renderer storage in place (renderer-spec 7.7).
    * Reuses this instance and memory; statePtr stays fixed and opsBuf may move.
@@ -112,8 +113,13 @@ export async function createTermNative(
 
   let ct = exports as unknown as {
     __heap_base: WebAssembly.Global;
-    clayterm_size(w: number, h: number): number;
-    clayterm_init(mem: number, w: number, h: number): number;
+    clayterm_size(w: number, h: number, runlistCapacity: number): number;
+    clayterm_init(
+      mem: number,
+      w: number,
+      h: number,
+      runlistCapacity: number,
+    ): number;
     clayterm_resize(ct: number, w: number, h: number): void;
     reduce(
       ct: number,
@@ -125,14 +131,19 @@ export async function createTermNative(
       px: number,
       py: number,
       pointer: number,
-    ): void;
+    ): number;
     output(ct: number): number;
     length(ct: number): number;
     set_capabilities(ct: number, caps: number): void;
-    pointer_over_count(): number;
-    pointer_over_id_string_length(index: number): number;
-    pointer_over_id_string_ptr(index: number): number;
-    get_element_bounds(name: number, len: number, out: number): number;
+    pointer_over_count(ct: number): number;
+    pointer_over_id_string_length(ct: number, index: number): number;
+    pointer_over_id_string_ptr(ct: number, index: number): number;
+    get_element_bounds(
+      ct: number,
+      name: number,
+      len: number,
+      out: number,
+    ): number;
     animating(ct: number): number;
     error_count(ct: number): number;
     error_type(ct: number, index: number): number;
@@ -154,14 +165,17 @@ export async function createTermNative(
     ct.set_capabilities(statePtr!, flags);
   }
 
-  // Renderer state and the fixed transfer buffer share linear memory as
-  // [heap: state][opsBuf]; opsBuf moves when the state size changes. Memory is
-  // grown to fit but never reclaimed, so a downsize keeps the high-water mark
-  // (renderer-spec 7.7). The instance is initialized once; resize rebuilds only
-  // its dimension-dependent storage.
+  // Native storage keeps both frames' runlists and metadata before the cells,
+  // output buffer, and Clay arena rebuilt on resize. The transfer buffer comes
+  // last and may move; native execution borrows strings from the retained
+  // runlist, never from this transfer/query workspace. Memory keeps its
+  // high-water mark when the viewport shrinks (renderer-spec 7.7).
   function layout(lw: number, lh: number): void {
     let heap = ct.__heap_base.value as number;
-    let size = ct.clayterm_size(lw, lh);
+    let size = ct.clayterm_size(lw, lh, transferBytes);
+    if (size <= 0) {
+      throw new RangeError("Terminal dimensions exceed renderer capacity.");
+    }
     let needed = heap + size + transferBytes;
     let pages = Math.ceil(needed / WASM_PAGE_BYTES);
     let current = memory.buffer.byteLength / WASM_PAGE_BYTES;
@@ -169,7 +183,7 @@ export async function createTermNative(
       memory.grow(pages - current);
     }
     if (statePtr === undefined) {
-      statePtr = ct.clayterm_init(heap, lw, lh);
+      statePtr = ct.clayterm_init(heap, lw, lh, transferBytes);
     } else {
       ct.clayterm_resize(statePtr, lw, lh);
     }
@@ -186,24 +200,45 @@ export async function createTermNative(
     get opsBuf() {
       return opsBuf;
     },
+    opsCapacity: transferBytes,
     update(uw: number, uh: number): void {
       layout(uw, uh);
     },
     setCapabilities(next: RenderCapabilities): void {
       setCaps(next);
     },
-    reduce: ct.reduce,
+    reduce(ptr, buf, len, mode, row, deltaTime, px, py, pointer): void {
+      let status = ct.reduce(
+        ptr,
+        buf,
+        len,
+        mode,
+        row,
+        deltaTime,
+        px,
+        py,
+        pointer,
+      );
+      if (status === 1) {
+        throw new RangeError(
+          "Frame exceeds retained runlist capacity; render a smaller visible slice or reduce frame content.",
+        );
+      }
+      if (status !== 0) {
+        throw new RangeError("Malformed packed render directives.");
+      }
+    },
     output: ct.output,
     length: ct.length,
     animating: ct.animating,
     getPointerOverIds(): string[] {
       let decoder = new TextDecoder();
-      let count = ct.pointer_over_count();
+      let count = ct.pointer_over_count(statePtr!);
       let ids: string[] = [];
       for (let i = 0; i < count; i++) {
-        let len = ct.pointer_over_id_string_length(i);
+        let len = ct.pointer_over_id_string_length(statePtr!, i);
         if (len === 0) continue;
-        let ptr = ct.pointer_over_id_string_ptr(i);
+        let ptr = ct.pointer_over_id_string_ptr(statePtr!, i);
         ids.push(decoder.decode(new Uint8Array(memory.buffer, ptr, len)));
       }
       return ids;
@@ -211,9 +246,14 @@ export async function createTermNative(
     getElementBounds(id: string): BoundingBox | undefined {
       let enc = new TextEncoder();
       let bytes = enc.encode(id);
+      // Query and result must both fit the transfer workspace. A name this
+      // large could not have been packed into a retained frame.
+      let out = (opsBuf + bytes.length + 3) & ~3;
+      if (out + 16 > opsBuf + transferBytes) {
+        return undefined;
+      }
       new Uint8Array(memory.buffer).set(bytes, opsBuf);
-      let out = opsBuf + 256;
-      let found = ct.get_element_bounds(opsBuf, bytes.length, out);
+      let found = ct.get_element_bounds(statePtr!, opsBuf, bytes.length, out);
       if (!found) {
         return undefined;
       }
