@@ -17,6 +17,7 @@ struct Clayterm;
 #define CLAYTERM_OP_OPEN_ELEMENT 0x02
 #define CLAYTERM_OP_TEXT 0x03
 #define CLAYTERM_OP_CLOSE_ELEMENT 0x04
+#define CLAYTERM_OP_REPLAY 0x05
 #define CLAYTERM_PROP_LAYOUT 0x01
 #define CLAYTERM_PROP_BG_COLOR 0x02
 #define CLAYTERM_PROP_CORNER_RADIUS 0x04
@@ -42,8 +43,9 @@ int length(struct Clayterm *ct);
 uint32_t animating(struct Clayterm *ct);
 void measure(int ret, int txt);
 
-int get_element_bounds(struct Clayterm *ct, const char *name, int name_len,
-                       float *out);
+/* Output: four float32 bounds followed by uint32 byte offset and length. */
+int get_element_info(struct Clayterm *ct, const char *name, int name_len,
+                     uint32_t *out);
 
 int pointer_over_count(struct Clayterm *ct);
 int pointer_over_id_string_length(struct Clayterm *ct, int index);

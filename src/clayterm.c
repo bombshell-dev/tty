@@ -748,70 +748,104 @@ void clayterm_resize(struct Clayterm *ct, int w, int h) {
 
 void set_capabilities(struct Clayterm *ct, uint32_t caps) { ct->caps = caps; }
 
-/* Check packed extents before copying or allowing Clay to borrow any bytes.
- * This is a wire-safety check; directive property validation stays on the host.
+/* Assemble the current runlist in one walk of the transfer buffer. Fresh
+ * directives stay in contiguous spans; each replay flushes the preceding span
+ * and copies its element from the previous frame. Only the reusable runlist is
+ * written until validation succeeds, preserving the completed frame on error.
  */
-static int packed_valid(const uint32_t *buf, int len) {
-  int i = 0;
-  int depth = 0;
-  while (i < len) {
-    uint32_t op = buf[i++];
-    if (op == CLAYTERM_OP_OPEN_ELEMENT) {
-      if (i == len)
-        return 0;
-      uint32_t bytes = buf[i++];
-      uint32_t words = bytes / 4 + (bytes % 4 != 0);
-      if (words >= (uint32_t)(len - i))
-        return 0;
-      i += (int)words;
-      uint32_t mask = buf[i++];
-      if (mask & ~0xffu)
-        return 0;
-      int props = ((mask & CLAYTERM_PROP_LAYOUT) ? 9 : 0) +
-                  ((mask & CLAYTERM_PROP_BG_COLOR) ? 1 : 0) +
-                  ((mask & CLAYTERM_PROP_CORNER_RADIUS) ? 1 : 0) +
-                  ((mask & CLAYTERM_PROP_BORDER) ? 9 : 0) +
-                  ((mask & CLAYTERM_PROP_CLIP) ? 1 : 0) +
-                  ((mask & CLAYTERM_PROP_FLOATING) ? 7 : 0) +
-                  ((mask & CLAYTERM_PROP_TRANSITION) ? 2 : 0) +
-                  ((mask & CLAYTERM_PROP_CURSOR) ? 1 : 0);
-      if (props > len - i)
-        return 0;
-      i += props;
-      depth++;
-    } else if (op == CLAYTERM_OP_TEXT) {
-      if (len - i < 5)
-        return 0;
-      uint32_t bytes = buf[i + 4];
-      i += 5;
-      uint32_t words = bytes / 4 + (bytes % 4 != 0);
-      if (words > (uint32_t)(len - i))
-        return 0;
-      i += (int)words;
-    } else if (op == CLAYTERM_OP_CLOSE_ELEMENT) {
-      if (depth == 0)
-        return 0;
-      depth--;
-    } else {
-      return 0;
-    }
-  }
-  return depth == 0;
-}
-
 static int prepare_current_frame(struct Clayterm *ct, const uint32_t *buf,
                                  int len) {
   if (len < 0)
     return CLAYTERM_REDUCE_INVALID;
-  if ((uint32_t)len > ct->runlist_capacity / 4)
+  uint32_t capacity = ct->runlist_capacity / 4;
+  uint32_t end = (uint32_t)len;
+  if (end > capacity)
     return CLAYTERM_REDUCE_CAPACITY;
-  if (!packed_valid(buf, len))
-    return CLAYTERM_REDUCE_INVALID;
 
   Frame *frame = ct->frames.current;
-  frame_render_init(frame, ct->frames.previous);
-  memcpy(frame->runlist, buf, (size_t)len * 4);
-  frame->runlist_length = (uint32_t)len;
+  const Frame *previous = ct->frames.previous;
+  uint32_t i = 0;
+  uint32_t fresh = 0;
+  uint32_t written = 0;
+  while (i < end) {
+    uint32_t start = i;
+    uint32_t op = buf[i++];
+    switch (op) {
+    case CLAYTERM_OP_OPEN_ELEMENT: {
+      if (i == end)
+        return CLAYTERM_REDUCE_INVALID;
+      uint32_t bytes = buf[i++];
+      uint32_t words = bytes / 4 + (bytes % 4 != 0);
+      if (words >= end - i)
+        return CLAYTERM_REDUCE_INVALID;
+      i += words;
+      uint32_t mask = buf[i++];
+      if (mask & ~0xffu)
+        return CLAYTERM_REDUCE_INVALID;
+      uint32_t props = ((mask & CLAYTERM_PROP_LAYOUT) ? 9 : 0) +
+                       ((mask & CLAYTERM_PROP_BG_COLOR) ? 1 : 0) +
+                       ((mask & CLAYTERM_PROP_CORNER_RADIUS) ? 1 : 0) +
+                       ((mask & CLAYTERM_PROP_BORDER) ? 9 : 0) +
+                       ((mask & CLAYTERM_PROP_CLIP) ? 1 : 0) +
+                       ((mask & CLAYTERM_PROP_FLOATING) ? 7 : 0) +
+                       ((mask & CLAYTERM_PROP_TRANSITION) ? 2 : 0) +
+                       ((mask & CLAYTERM_PROP_CURSOR) ? 1 : 0);
+      if (props > end - i)
+        return CLAYTERM_REDUCE_INVALID;
+      i += props;
+      break;
+    }
+    case CLAYTERM_OP_TEXT: {
+      if (end - i < 5)
+        return CLAYTERM_REDUCE_INVALID;
+      uint32_t bytes = buf[i + 4];
+      i += 5;
+      uint32_t words = bytes / 4 + (bytes % 4 != 0);
+      if (words > end - i)
+        return CLAYTERM_REDUCE_INVALID;
+      i += words;
+      break;
+    }
+    case CLAYTERM_OP_CLOSE_ELEMENT:
+      break;
+    case CLAYTERM_OP_REPLAY: {
+      if (end - i < 2)
+        return CLAYTERM_REDUCE_INVALID;
+      uint32_t offset = buf[i++];
+      uint32_t length = buf[i++];
+      if (((offset | length) & 3u) != 0)
+        return CLAYTERM_REDUCE_INVALID;
+      uint32_t replay_start = offset / 4;
+      uint32_t replay_words = length / 4;
+      if (replay_start > previous->runlist_length ||
+          replay_words > previous->runlist_length - replay_start)
+        return CLAYTERM_REDUCE_INVALID;
+
+      uint32_t fresh_words = start - fresh;
+      if (fresh_words > capacity - written ||
+          replay_words > capacity - written - fresh_words)
+        return CLAYTERM_REDUCE_CAPACITY;
+      memcpy(frame->runlist + written, buf + fresh, (size_t)fresh_words * 4);
+      written += fresh_words;
+      memcpy(frame->runlist + written, previous->runlist + replay_start,
+             (size_t)replay_words * 4);
+      written += replay_words;
+      fresh = i;
+      break;
+    }
+    default:
+      return CLAYTERM_REDUCE_INVALID;
+    }
+  }
+  uint32_t fresh_words = end - fresh;
+  if (fresh_words > capacity - written)
+    return CLAYTERM_REDUCE_CAPACITY;
+  memcpy(frame->runlist + written, buf + fresh, (size_t)fresh_words * 4);
+
+  /* Assembly succeeded. Reset metadata and shared output without clearing the
+   * runlist bytes just written, then publish its complete length. */
+  frame_render_init(frame, previous);
+  frame->runlist_length = written + fresh_words;
   return CLAYTERM_REDUCE_OK;
 }
 
@@ -1251,8 +1285,8 @@ uint32_t animating(struct Clayterm *ct) {
   return ct->frames.previous->animating_count;
 }
 
-int get_element_bounds(struct Clayterm *ct, const char *name, int name_len,
-                       float *out) {
+int get_element_info(struct Clayterm *ct, const char *name, int name_len,
+                     uint32_t *out) {
   Frame *frame = ct->frames.previous;
   if (!frame->layout_valid)
     return 0;
@@ -1262,14 +1296,14 @@ int get_element_bounds(struct Clayterm *ct, const char *name, int name_len,
   if (index < 0)
     return 0;
   Clay_SetCurrentContext(ct->clay);
-  Clay_ElementData data = Clay_GetElementData(frame->elements[index].id);
+  const ElementInfo *info = &frame->elements[index];
+  Clay_ElementData data = Clay_GetElementData(info->id);
   if (!data.found) {
     return 0;
   }
-  out[0] = data.boundingBox.x;
-  out[1] = data.boundingBox.y;
-  out[2] = data.boundingBox.width;
-  out[3] = data.boundingBox.height;
+  memcpy(out, &data.boundingBox, sizeof(data.boundingBox));
+  out[4] = info->offset;
+  out[5] = info->length;
   return 1;
 }
 

@@ -7,7 +7,6 @@ import {
   type Op,
   open,
   type PointerShape,
-  snapshot,
   text,
 } from "../ops.ts";
 import type { CapabilityEvent } from "../input.ts";
@@ -209,11 +208,26 @@ describe("pointer shape", () => {
       expect(sequences(output)).toEqual([]);
     });
 
-    it("sees elements inside a snapshot", () => {
-      let ops = layout();
-      let frozen = snapshot(ops.slice(1, -1));
-      let result = term.render([ops[0], frozen, ops[ops.length - 1]], FIELD);
-      expect(sequences(result.output)).toEqual([osc22("text")]);
+    it("resolves replayed descendants against each render's pointer", async () => {
+      let direct = await createTerm({ width: 40, height: 6 });
+      direct.update([SUPPORTED]);
+      direct.render(layout());
+      let previous = term.render(layout());
+      let steps = [
+        [LINK, [osc22("pointer")]],
+        [FIELD, [osc22("text")]],
+        [FIELD, []],
+        [PLAIN, [osc22("default")]],
+        [undefined, []],
+        [FIELD, [osc22("text")]],
+      ] as const;
+      for (let [options, shapes] of steps) {
+        let expected = direct.render(layout(), options);
+        previous = term.render([previous.info.get("root")!.replay], options);
+        expect(sequences(previous.output)).toEqual(shapes);
+        expect(decode(previous.output)).toEqual(decode(expected.output));
+        expect(previous.events).toEqual(expected.events);
+      }
     });
 
     it("lets a capture-mode floating overlay win over what is beneath", () => {

@@ -5,6 +5,8 @@ import { assert, validate, validated } from "../validate.ts";
 import { print } from "./print.ts";
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+const trim = (value: string) =>
+  value.split("\n").map((line) => line.trimEnd()).join("\n");
 
 describe("validate", () => {
   it("accepts valid ops", () => {
@@ -17,6 +19,38 @@ describe("validate", () => {
 
   it("accepts empty array", () => {
     expect(validate([])).toBe(true);
+  });
+
+  it("accepts balanced nested elements and siblings", () => {
+    let ops = [
+      open("root"),
+      open("first"),
+      text("one"),
+      close(),
+      open("second"),
+      open("child"),
+      text("two"),
+      close(),
+      close(),
+      close(),
+      open("peer"),
+      close(),
+    ];
+    expect(validate(ops)).toBe(true);
+    expect(() => assert(ops)).not.toThrow();
+  });
+
+  it("rejects missing closes, surplus closes, and a close before its open", () => {
+    for (
+      let ops of [
+        [open("root"), text("missing close")],
+        [open("root"), close(), close()],
+        [close(), open("root")],
+      ]
+    ) {
+      expect(validate(ops)).toBe(false);
+      expect(() => assert(ops)).toThrow(TypeError);
+    }
   });
 
   it("accepts transition ops", () => {
@@ -286,6 +320,139 @@ describe("validated", () => {
       10,
     );
     expect(out).toContain("Hello, World!");
+  });
+
+  it("accepts replay and its object spread from each completed render", () => {
+    let result = term.render([open("root"), text("hello"), close()]);
+    for (let i = 0; i < 4; i++) {
+      let replay = { ...result.info.get("root")!.replay };
+      expect(validate([replay])).toBe(true);
+      result = term.render([replay], { mode: "line" });
+      expect(print(decode(result.output), 40, 10).trim()).toBe("hello");
+      expect(result.errors).toEqual([]);
+    }
+  });
+
+  it("preserves a saved replay and output after rejecting unbalanced wrappers", async () => {
+    let checked = validated(await createTerm({ width: 8, height: 2 }));
+    let previous = checked.render([open("item"), text("saved"), close()]);
+    let output = decode(previous.output);
+    expect(trim(print(output, 8, 2))).toEqual("saved\n");
+    let item = previous.info.get("item")!;
+    for (
+      let ops of [
+        [open("unfinished"), item.replay],
+        [item.replay, close()],
+        [close(), item.replay, open("unfinished")],
+      ]
+    ) {
+      expect(() => checked.render(ops)).toThrow(TypeError);
+      expect(decode(previous.output)).toEqual(output);
+      expect(previous.info.get("item")?.bounds).toEqual(item.bounds);
+    }
+
+    let next = checked.render([
+      open("wrapper", {
+        layout: { width: grow(), height: grow(), padding: { left: 2, top: 1 } },
+      }),
+      item.replay,
+      close(),
+    ]);
+    expect(trim(print(output + decode(next.output), 8, 2))).toEqual(
+      "\n  saved",
+    );
+    expect(next.info.get("item")?.bounds).toEqual({
+      x: 2,
+      y: 1,
+      width: 5,
+      height: 1,
+    });
+    expect(next.errors).toEqual([]);
+  });
+
+  it("rejects stale replay even when the new frame uses the same element range", () => {
+    let first = term.render([open("root"), text("one"), close()]);
+    let replay = first.info.get("root")!.replay;
+    let second = term.render([open("root"), text("two"), close()]);
+    expect(first.info.get("root")).toBeUndefined();
+    expect(() => term.render([replay])).toThrow(/latest completed render/);
+    let result = term.render([second.info.get("root")!.replay], {
+      mode: "line",
+    });
+    expect(print(decode(result.output), 40, 10).trim()).toBe("two");
+  });
+
+  it("detects expiry through another reference to the same Term", async () => {
+    let raw = await createTerm({ width: 8, height: 1 });
+    let checked = validated(raw);
+    let first = checked.render([open("root"), text("one"), close()]);
+    let replay = first.info.get("root")!.replay;
+    raw.render([open("root"), text("two"), close()]);
+    expect(() => checked.render([replay])).toThrow(/latest completed render/);
+    expect(first.info.get("root")).toBeUndefined();
+  });
+
+  it("preserves replay validation when wrappers are nested", () => {
+    let checked = validated(term);
+    let first = checked.render([open("root"), text("hello"), close()]);
+    let replay = first.info.get("root")!.replay;
+    let next = checked.render([replay], { mode: "line" });
+    expect(print(decode(next.output), 40, 10).trim()).toBe("hello");
+    expect(() => checked.render([replay])).toThrow(/latest completed render/);
+  });
+
+  it("expires frozen metadata and a saved lookup without mutating either", async () => {
+    let raw = await createTerm({ width: 8, height: 1 });
+    let first = raw.render([open("root"), text("one"), close()]);
+    let lookup = first.info.get;
+    Object.freeze(first.info);
+    let replay = lookup("root")!.replay;
+    let next = raw.render([replay]);
+    expect(next.info.get("root")).toBeDefined();
+    expect(first.info.get("root")).toBeUndefined();
+    expect(lookup("root")).toBeUndefined();
+  });
+
+  it("expires replay after an empty render without a metadata lookup", () => {
+    let first = term.render([open("root"), close()]);
+    let replay = first.info.get("root")!.replay;
+    term.render([]);
+    expect(() => term.render([replay])).toThrow(/latest completed render/);
+  });
+
+  it("expires replay when a completed render reports layout errors", () => {
+    let first = term.render([open("root"), close()]);
+    let replay = first.info.get("root")!.replay;
+    let result = term.render([open("dup"), close(), open("dup"), close()]);
+    expect(result.errors.some((error) => error.type === "DUPLICATE_ID")).toBe(
+      true,
+    );
+    expect(() => term.render([replay])).toThrow(/latest completed render/);
+  });
+
+  it("preserves replay through resize, capability updates, and rejected renders", () => {
+    let first = term.render([open("root"), text("hello"), close()]);
+    let replay = first.info.get("root")!.replay;
+    term.update([
+      { type: "resize", width: 8, height: 1 },
+      { type: "capability", key: "sync-output", value: true },
+    ]);
+
+    // A valid replay tag with a malformed range reaches native validation.
+    expect(() =>
+      Reflect.apply(term.render, term, [[{ ...replay, offset: 0xFFFFFFFC }]])
+    ).toThrow(RangeError);
+    expect(() => term.render([text("x".repeat(3 * 1024 * 1024))]))
+      .toThrow(RangeError);
+
+    let result = term.render([replay], { mode: "line" });
+    expect(print(decode(result.output), 8, 1).trim()).toBe("hello");
+    expect(result.errors).toEqual([]);
+  });
+
+  it("does not accept an untagged replay before the first render", () => {
+    expect(() => term.render([{ directive: 0x05, offset: 0, length: 20 }]))
+      .toThrow(/latest completed render/);
   });
 
   it("throws on invalid ops", () => {

@@ -242,7 +242,8 @@ void frame_init(Frame *frame, char *base, uint32_t runlist_capacity,
 /* Prepare for a new render by clearing out state that will be built up over
  * the course of the render.
  *
- * Resets the shared output length; call only after validating the directives.
+ * Resets the shared output length; call after assembling a valid runlist.
+ * Clears runlist_length but preserves the assembled bytes.
  * Inherits emitted pointer shape and cursor visibility from previous_frame. */
 void frame_render_init(Frame *frame, const Frame *previous_frame);
 

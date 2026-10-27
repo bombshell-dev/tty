@@ -1,4 +1,5 @@
 import { f32, offsets, struct } from "./typedef.ts";
+import type { Op } from "./ops.ts";
 
 export interface BoundingBox {
   x: number;
@@ -21,8 +22,8 @@ const TEXT_TRANSFER_BUFFER_BYTES = 1024 * 1024;
 const CLAY_DEFAULT_MAX_ELEMENT_COUNT = 8192;
 
 // Conservative fixed wire-format budget per element. This covers the largest
-// non-text open/close element encoding we currently support; text, element id,
-// and snapshot payload bytes live in TEXT_TRANSFER_BUFFER_BYTES.
+// non-text open/close element encoding we currently support; text and element
+// id bytes live in TEXT_TRANSFER_BUFFER_BYTES.
 const MAX_FIXED_ELEMENT_WIRE_BYTES = 120;
 
 /** Capability evidence the renderer consumes for emission. */
@@ -69,7 +70,7 @@ export interface Native {
   output(ct: number): number;
   length(ct: number): number;
   getPointerOverIds(): string[];
-  getElementBounds(id: string): BoundingBox | undefined;
+  getElementInfo(id: string): { bounds: BoundingBox; replay: Op } | undefined;
   animating(ct: number): number;
   errorCount(ct: number): number;
   errorType(ct: number, index: number): number;
@@ -138,7 +139,7 @@ export async function createTermNative(
     pointer_over_count(ct: number): number;
     pointer_over_id_string_length(ct: number, index: number): number;
     pointer_over_id_string_ptr(ct: number, index: number): number;
-    get_element_bounds(
+    get_element_info(
       ct: number,
       name: number,
       len: number,
@@ -151,7 +152,7 @@ export async function createTermNative(
     error_message_ptr(ct: number, index: number): number;
   };
 
-  // The transfer budget is intentionally fixed: text/id/snapshot payload bytes
+  // The transfer budget is intentionally fixed: text/id payload bytes
   // get 1MB, and fixed op overhead gets one max-sized element per Clay element.
   // Do not grow this dynamically per render; improve the wire format instead.
   let transferBytes = TEXT_TRANSFER_BUFFER_BYTES +
@@ -243,26 +244,35 @@ export async function createTermNative(
       }
       return ids;
     },
-    getElementBounds(id: string): BoundingBox | undefined {
+    getElementInfo(
+      id: string,
+    ): { bounds: BoundingBox; replay: Op } | undefined {
       let enc = new TextEncoder();
       let bytes = enc.encode(id);
-      // Query and result must both fit the transfer workspace. A name this
-      // large could not have been packed into a retained frame.
-      let out = (opsBuf + bytes.length + 3) & ~3;
-      if (out + 16 > opsBuf + transferBytes) {
+      // Native code consumes the name before writing the result, so the query
+      // and metadata share storage even when the name fills the workspace.
+      let out = opsBuf;
+      if (bytes.length > transferBytes) {
         return undefined;
       }
       new Uint8Array(memory.buffer).set(bytes, opsBuf);
-      let found = ct.get_element_bounds(statePtr!, opsBuf, bytes.length, out);
+      let found = ct.get_element_info(statePtr!, opsBuf, bytes.length, out);
       if (!found) {
         return undefined;
       }
       let view = new DataView(memory.buffer);
       return {
-        x: view.getFloat32(out + BOUNDING_BOX.x, true),
-        y: view.getFloat32(out + BOUNDING_BOX.y, true),
-        width: view.getFloat32(out + BOUNDING_BOX.width, true),
-        height: view.getFloat32(out + BOUNDING_BOX.height, true),
+        bounds: {
+          x: view.getFloat32(out + BOUNDING_BOX.x, true),
+          y: view.getFloat32(out + BOUNDING_BOX.y, true),
+          width: view.getFloat32(out + BOUNDING_BOX.width, true),
+          height: view.getFloat32(out + BOUNDING_BOX.height, true),
+        },
+        replay: {
+          directive: 0x05,
+          offset: view.getUint32(out + 16, true),
+          length: view.getUint32(out + 20, true),
+        },
       };
     },
     errorCount(ptr: number): number {

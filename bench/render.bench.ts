@@ -101,6 +101,8 @@ let uiOps: Op[] = [
 ];
 
 let bench = withCodSpeed(new Bench({ name: "render" }));
+let replayTerm = await createTerm({ width: 80, height: 24 });
+let replayResult = replayTerm.render(dashboardOps);
 
 bench
   .add(
@@ -116,6 +118,16 @@ bench
     sync(() => {
       for (let i = 0; i < 250; i++) {
         term.render(dashboardOps);
+      }
+    }),
+  )
+  .add(
+    "render steady replay",
+    sync(() => {
+      for (let i = 0; i < 250; i++) {
+        replayResult = replayTerm.render([
+          replayResult.info.get("root")!.replay,
+        ]);
       }
     }),
   );
