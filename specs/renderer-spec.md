@@ -475,9 +475,11 @@ capability, output, and invalidation rules in its own section of this
 specification. Synchronized output (§7.9) and pointer shape (§7.10) are
 specified so far.
 
-Color encoding, Kitty keyboard mode setup, and Kitty graphics emission are
+In particular, Kitty keyboard mode setup and Kitty graphics emission are
 deferred to their respective follow-up PRs. The renderer continues to emit its
-existing hardcoded ANSI output until each is specified.
+existing hardcoded ANSI output until each is specified. Color encoding is
+specified in the [Color Encoding Specification](color-encoding-spec.md), which
+the renderer follows once adopted.
 
 ### 7.9 Synchronized output (DEC mode 2026)
 
@@ -594,7 +596,9 @@ parameters specify the terminal dimensions in character cells.
 The optional `terminfo` value (from `detectTerminal()`; see
 [Terminfo Specification](terminfo-spec.md) §10.1) initializes the Term's private
 `RuntimeCapabilities` from the static `Capabilities` it carries. When omitted,
-the Term uses the §7.1 baseline.
+the Term uses the §7.1 baseline. The renderer resolves its color encoding from
+this capability snapshot; the derivation rule and downmapping behavior are
+specified in the [Color Encoding Specification](color-encoding-spec.md).
 
 ### 8.2 Render invocation
 

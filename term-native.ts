@@ -39,10 +39,22 @@ export const POINTER_ABSENT = 0;
 export const POINTER_UP = 1;
 export const POINTER_DOWN = 2;
 
+/** Color capability evidence the renderer consumes for emission
+ * (color-encoding-spec §4.2). */
+export interface ColorCaps {
+  colors: number;
+  trueColor: boolean;
+}
+
+/** Full capability evidence pushed into the renderer. */
+export interface NativeCapabilities extends RenderCapabilities, ColorCaps {}
+
 export interface Native {
   memory: WebAssembly.Memory;
   statePtr: number;
   opsBuf: number;
+  /** The color capability evidence currently held by the renderer. */
+  readonly caps: ColorCaps;
   /**
    * Re-initialize renderer state for new dimensions in place
    * (renderer-spec 7.7). Reuses this instance and memory; statePtr and
@@ -55,7 +67,7 @@ export interface Native {
    * resize updates. Returns true when withdrawing pointerShape leaves a
    * non-default shape on screen that the caller must reset.
    */
-  setCapabilities(caps: RenderCapabilities): boolean;
+  setCapabilities(caps: NativeCapabilities): boolean;
   reduce(
     ct: number,
     buf: number,
@@ -82,7 +94,7 @@ import { compiled } from "./wasm.ts";
 export async function createTermNative(
   w: number,
   h: number,
-  caps: RenderCapabilities,
+  caps: NativeCapabilities,
 ): Promise<Native> {
   let memory = new WebAssembly.Memory({ initial: 2 });
   let exports: Record<string, CallableFunction> = {};
@@ -129,7 +141,13 @@ export async function createTermNative(
     ): void;
     output(ct: number): number;
     length(ct: number): number;
-    set_capabilities(ct: number, caps: number): number;
+    set_capabilities(
+      ct: number,
+      caps: number,
+      colors: number,
+      truecolor: number,
+    ): number;
+    Clay_SetPointerState(vec: number, down: number): void;
     pointer_shape(ct: number): number;
     set_pointer_shape(ct: number, shape: number): void;
     pointer_over_count(): number;
@@ -153,13 +171,27 @@ export async function createTermNative(
   let opsBuf = 0;
   let capFlags = 0;
 
+  // Current color capability evidence. init() zeroes instance state, so
+  // the values are re-pushed after every (re)init — this is what makes
+  // the evidence survive resize updates (color-encoding-spec §4.2).
+  let currentCaps: ColorCaps = {
+    colors: caps.colors,
+    trueColor: caps.trueColor,
+  };
+
   function pushCaps(ptr: number): boolean {
-    return ct.set_capabilities(ptr, capFlags) !== 0;
+    return ct.set_capabilities(
+      ptr,
+      capFlags,
+      currentCaps.colors,
+      currentCaps.trueColor ? 1 : 0,
+    ) !== 0;
   }
 
-  function setCaps(next: RenderCapabilities): void {
+  function setCaps(next: NativeCapabilities): void {
     capFlags = (next.syncOutput ? RENDER_CAP_SYNC_OUTPUT : 0) |
       (next.pointerShape ? RENDER_CAP_POINTER_SHAPE : 0);
+    currentCaps = { colors: next.colors, trueColor: next.trueColor };
   }
 
   // Renderer state and the fixed transfer buffer share linear memory as
@@ -193,10 +225,13 @@ export async function createTermNative(
     get opsBuf() {
       return opsBuf;
     },
+    get caps(): ColorCaps {
+      return currentCaps;
+    },
     update(uw: number, uh: number): void {
       layout(uw, uh);
     },
-    setCapabilities(next: RenderCapabilities): boolean {
+    setCapabilities(next: NativeCapabilities): boolean {
       setCaps(next);
       return pushCaps(statePtr!);
     },

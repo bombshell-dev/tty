@@ -168,23 +168,25 @@ export interface Term {
 export async function createTerm(options: TermOptions): Promise<Term> {
   let { width, height, terminfo } = options;
 
-  let currentCaps: RuntimeCapabilities = runtimeFromStatic(
-    terminfo?.capabilities ?? {
-      colors: 256,
-      trueColor: false,
-      bce: true,
-      autoMargin: true,
-      xenl: true,
-      altScreen: true,
-      styledUnderline: false,
-      syncOutput: false,
-      pointerShape: false,
-    },
-  );
+  let seed = terminfo?.capabilities ?? {
+    colors: 256,
+    trueColor: false,
+    bce: true,
+    autoMargin: true,
+    xenl: true,
+    altScreen: true,
+    styledUnderline: false,
+    syncOutput: false,
+    pointerShape: false,
+  };
+
+  let currentCaps: RuntimeCapabilities = runtimeFromStatic(seed);
 
   let native = await createTermNative(width, height, {
     syncOutput: currentCaps.syncOutput,
     pointerShape: currentCaps.pointerShape,
+    colors: currentCaps.colors,
+    trueColor: currentCaps.trueColor,
   });
   let { memory } = native;
 
@@ -322,13 +324,21 @@ export async function createTerm(options: TermOptions): Promise<Term> {
           }
         }
 
+        // Folded evidence changed the renderer's capabilities: push it so
+        // the next render resolves the new tier and emission gates
+        // (color-encoding-spec §4.2). A tier change itself forces a complete
+        // redraw on the next transaction (§6.4).
         if (
           next.syncOutput !== currentCaps.syncOutput ||
-          next.pointerShape !== currentCaps.pointerShape
+          next.pointerShape !== currentCaps.pointerShape ||
+          next.colors !== native.caps.colors ||
+          next.trueColor !== native.caps.trueColor
         ) {
           let reset = native.setCapabilities({
             syncOutput: next.syncOutput,
             pointerShape: next.pointerShape,
+            colors: next.colors,
+            trueColor: next.trueColor,
           });
           if (reset) out.push(POINTER_SHAPE_RESET.slice());
         }
