@@ -100,7 +100,7 @@ describe("pointer shape", () => {
     it("emits once the capability arrives", async () => {
       let late = await createTerm({ width: 40, height: 6 });
       expect(sequences(late.render(layout(), LINK).output)).toEqual([]);
-      expect(late.update([SUPPORTED])).toEqual(new Uint8Array(0));
+      expect(late.update([SUPPORTED])).toBeUndefined();
       expect(sequences(late.render(layout(), LINK).output)).toEqual([
         osc22("pointer"),
       ]);
@@ -270,30 +270,57 @@ describe("pointer shape", () => {
       ]);
     });
 
-    it("returns the reset from update() when the capability is withdrawn", () => {
+    it("emits no shape changes or resets while the capability is withdrawn", () => {
       term.render(layout(), LINK);
-      expect(decode(term.update([WITHDRAWN]))).toBe(osc22("default"));
+      expect(term.update([WITHDRAWN])).toBeUndefined();
+      expect(term.capabilities.pointerShape).toBe(false);
       expect(sequences(term.render(layout(), LINK).output)).toEqual([]);
-    });
-
-    it("returns nothing from update() when withdrawn at default", () => {
-      term.render(layout(), PLAIN);
-      expect(term.update([WITHDRAWN])).toEqual(new Uint8Array(0));
-    });
-
-    it("returns the reset once from a batch that withdraws twice", () => {
-      term.render(layout(), LINK);
-      expect(decode(term.update([WITHDRAWN, SUPPORTED, WITHDRAWN]))).toBe(
-        osc22("default"),
+      expect(sequences(term.render(layout(), FIELD).output)).toEqual([]);
+      expect(sequences(term.render(layout()).output)).toEqual([]);
+      expect(sequences(term.render(layout(), { mode: "line" }).output)).toEqual(
+        [],
       );
+    });
+
+    it("compares with the last emitted shape after disabled renders", () => {
+      term.render(layout(), LINK);
+      term.update([WITHDRAWN]);
+      term.render(layout(), FIELD);
+      term.render(layout());
+      term.update([SUPPORTED]);
+
+      expect(sequences(term.render(layout(), LINK).output)).toEqual([]);
+      expect(sequences(term.render(layout(), FIELD).output)).toEqual([
+        osc22("text"),
+      ]);
+    });
+
+    it("resets an emitted shape only when an enabled render resolves default", () => {
+      term.render(layout(), LINK);
+      term.update([WITHDRAWN]);
+      expect(sequences(term.render(layout()).output)).toEqual([]);
+      term.update([SUPPORTED]);
+
+      expect(sequences(term.render(layout()).output)).toEqual([
+        osc22("default"),
+      ]);
+      expect(sequences(term.render(layout()).output)).toEqual([]);
+    });
+
+    it("preserves the emitted shape across capability toggles before rendering", () => {
+      term.render(layout(), LINK);
+      expect(term.update([WITHDRAWN, SUPPORTED, WITHDRAWN])).toBeUndefined();
+      expect(term.capabilities.pointerShape).toBe(false);
+      expect(term.update([SUPPORTED])).toBeUndefined();
+      expect(term.capabilities.pointerShape).toBe(true);
+      expect(sequences(term.render(layout(), LINK).output)).toEqual([]);
     });
 
     it("keeps the emitted shape and capability through growth and shrink", () => {
       term.render(layout(), LINK);
       for (let [width, height] of [[120, 40], [40, 6]]) {
-        expect(term.update([{ type: "resize", width, height }])).toEqual(
-          new Uint8Array(0),
-        );
+        expect(term.update([{ type: "resize", width, height }]))
+          .toBeUndefined();
         expect(term.capabilities.pointerShape).toBe(true);
         expect(sequences(term.render(layout(), LINK).output)).toEqual([]);
         expect(sequences(term.render(layout(), FIELD).output)).toEqual([
@@ -308,15 +335,14 @@ describe("pointer shape", () => {
       ]);
     });
 
-    it("resets once when capability withdrawal is interleaved with resizes", () => {
+    it("retains the emitted shape when capability changes are interleaved with resizes", () => {
       term.render(layout(), LINK);
-      let reset = term.update([
+      expect(term.update([
         { type: "resize", width: 120, height: 40 },
         WITHDRAWN,
         { type: "resize", width: 40, height: 6 },
         WITHDRAWN,
-      ]);
-      expect(decode(reset)).toBe(osc22("default"));
+      ])).toBeUndefined();
       expect(term.capabilities.pointerShape).toBe(false);
       expect(sequences(term.render(layout(), FIELD).output)).toEqual([]);
 
@@ -324,8 +350,9 @@ describe("pointer shape", () => {
         { type: "resize", width: 120, height: 40 },
         SUPPORTED,
         { type: "resize", width: 40, height: 6 },
-      ])).toEqual(new Uint8Array(0));
+      ])).toBeUndefined();
       expect(term.capabilities.pointerShape).toBe(true);
+      expect(sequences(term.render(layout(), LINK).output)).toEqual([]);
       expect(sequences(term.render(layout(), FIELD).output)).toEqual([
         osc22("text"),
       ]);
