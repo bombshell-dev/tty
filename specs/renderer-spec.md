@@ -570,6 +570,14 @@ To restore before exit, the caller renders a frame without `pointer`, or passes
 `{ type: "capability", key: "pointer-shape", value: false }` to `update()`, and
 writes the result.
 
+### 7.11 Cell coverage
+
+Layout positions and sizes may be fractional. An element covers a cell when the
+cell's center lies inside the element's bounding box, counting its top and left
+edges and not its bottom and right edges. The renderer draws an element, and
+applies its clip rect, on exactly the cells it covers, and the pointer is over
+an element when its cell is covered.
+
 ---
 
 ## 8. Public Rendering API
@@ -1199,8 +1207,8 @@ events as part of the render result:
   pointer at pointer-down
 
 Pointer coordinates are cell coordinates. The pointer is over an element when
-its cell lies inside the element's bounding box, so a cell on an edge two
-elements share belongs only to the element that draws it.
+the element covers its cell (§7.11), so a cell on an edge two elements share
+belongs only to the element that draws it.
 
 This surface is functional but should not be treated as stable contract. The
 calling convention was discovered through iteration, the event model has
