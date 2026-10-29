@@ -27,7 +27,13 @@ function encodeZ85(data: Uint8Array): string {
   return out.join("");
 }
 
-const wasm = await Deno.readFile("clayterm.wasm");
+const [input, output] = Deno.args;
+if (!input || !output) {
+  console.error("Usage: bundle-wasm.ts <input.wasm> <output.ts>");
+  Deno.exit(1);
+}
+
+const wasm = await Deno.readFile(input);
 
 const compressed = new Uint8Array(
   brotliCompressSync(wasm, {
@@ -41,18 +47,15 @@ const compressed = new Uint8Array(
 
 const z85 = encodeZ85(compressed);
 
-// Decoder uses division instead of >>> to avoid 32-bit truncation on values near 0xFFFFFFFF.
-const source = `import{brotliDecompressSync}from"node:zlib";
-const Z="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
-const T=new Uint8Array(128);for(let i=0;i<85;i++)T[Z.charCodeAt(i)]=i;
-function d(s:string,n:number){const b=new Uint8Array(n);let o=0;for(let i=0;i<s.length&&o<n;i+=5){const v=T[s.charCodeAt(i)]*52200625+T[s.charCodeAt(i+1)]*614125+T[s.charCodeAt(i+2)]*7225+T[s.charCodeAt(i+3)]*85+T[s.charCodeAt(i+4)];if(o<n)b[o++]=Math.floor(v/16777216);if(o<n)b[o++]=Math.floor(v/65536)%256;if(o<n)b[o++]=Math.floor(v/256)%256;if(o<n)b[o++]=v%256;}return b;}
-const compressed=d(${JSON.stringify(z85)},${compressed.byteLength});
-export const compiled=await WebAssembly.compile(new Uint8Array(brotliDecompressSync(compressed)));
+// args separated to keep deno fmt happy
+const args = `${JSON.stringify(z85)}, ${compressed.byteLength}`;
+const source = `import { decode } from "./wasm-decode.ts";
+export const compiled = await decode(${args});
 `;
 
-await Deno.writeTextFile("wasm.ts", source);
+await Deno.writeTextFile(output, source);
 console.log(
-  `wrote wasm.ts (${wasm.length} → ${compressed.byteLength} bytes compressed, ${z85.length} bytes z85, ${
+  `wrote ${output} (${wasm.length} → ${compressed.byteLength} bytes compressed, ${z85.length} bytes z85, ${
     Math.round(z85.length / wasm.length * 100)
   }%)`,
 );

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 
-import { compiled } from "./wasm.ts";
+import { compiled } from "./input.wasm.ts";
 import { offsets, struct, uint32 } from "./typedef.ts";
 
 export const MAX_TERMINFO_ENTRY = 32768;
