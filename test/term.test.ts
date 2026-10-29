@@ -1028,10 +1028,38 @@ hi
       expect(out).not.toContain("\x1b[?2026");
     });
 
-    it("keeps wrapping after a resize update", () => {
+    it("keeps wrapping through growth and shrink", () => {
       term.update([syncOn]);
-      term.update([{ type: "resize", width: 50, height: 12 }]);
+      term.render(frame);
+      for (let [width, height] of [[120, 40], [20, 5]]) {
+        term.update([{ type: "resize", width, height }]);
+        expect(term.capabilities.syncOutput).toBe(true);
+        let out = decode(term.render(frame).output);
+        expect(out.startsWith("\x1b[?2026h")).toBe(true);
+        expect(out.endsWith("\x1b[?2026l")).toBe(true);
+      }
+    });
+
+    it("applies capability changes interleaved with resize updates", () => {
+      term.update([syncOn]);
+      term.render(frame);
+      term.update([
+        { type: "resize", width: 120, height: 40 },
+        syncOff,
+        { type: "resize", width: 20, height: 5 },
+      ]);
+      expect(term.capabilities.syncOutput).toBe(false);
       let out = decode(term.render(frame).output);
+      expect(out.length).toBeGreaterThan(0);
+      expect(out).not.toContain("\x1b[?2026");
+
+      term.update([
+        { type: "resize", width: 120, height: 40 },
+        syncOn,
+        { type: "resize", width: 20, height: 5 },
+      ]);
+      expect(term.capabilities.syncOutput).toBe(true);
+      out = decode(term.render(frame).output);
       expect(out.startsWith("\x1b[?2026h")).toBe(true);
       expect(out.endsWith("\x1b[?2026l")).toBe(true);
     });
