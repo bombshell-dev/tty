@@ -570,6 +570,44 @@ To restore before exit, the caller renders a frame without `pointer`, or passes
 `{ type: "capability", key: "pointer-shape", value: false }` to `update()`, and
 writes the result.
 
+### 7.9 Synchronized output (DEC mode 2026)
+
+When the `syncOutput` runtime capability is true, each full-screen frame
+(§8.2.1) is wrapped in Synchronized Output mode 2026 — Begin Synchronized Update
+(`CSI ? 2026 h`) before the frame's first emitted byte and End Synchronized
+Update (`CSI ? 2026 l`) after its last. The terminal buffers everything between
+the pair and presents it as one atomic repaint, so a frame never tears
+mid-update.
+
+**Capability evidence.** `syncOutput` originates exclusively from the
+`sync-output` `CapabilityEvent` (input-spec §5), emitted when the input parser
+reads a DECRPM 2026 reply to the probe (`CSI ? 2026 $ p`). Reply values 1, 2,
+and 3 (set, reset, permanently set) report support; 0 and 4 report none. The
+static `Capabilities` never seed this field: it is false until a probe reply is
+folded in through `update()`.
+
+**Invalidation and timing.** The renderer reads the capability snapshot at each
+render transaction, so a capability flip takes effect on the next rendered
+frame. No invalidation signal exists, and none is required: a flip between
+frames changes only whether the next frame is wrapped.
+
+**Normative rules:**
+
+- When `syncOutput` is false, the renderer MUST NOT emit `?2026h` or `?2026l`.
+- When `syncOutput` is true, the renderer MUST wrap each full-screen frame in
+  the BSU/ESU pair. Line mode (§8.2.2) is never wrapped: inline output may be
+  interleaved with foreign content, and an unterminated synchronized block would
+  suppress it.
+- A full-screen render whose diff produces no cell changes and no caret
+  transition MUST emit zero bytes, even when `syncOutput` is true. The renderer
+  decides after the diff, so no-op frames carry neither the wrap prefix nor the
+  suffix.
+- Terminals that receive the sequences without supporting the mode ignore it by
+  design; the probe still refines behavior for terminals that report mode 0
+  or 4.
+
+This section discharges the synchronized-output deferral recorded in §7.8.
+
 ---
 
 ## 8. Public Rendering API
@@ -749,7 +787,7 @@ fit(min?: number, max?: number): SizingAxis
 The element sizes to fit its content, optionally constrained by minimum and
 maximum bounds.
 
-### 8.5 Color helper
+### 8.5 Color values
 
 ```
 rgba(r: number, g: number, b: number, a?: number): number
@@ -758,6 +796,67 @@ rgba(r: number, g: number, b: number, a?: number): number
 Packs color channel values (each 0–255) into a single 32-bit integer in ARGB
 format. Alpha defaults to 255 (fully opaque). The returned value is used
 wherever the directive model expects a color.
+
+**Color values.** A color value is either a packed ARGB `number`, as produced by
+`rgba()`, or a CSS color `string`. Every directive field described as a color —
+`open({ bg })`, `border.color`, `border.bg`, the `color` and `bg` fields of
+structured border sides, and `text({ color, bg })` — accepts both forms. Each
+color string is resolved to a packed ARGB value at the transfer-encoding
+boundary (§9.2), so color strings MUST NOT appear in the transfer encoding. The
+wire format, snapshot encoding, and cell representation are unchanged by this
+acceptance: packed sRGB ARGB remains the only color representation the renderer
+sees.
+
+**Color string grammar.** A color string is one of the following CSS Color
+Module Level 4 forms. Function names and keywords are case-insensitive. Leading
+or trailing whitespace is not permitted.
+
+- **Hex.** `#` followed by exactly 3, 4, 6, or 8 hexadecimal digits. The 3- and
+  4-digit forms expand by doubling each digit: `#f80` is `#ff8800`, and `#f80a`
+  is `#ff8800aa`. The 4- and 8-digit forms supply alpha as their final digit
+  pair (or digit, doubled).
+- **Named colors.** The CSS named color keywords (`red`, `rebeccapurple`, ...),
+  and `transparent`, which is black with alpha 0.
+- **`rgb()` / `rgba()`.** Modern space-separated syntax with optional `/ alpha`,
+  and the legacy comma-separated syntax.
+- **`hsl()` / `hsla()`.** Modern and legacy syntax.
+- **`hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`.** Modern syntax.
+
+Channel and alpha arguments follow CSS Color 4: numbers, percentages where the
+channel permits them, angles (`deg`, `rad`, `grad`, `turn`) for hues, and the
+`none` keyword, which resolves to 0. The `color()` function, `color-mix()`,
+relative color syntax, and `device-cmyk()` are not supported and are invalid
+color strings.
+
+CSS system colors (`Canvas`, `CanvasText`, `LinkText`, ...) and `currentcolor`
+are reserved. They are invalid color strings in this version. System colors are
+reserved for mapping to the terminal's themable ANSI 16-color palette, which a
+packed sRGB value cannot express; that mapping, and `currentcolor`, will be
+specified separately.
+
+**Resolution.** A color string resolves to sRGB, then to a packed ARGB value:
+each of R, G, B is clamped to [0, 255] and rounded to the nearest integer; alpha
+is clamped to [0, 1], multiplied by 255, and rounded. Colors outside the sRGB
+gamut (common for `lab()`, `lch()`, `oklab()`, and `oklch()`) are therefore
+clipped per channel; no perceptual gamut mapping is performed. Alpha defaults to
+255 when a form does not supply it. A hex string and the equivalent `rgba()`
+call produce bit-identical packed values.
+
+**Invalid color strings.** A string that does not match the color string grammar
+is invalid directive input (§9.1). `validate()` reports it as an invalid field
+value. The packer MUST reject a directive array containing an invalid color
+string by throwing a `TypeError` before producing any bytes, rather than
+emitting a partially decoded or garbage color value.
+
+**Static checking.** In TypeScript, color fields are typed `number | string`.
+The directive constructors check string literals at compile time: a literal
+beginning with `#` must match the hex form (the type-level equivalent of
+`#${string{3,4,6,8}}`); a literal containing `(` must begin with a supported
+function name; any other literal must be a named color keyword or `transparent`.
+Function arguments are not checked statically. Strings whose value is only known
+at runtime (colors read from a theme or configuration, for example) pass the
+type check as `string` and are checked by `validate()` and the packer at render
+time.
 
 ### 8.6 Term update
 
@@ -983,7 +1082,8 @@ The `open()` constructor currently accepts the following property groups in its
   `bottom`, `left`) accepts either a scalar width or a structured object
   `{ width, color?, bg? }`. The shared `color` field is required and is the
   fallback foreground for every side; the optional shared `bg` field is the
-  fallback border-cell background for every side
+  fallback border-cell background for every side. Color fields accept the color
+  values of §8.5 (packed ARGB number or CSS color string)
 - **`cornerRadius`** — per-corner radius values, producing rounded box-drawing
   characters
 - **`clip`** — Declares the element as a clip region (see §7.5). Currently
@@ -1046,7 +1146,8 @@ input or lets it pass through, `clipTo` controls inherited clipping, and
 
 The `text()` constructor accepts: `color`, `bg`, `fontSize`, `letterSpacing`,
 `lineHeight`, and attribute flags (`bold`, `italic`, `underline`,
-`strikethrough`).
+`strikethrough`). The `color` and `bg` fields accept the color values of §8.5
+(packed ARGB number or CSS color string).
 
 These property groups represent the current implementation surface. New groups
 and fields have been added incrementally and more may follow.
@@ -1209,8 +1310,9 @@ acknowledged gaps, and the approach may evolve.
 ### 12.5 Validation and packing
 
 **`validate(ops)`** — A public API function that checks a directive array for
-structural errors (unbalanced open/close pairs, invalid field types). Exported
-and used in tests.
+structural errors (unbalanced open/close pairs, invalid field types — including
+color fields, which must be a packed ARGB number or a §8.5 CSS color string).
+Exported and used in tests.
 
 **`pack(ops, mem, offset)`** — An internal function that serializes a directive
 array into the transfer encoding described in Section 12.1. Currently exported
