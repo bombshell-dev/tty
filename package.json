@@ -1,6 +1,6 @@
 {
   "name": "@bomb.sh/tty",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "type": "module",
   "private": true,
   "scripts": {
