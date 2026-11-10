@@ -26,6 +26,13 @@ struct Clayterm;
 #define CLAYTERM_PROP_TRANSITION 0x40
 #define CLAYTERM_PROP_CURSOR 0x80
 
+/* Bytes of retained text-measurement cache keys per instance. Mirrors the
+ * host's fixed transfer budget in term-native.ts (1MB of payload plus 120
+ * bytes per Clay element at the 8192-element default), so any frame within
+ * that budget has its keys copied. Larger frames borrow theirs from the
+ * frame's own wire bytes for the duration of reduce(). */
+#define CLAYTERM_TEXT_KEY_BYTES (1024 * 1024 + 8192 * 120)
+
 /* WASM exports */
 int clayterm_size(int w, int h);
 struct Clayterm *init(void *mem, int w, int h);
@@ -44,5 +51,10 @@ int get_element_bounds(const char *name, int name_len, float *out);
 int pointer_over_count(void);
 int pointer_over_id_string_length(int index);
 int pointer_over_id_string_ptr(int index);
+
+/* Clay hook (patches/clay-measure-text-cache-key.patch): userData is the
+ * owning Clayterm from Clay's error handler. */
+const char *clayterm_copy_text_key(void *userData, const char *chars,
+                                   int32_t length);
 
 #endif

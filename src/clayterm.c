@@ -96,10 +96,21 @@ struct Clayterm {
       caret_y;   /* resolved cell (column, row); -1 sentinel until placed */
   int has_caret; /* 1 when the current frame will emit a cursor */
   int had_caret_last_frame; /* 1 when the previous frame emitted a cursor */
+  /* Text-measurement cache keys (patches/clay-measure-text-cache-key.patch).
+   * Clay matches a cached measurement by its text, so each published entry
+   * keeps a copy here: the frame's wire bytes are overwritten by the next
+   * render. Copies are appended and reclaimed together by resetting Clay's
+   * cache before a layout that might not fit. When this frame's keys are
+   * borrowed from its wire bytes instead, the cache is reset once the frame
+   * has been presented so no borrowed key outlives reduce(). */
+  char *text_keys;
+  int text_keys_used;
+  int text_keys_borrowed;
 };
 
 /* Memory layout inside the arena provided by the host:
  *   [Clayterm struct] [front cells] [back cells] [output buffer]
+ *   [Clay arena] [text keys]
  */
 /* 128 bytes per cell: ~84 bytes worst-case for CUP + SGR sequences, plus up
  * to 4 (base SMP char) + 8×4 (combining marks) = 36 bytes of cluster text. */
@@ -667,8 +678,9 @@ int clayterm_size(int w, int h) {
   int clay_bytes = (int)Clay_MinMemorySize();
   return align8((int)sizeof(struct Clayterm)) + align8(cell_bytes) /* front */
          + align8(cell_bytes)                                      /* back */
-         + align8(out_bytes)    /* output buffer */
-         + align64(clay_bytes); /* Clay arena */
+         + align8(out_bytes)                /* output buffer */
+         + align64(clay_bytes)              /* Clay arena */
+         + align8(CLAYTERM_TEXT_KEY_BYTES); /* text keys */
 }
 
 static void clay_error(Clay_ErrorData err) {
@@ -746,6 +758,7 @@ struct Clayterm *init(void *mem, int w, int h) {
       .lastbg = 0xffffffff,
       .lastx = -1,
       .lasty = -1,
+      .text_keys = clay_mem + clay_bytes,
   };
 
   // initialize back buffer with spaces and default fg/bg
@@ -789,6 +802,17 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
   ct->caret_x = -1;
   ct->caret_y = -1;
   ct->has_caret = 0;
+
+  /* A layout copies at most one key per distinct text, and no text's key is
+   * longer than the words encoding it, so len bounds this layout's copies.
+   * Reset only here, before Clay_BeginLayout, never while a layout holds
+   * measured-word references. */
+  ct->text_keys_borrowed = len > CLAYTERM_TEXT_KEY_BYTES / 4;
+  if (ct->text_keys_borrowed ||
+      len > (CLAYTERM_TEXT_KEY_BYTES - ct->text_keys_used) / 4) {
+    Clay_ResetMeasureTextCache();
+    ct->text_keys_used = 0;
+  }
 
   Clay_BeginLayout();
 
@@ -1110,7 +1134,29 @@ void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
     buf_str(&ct->out, "\x1b\\");
   }
 
+  /* Borrowed keys point into this call's wire bytes; none may outlive it. */
+  if (ct->text_keys_borrowed) {
+    Clay_ResetMeasureTextCache();
+    ct->text_keys_used = 0;
+  }
+
   ct_active_context = NULL;
+}
+
+const char *clayterm_copy_text_key(void *userData, const char *chars,
+                                   int32_t length) {
+  struct Clayterm *ct = (struct Clayterm *)userData;
+  /* A key that does not fit is borrowed; reduce() resets the cache after
+   * presenting the frame that borrowed it. */
+  if (ct->text_keys_borrowed || length < 0 ||
+      length > CLAYTERM_TEXT_KEY_BYTES - ct->text_keys_used) {
+    ct->text_keys_borrowed = 1;
+    return chars;
+  }
+  char *key = ct->text_keys + ct->text_keys_used;
+  memcpy(key, chars, (size_t)length);
+  ct->text_keys_used += length;
+  return key;
 }
 
 char *output(struct Clayterm *ct) { return ct->out.data; }
