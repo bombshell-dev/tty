@@ -1,10 +1,38 @@
 import { describe, expect, it } from "./suite.ts";
 import { createTerm } from "../term.ts";
-import { close, grow, open, pack, text } from "../ops.ts";
+import { close, grow, type Op, open, pack, text } from "../ops.ts";
 import { createTermNative } from "../term-native.ts";
 import { print } from "./print.ts";
 
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+const trim = (s: string) => s.split("\n").map((l) => l.trimEnd()).join("\n");
+
+// Two distinct strings whose measurement-cache hashes collide under the
+// default text config. Each must still measure and draw as itself.
+const SHORT = "synthetic sample synthetic sample synthetic sample 022aa2";
+const LONG =
+  "synthetic sample synthetic sample synthetic sample synthetic sample synthetic sample 01fda4";
+
+function boxes(contents: string[]): Op[] {
+  return [
+    open("root", {
+      layout: { width: grow(), height: grow(), direction: "ttb" },
+    }),
+    ...contents.flatMap((content, i) => [
+      open(`box-${i}`),
+      text(content),
+      close(),
+    ]),
+    close(),
+  ];
+}
+
+// The visible picture of boxes(contents) on a w x h grid.
+function picture(contents: string[], w: number, h: number): string {
+  let lines = contents.slice(0, h).map((c) => c.slice(0, w));
+  while (lines.length < h) lines.push("");
+  return lines.join("\n");
+}
 
 function indexOfSeq(haystack: Uint8Array, needle: number[]): number {
   outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
@@ -96,5 +124,34 @@ describe("width", () => {
     // the invalid sequence must never reach the terminal
     expect(indexOfSeq(out, [0xed, 0xa0, 0x80])).toBe(-1);
     expect(print(decode(out), 10, 3)).toContain("a�b");
+  });
+
+  describe("measurement cache", () => {
+    it("measures colliding strings as themselves in one frame", async () => {
+      let term = await createTerm({ width: 100, height: 3 });
+      let result = term.render(boxes([SHORT, LONG]));
+
+      expect(SHORT.length).toBe(57);
+      expect(LONG.length).toBe(91);
+      expect(result.info.get("box-0")?.bounds.width).toBe(57);
+      expect(result.info.get("box-1")?.bounds.width).toBe(91);
+      expect(trim(print(decode(result.output), 100, 3))).toEqual(
+        [SHORT, LONG, ""].join("\n"),
+      );
+    });
+
+    it("measures colliding strings as themselves across renders", async () => {
+      let term = await createTerm({ width: 100, height: 3 });
+      let screen = "";
+
+      for (let content of [SHORT, LONG, SHORT]) {
+        let result = term.render(boxes([content]));
+        screen += decode(result.output);
+        expect(result.info.get("box-0")?.bounds.width).toBe(content.length);
+        expect(trim(print(screen, 100, 3))).toEqual(
+          picture([content], 100, 3),
+        );
+      }
+    });
   });
 });

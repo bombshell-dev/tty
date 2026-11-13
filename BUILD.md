@@ -5,7 +5,7 @@ This guide is for maintainers and builders working on `@bomb.sh/tty` itself.
 It covers:
 
 - cloning the repo correctly,
-- initializing the `clay` git submodule,
+- initializing the `clay` and `xxhash` git submodules,
 - installing the toolchain needed to compile the C sources to WebAssembly,
 - building the local development artifacts, and
 - verifying that the repo is ready for development.
@@ -25,7 +25,7 @@ It generates:
 
 ## Clone the repo with submodules
 
-The build depends on the `clay` git submodule.
+The build depends on the `clay` and `xxhash` git submodules.
 
 Preferred fresh clone:
 
@@ -46,8 +46,8 @@ Quick check:
 git submodule status --recursive
 ```
 
-You should also see a populated `clay/` directory. If `clay/` is missing or
-empty, fix the submodule state before building.
+You should also see populated `clay/` and `xxhash/` directories. If either is
+missing or empty, fix the submodule state before building.
 
 ## Required tools
 
@@ -198,7 +198,7 @@ make clean && make
 Re-run `make` when:
 
 - you change files under `src/`
-- you update the `clay` submodule
+- you update the `clay` or `xxhash` submodule
 - `clayterm.wasm` or `wasm.ts` is missing
 - generated outputs look stale after switching branches or pulling changes
 
@@ -225,11 +225,12 @@ deno lint
 
 ## Troubleshooting
 
-### `clay/` is missing or empty
+### `clay/` or `xxhash/` is missing or empty
 
 Symptoms may include build failures such as:
 
 - `fatal error: '../clay/clay.h' file not found`
+- `fatal error: '../xxhash/xxhash.h' file not found`
 
 Recovery:
 

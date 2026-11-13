@@ -8,6 +8,7 @@ on:
     paths:
       - "src/**"
       - "clay" # submodule pointer
+      - "xxhash" # submodule pointer
       - "patches/**"
       - "Makefile"
       - "*.ts"
@@ -22,6 +23,7 @@ on:
     paths:
       - "src/**"
       - "clay" # submodule pointer
+      - "xxhash" # submodule pointer
       - "patches/**"
       - "Makefile"
       - "*.ts"
