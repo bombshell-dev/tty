@@ -1,67 +1,72 @@
 diff --git a/clay.h b/clay.h
-index 6452cd6..1a29854 100644
 --- a/clay.h
 +++ b/clay.h
-@@ -1299,6 +1299,11 @@ typedef struct {
+@@ -1294,13 +1294,24 @@
+ 
+ CLAY__ARRAY_DEFINE(Clay__MeasuredWord, Clay__MeasuredWordArray)
+ 
++// XXH3-128 fingerprints the text of each measurement cache entry.
++#define XXH_INLINE_ALL
++#define XXH_NO_STREAM
++#include "../xxhash/xxhash.h"
++
+ typedef struct {
+     Clay_Dimensions unwrappedDimensions;
      int32_t measuredWordsStartIndex;
      float minWidth;
      bool containsNewlines;
-+    // Cache key: the hash alone can collide, so lookups also compare these
-+    Clay_String cacheText;
-+    uint16_t cacheFontId;
-+    uint16_t cacheFontSize;
-+    uint16_t cacheLetterSpacing;
      // Hash map data
-     uint32_t id;
+-    uint32_t id;
++    // Cache key: a 32-bit id alone collides between distinct texts, so a hit
++    // requires the full 128-bit fingerprint, the length and the text config.
++    uint32_t fingerprint[4];
++    int32_t length;
++    uint16_t fontId;
++    uint16_t fontSize;
++    uint16_t letterSpacing;
      int32_t nextIndex;
-@@ -1638,6 +1643,12 @@ Clay__MeasuredWord *Clay__AddMeasuredWord(Clay__MeasuredWord word, Clay__Measure
+     uint32_t generation;
+ } Clay__MeasureTextCacheItem;
+@@ -1652,13 +1663,24 @@
+         return &Clay__MeasureTextCacheItem_DEFAULT;
      }
- }
- 
-+bool Clay__MemCmp(const char *s1, const char *s2, int32_t length);
-+
-+// Returns storage holding a copy of the key that stays readable for as long as
-+// the published cache entry, given the owner from errorHandler.userData.
-+const char *clayterm_copy_text_key(void *userData, const char *chars, int32_t length);
-+
- Clay__MeasureTextCacheItem *Clay__MeasureTextCached(Clay_String *text, Clay_TextElementConfig *config) {
-     Clay_Context* context = Clay_GetCurrentContext();
-     #ifndef CLAY_WASM
-@@ -1658,7 +1669,12 @@ Clay__MeasureTextCacheItem *Clay__MeasureTextCached(Clay_String *text, Clay_Text
+     #endif
+-    uint32_t id = Clay__HashStringContentsWithConfig(text, config);
+-    uint32_t hashBucket = id % (context->maxMeasureTextCacheWordCount / 32);
++    // Statically allocated text is identified by its address, as in Clay__HashStringContentsWithConfig
++    const void *keyBytes = text->isStaticallyAllocated ? (const void *)&text->chars : (const void *)text->chars;
++    size_t keyLength = text->isStaticallyAllocated ? sizeof(text->chars) : (size_t)text->length;
++    XXH128_hash_t hash = XXH3_128bits(keyBytes, keyLength);
++    uint32_t fingerprint[4] = { (uint32_t)hash.low64, (uint32_t)(hash.low64 >> 32), (uint32_t)hash.high64, (uint32_t)(hash.high64 >> 32) };
++    uint32_t hashBucket = fingerprint[0] % (context->maxMeasureTextCacheWordCount / 32);
+     int32_t elementIndexPrevious = 0;
      int32_t elementIndex = context->measureTextHashMap.internalArray[hashBucket];
      while (elementIndex != 0) {
          Clay__MeasureTextCacheItem *hashEntry = Clay__MeasureTextCacheItemArray_Get(&context->measureTextHashMapInternal, elementIndex);
 -        if (hashEntry->id == id) {
-+        if (hashEntry->id == id &&
-+            hashEntry->cacheText.length == text->length &&
-+            hashEntry->cacheFontId == config->fontId &&
-+            hashEntry->cacheFontSize == config->fontSize &&
-+            hashEntry->cacheLetterSpacing == config->letterSpacing &&
-+            Clay__MemCmp(hashEntry->cacheText.chars, text->chars, text->length)) {
++        if (hashEntry->fingerprint[0] == fingerprint[0] &&
++            hashEntry->fingerprint[1] == fingerprint[1] &&
++            hashEntry->fingerprint[2] == fingerprint[2] &&
++            hashEntry->fingerprint[3] == fingerprint[3] &&
++            hashEntry->length == text->length &&
++            hashEntry->fontId == config->fontId &&
++            hashEntry->fontSize == config->fontSize &&
++            hashEntry->letterSpacing == config->letterSpacing) {
              hashEntry->generation = context->generation;
              return hashEntry;
          }
-@@ -1689,7 +1705,12 @@ Clay__MeasureTextCacheItem *Clay__MeasureTextCached(Clay_String *text, Clay_Text
+@@ -1689,7 +1711,13 @@
      }
  
      int32_t newItemIndex = 0;
 -    Clay__MeasureTextCacheItem newCacheItem = { .measuredWordsStartIndex = -1, .id = id, .generation = context->generation };
 +    Clay__MeasureTextCacheItem newCacheItem = {
-+        .measuredWordsStartIndex = -1, .id = id, .generation = context->generation,
-+        .cacheText = { .length = text->length, .chars = NULL },
-+        .cacheFontId = config->fontId, .cacheFontSize = config->fontSize,
-+        .cacheLetterSpacing = config->letterSpacing
++        .measuredWordsStartIndex = -1,
++        .fingerprint = { fingerprint[0], fingerprint[1], fingerprint[2], fingerprint[3] },
++        .length = text->length,
++        .fontId = config->fontId, .fontSize = config->fontSize, .letterSpacing = config->letterSpacing,
++        .generation = context->generation
 +    };
      Clay__MeasureTextCacheItem *measured = NULL;
      if (context->measureTextHashMapInternalFreeList.length > 0) {
          newItemIndex = Clay__int32_tArray_GetValue(&context->measureTextHashMapInternalFreeList, context->measureTextHashMapInternalFreeList.length - 1);
-@@ -1771,6 +1792,9 @@ Clay__MeasureTextCacheItem *Clay__MeasureTextCached(Clay_String *text, Clay_Text
-     measured->unwrappedDimensions.width = measuredWidth;
-     measured->unwrappedDimensions.height = measuredHeight;
- 
-+    // Only an entry linked below can be found again, so only it keeps a key.
-+    measured->cacheText.chars = clayterm_copy_text_key(context->errorHandler.userData, text->chars, text->length);
-+
-     if (elementIndexPrevious != 0) {
-         Clay__MeasureTextCacheItemArray_Get(&context->measureTextHashMapInternal, elementIndexPrevious)->nextIndex = newItemIndex;
-     } else {

@@ -1256,15 +1256,6 @@ counted as separate cells in layout. Measurement and rendering MUST agree: if
 the measurer ignores a combining mark for width purposes, the renderer MUST
 still attach and emit it.
 
-**Measurement cache.** Clay caches each text's measurement under a hash of its
-content and text config. A local Clay patch reuses a cached measurement only
-when the text bytes and config also match, so strings whose hashes collide are
-each measured as themselves. A frame's text bytes do not outlive its render, so
-each renderer instance copies the keys of cached measurements into a fixed
-region of its own state, clearing Clay's cache before any layout whose text
-might not fit there. A frame too large for that region keys its measurements on
-its own bytes, and the cache is cleared once that frame is presented.
-
 **Cell representation.** Each cell in the buffer stores a grapheme cluster — a
 base Unicode codepoint plus up to 8 combining-mark codepoints — together with a
 foreground color (packed ARGB with attribute flags in the high byte) and a

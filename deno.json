@@ -27,11 +27,11 @@
   },
   "nodeModulesDir": "auto",
   "fmt": {
-    "exclude": ["clay", "build", "CHANGELOG.md", ".changeset"]
+    "exclude": ["clay", "xxhash", "build", "CHANGELOG.md", ".changeset"]
   },
   "lint": {
     "rules": { "exclude": ["prefer-const"] },
-    "exclude": ["clay", "build"],
+    "exclude": ["clay", "xxhash", "build"],
     "plugins": ["lint/prefer-let.ts"]
   }
 }
