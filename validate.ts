@@ -1,5 +1,6 @@
-import { Type } from "@sinclair/typebox";
+import { FormatRegistry, Type } from "@sinclair/typebox";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
+import { resolveColor } from "./color.ts";
 import type { Op } from "./ops.ts";
 import { POINTER_SHAPES } from "./pointer-shape.ts";
 import type { RenderOptions, RenderResult, Term } from "./term.ts";
@@ -14,6 +15,13 @@ const i16 = Type.Integer({ minimum: -32768, maximum: 32767 });
  * bit 31 is set and JavaScript interprets the value as a negative int32.
  * Accept both signed and unsigned representations of the same bit pattern. */
 const rgba = Type.Integer({ minimum: -0x80000000, maximum: 0xFFFFFFFF });
+
+/* §8.5 CSS color string, checked by the same resolver the packer uses. */
+FormatRegistry.Set("css-color", (value) => resolveColor(value) !== undefined);
+const cssColor = Type.String({ format: "css-color" });
+
+/* A §8.5 color value: packed ARGB number or a CSS color string. */
+const color = Type.Union([rgba, cssColor]);
 
 /* ── Sizing axis (discriminated union) ────────────────────────────── */
 
@@ -85,14 +93,14 @@ const BorderSide = Type.Union([
   u8,
   Type.Object({
     width: u8,
-    color: Type.Optional(rgba),
-    bg: Type.Optional(rgba),
+    color: Type.Optional(color),
+    bg: Type.Optional(color),
   }),
 ]);
 
 const Border = Type.Object({
-  color: rgba,
-  bg: Type.Optional(rgba),
+  color,
+  bg: Type.Optional(color),
   left: Type.Optional(BorderSide),
   right: Type.Optional(BorderSide),
   top: Type.Optional(BorderSide),
@@ -189,7 +197,7 @@ const OpenElement = Type.Object({
   directive: Type.Literal(0x02),
   id: Type.String(),
   layout: Type.Optional(Layout),
-  bg: Type.Optional(rgba),
+  bg: Type.Optional(color),
   cornerRadius: Type.Optional(CornerRadius),
   border: Type.Optional(Border),
   clip: Type.Optional(Clip),
@@ -201,8 +209,8 @@ const OpenElement = Type.Object({
 const TextOp = Type.Object({
   directive: Type.Literal(0x03),
   content: Type.String(),
-  color: Type.Optional(rgba),
-  bg: Type.Optional(rgba),
+  color: Type.Optional(color),
+  bg: Type.Optional(color),
   fontSize: Type.Optional(u8),
   fontId: Type.Optional(u8),
   wrap: Type.Optional(u8),

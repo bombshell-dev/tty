@@ -1,3 +1,5 @@
+import type { names } from "hueful";
+import { resolveColor } from "./color.ts";
 import { type PointerShape, pointerShapeIndex } from "./pointer-shape.ts";
 
 export type { PointerShape };
@@ -85,20 +87,20 @@ function sideWidth(side: BorderSide | undefined): number {
   return typeof side === "number" ? side : side?.width ?? 0;
 }
 
-function sideFg(side: BorderSide | undefined, shared: number): number {
+function sideFg(side: BorderSide | undefined, shared: Color): number {
   let color = typeof side === "object" && side.color !== undefined
     ? side.color
     : shared;
-  return color & 0x00FFFFFF;
+  return colorValue(color) & 0x00FFFFFF;
 }
 
 function sideBg(
   side: BorderSide | undefined,
-  shared: number | undefined,
+  shared: Color | undefined,
 ): number {
   let bg = typeof side === "object" && side.bg !== undefined ? side.bg : shared;
   // ATTR_DEFAULT sentinel (bit 31 set) means "keep the existing cell bg"
-  return bg === undefined ? 0x80000000 : bg & 0x00FFFFFF;
+  return bg === undefined ? 0x80000000 : colorValue(bg) & 0x00FFFFFF;
 }
 
 function packString(
@@ -196,7 +198,7 @@ export function pack(
         }
 
         if (op.bg !== undefined) {
-          view.setUint32(o, op.bg, true);
+          view.setUint32(o, colorValue(op.bg), true);
           o += 4;
         }
 
@@ -307,13 +309,18 @@ export function pack(
         // 0 and setting ATTR_DEFAULT (0x80 in the attrs byte). The C path ORs
         // it into fg and emit_attr skips the foreground SGR (mirrors unset bg).
         let textDefault = op.color === undefined;
-        view.setUint32(o, op.color ?? 0, true);
+        view.setUint32(
+          o,
+          op.color === undefined ? 0 : colorValue(op.color),
+          true,
+        );
         o += 4;
 
         // No explicit bg: leave the terminal default bg by writing
         // 0 and setting ATTR_DEFAULT (0x80 in the attrs byte). The C path ORs
         // it into bg and emit_attr skips the background SGR
-        let bg = op.bg === undefined ? 0x80000000 : op.bg & 0x00FFFFFF;
+        let bg = op.bg === undefined ? 0x80000000 : colorValue(op.bg) &
+          0x00FFFFFF;
         view.setUint32(o, bg, true);
         o += 4;
 
@@ -353,6 +360,26 @@ export function rgba(r: number, g: number, b: number, a = 255): number {
     (b & 0xFF);
 }
 
+/**
+ * A color value: a packed ARGB `number` as produced by `rgba()`, or a CSS
+ * color `string` (§8.5). Strings are resolved to the packed value at the
+ * transfer-encoding boundary; only numbers reach the wire.
+ */
+export type Color = number | string;
+
+/**
+ * Resolves a color value to the packed ARGB number the transfer encoding
+ * carries (§8.5). Numbers pass through; strings resolve through the CSS
+ * color grammar. Invalid strings throw rather than decoding to a garbage
+ * color.
+ */
+function colorValue(color: Color): number {
+  if (typeof color === "number") return color;
+  let value = resolveColor(color);
+  if (value === undefined) throw new TypeError(`invalid color: "${color}"`);
+  return value;
+}
+
 export type SizingAxis =
   | { type: "fit"; min?: number; max?: number }
   | { type: "grow"; min?: number; max?: number }
@@ -383,8 +410,8 @@ export type BorderSide =
   | number
   | {
     width: number;
-    color?: number;
-    bg?: number;
+    color?: Color;
+    bg?: Color;
   };
 
 export interface OpenElement {
@@ -399,11 +426,11 @@ export interface OpenElement {
     alignX?: "left" | "center" | "right";
     alignY?: "top" | "center" | "bottom";
   };
-  bg?: number;
+  bg?: Color;
   cornerRadius?: { tl?: number; tr?: number; bl?: number; br?: number };
   border?: {
-    color: number;
-    bg?: number;
+    color: Color;
+    bg?: Color;
     left?: BorderSide;
     right?: BorderSide;
     top?: BorderSide;
@@ -492,8 +519,8 @@ function encodeClipTo(value: ClipTo | undefined): number {
 export interface Text {
   directive: typeof OP_TEXT;
   content: string;
-  color?: number;
-  bg?: number;
+  color?: Color;
+  bg?: Color;
   fontSize?: number;
   fontId?: number;
   wrap?: number;
@@ -508,16 +535,96 @@ interface Snapshot {
 
 export type Op = OpenElement | Text | CloseElement | Snapshot;
 
-export function open(
+/*
+ * Compile-time color checking (§8.5). A string literal assigned to a color
+ * field must be a hex color (the type-level equivalent of
+ * `#${string{3,4,6,8}}`), start with a supported color function, or be a
+ * named color. Strings that are not literals (computed colors) and values
+ * already narrowed to `#${string}` pass through; the runtime grammar check
+ * in validate()/pack() is normative for them. Plain unions like
+ * `HexRun<string>` would need ~16^6 union members, which TypeScript cannot
+ * represent (TS2590), so hex checking runs per-character via recursion.
+ */
+
+type HexDigit =
+  | "0"
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9"
+  | "a"
+  | "b"
+  | "c"
+  | "d"
+  | "e"
+  | "f"
+  | "A"
+  | "B"
+  | "C"
+  | "D"
+  | "E"
+  | "F";
+
+type HexRun<S extends string, C extends readonly 0[] = []> = S extends ""
+  ? (C["length"] extends 3 | 4 | 6 | 8 ? true : false)
+  : S extends `${HexDigit}${infer Rest}` ? HexRun<Rest, [...C, 0]>
+  : false;
+
+type ColorFunction =
+  | "rgb"
+  | "rgba"
+  | "hsl"
+  | "hsla"
+  | "hwb"
+  | "lab"
+  | "lch"
+  | "oklab"
+  | "oklch";
+
+type NamedColor = keyof typeof names | "transparent";
+
+type CheckedColor<T> = T extends number ? T
+  : T extends string ? string extends T ? T
+    : `#${string}` extends T ? T
+    : T extends `#${infer Body}` ? (HexRun<Body> extends true ? T : never)
+    : T extends `${string}(${string}`
+      ? (Lowercase<T> extends `${ColorFunction}(${string})` ? T : never)
+    : Lowercase<T> extends NamedColor ? T
+    : never
+  : T;
+
+/* Applies CheckedColor to the color fields only; other fields pass through. */
+type CheckedColors<T> = {
+  [K in keyof T]: K extends "bg" | "color" ? CheckedColor<T[K]>
+    : T[K] extends object ? CheckedColors<T[K]>
+    : T[K];
+};
+
+export function open<
+  P extends Omit<OpenElement, "directive" | "id"> = Omit<
+    OpenElement,
+    "directive" | "id"
+  >,
+>(
   id: string,
-  props: Omit<OpenElement, "directive" | "id"> = {},
+  props: P & NoInfer<CheckedColors<P>> = {} as P & NoInfer<CheckedColors<P>>,
 ): OpenElement {
   return { directive: OP_OPEN_ELEMENT, id, ...props };
 }
 
-export function text(
+export function text<
+  P extends Omit<Text, "directive" | "content"> = Omit<
+    Text,
+    "directive" | "content"
+  >,
+>(
   content: string,
-  props: Omit<Text, "directive" | "content"> = {},
+  props: P & NoInfer<CheckedColors<P>> = {} as P & NoInfer<CheckedColors<P>>,
 ): Text {
   return { directive: OP_TEXT, content, ...props };
 }

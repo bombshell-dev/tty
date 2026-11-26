@@ -647,3 +647,31 @@ describe("box model", () => {
     expect(lines[2]).toBe("└────────────┘");
   });
 });
+
+describe("hex colors", () => {
+  it("renders side colors from hex strings with shared fallback", async () => {
+    let parsed = await renderBox({
+      border: {
+        color: "#ff0000",
+        bg: "#0000ff",
+        top: { width: 1, bg: "#00ff00" },
+        right: 1,
+        bottom: { width: 1, color: "#ffffff" },
+        left: 1,
+      },
+    });
+
+    // top: own bg, shared fg
+    expect(at(parsed, 3, 0).fg).toBe(FG.red);
+    expect(at(parsed, 3, 0).bg).toBe(BG.green);
+    // right: shared fg, shared bg
+    expect(at(parsed, 7, 1).fg).toBe(FG.red);
+    expect(at(parsed, 7, 1).bg).toBe(BG.blue);
+    // bottom: own fg, shared bg
+    expect(at(parsed, 3, 3).fg).toBe(FG.white);
+    expect(at(parsed, 3, 3).bg).toBe(BG.blue);
+    // left: shared fg, shared bg
+    expect(at(parsed, 0, 1).fg).toBe(FG.red);
+    expect(at(parsed, 0, 1).bg).toBe(BG.blue);
+  });
+});

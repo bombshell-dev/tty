@@ -335,3 +335,78 @@ describe("validated", () => {
     ).toThrow(TypeError);
   });
 });
+
+describe("color fields", () => {
+  it("accepts hex color strings at every color field", () => {
+    expect(validate([
+      open("x", {
+        bg: "#ff8800",
+        border: {
+          color: "#f80",
+          bg: "#00ff00",
+          top: { width: 1, color: "#ff0000", bg: "#0000ff" },
+          right: 1,
+        },
+      }),
+      text("hi", { color: "#ff8800aa", bg: "#f80a" }),
+      close(),
+    ])).toBe(true);
+  });
+
+  it("rejects malformed hex color strings", () => {
+    for (
+      let spec of [
+        "#f8",
+        "#ff880",
+        "#ff8800a",
+        "#ff88000aa",
+        "#ggg",
+        "f80",
+        "#",
+        "",
+      ]
+    ) {
+      expect(validate([text("hi", { color: spec })])).toBe(false);
+      expect(validate([
+        open("x", { bg: spec, border: { color: spec } }),
+        close(),
+      ])).toBe(false);
+    }
+  });
+});
+
+describe("CSS color fields", () => {
+  it("accepts CSS color strings at every color field", () => {
+    expect(validate([
+      open("x", {
+        bg: "oklch(0.7 0.1 30)",
+        border: {
+          color: "rebeccapurple",
+          bg: "hsl(120 100% 50%)",
+          top: { width: 1, color: "rgb(255 0 0)", bg: "transparent" },
+          right: 1,
+        },
+      }),
+      text("hi", { color: "lab(50 20 -30)", bg: "rgba(0, 0, 255, 0.5)" }),
+      close(),
+    ])).toBe(true);
+  });
+
+  it("rejects unsupported and reserved color strings", () => {
+    for (
+      let spec of [
+        "color(srgb 1 0 0)",
+        "device-cmyk(0 0 0 1)",
+        "Canvas",
+        "currentcolor",
+        " red",
+        "rgb(1 2)",
+      ]
+    ) {
+      expect([spec, validate([text("hi", { color: spec })])]).toEqual([
+        spec,
+        false,
+      ]);
+    }
+  });
+});

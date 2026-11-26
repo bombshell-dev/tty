@@ -219,3 +219,124 @@ describe("background", () => {
     expect(afterHi.startsWith("\x1b[0m ")).toBe(true);
   });
 });
+
+describe("hex color strings", () => {
+  it("renders text bg from a 3-digit hex string", async () => {
+    let term = await createTerm({ width: 20, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("root", { layout: { width: grow(), height: grow() } }),
+        text("Hi", { bg: "#f80" }),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[48;2;255;136;0m");
+  });
+
+  it("renders text fg from a 6-digit hex string", async () => {
+    let term = await createTerm({ width: 20, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("root", { layout: { width: grow(), height: grow() } }),
+        text("Hi", { color: "#ff8800" }),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[38;2;255;136;0m");
+  });
+
+  it("matches hex case-insensitively", async () => {
+    let term = await createTerm({ width: 20, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("root", { layout: { width: grow(), height: grow() } }),
+        text("Hi", { color: "#FF8800", bg: "#F80" }),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[38;2;255;136;0m");
+    expect(ansi).toContain("\x1b[48;2;255;136;0m");
+  });
+
+  it("expands 4- and 8-digit hex with doubled digits", async () => {
+    let term = await createTerm({ width: 20, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("root", { layout: { width: grow(), height: grow() } }),
+        text("Hi", { color: "#ff8800aa", bg: "#f80a" }),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[38;2;255;136;0m");
+    expect(ansi).toContain("\x1b[48;2;255;136;0m");
+  });
+
+  it("fills element bg from a hex string", async () => {
+    let term = await createTerm({ width: 8, height: 2 });
+    let ansi = decode(
+      term.render([
+        open("root", {
+          layout: { width: fixed(8), height: fixed(2) },
+          bg: "#ff8800",
+        }),
+        text("Hi"),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[48;2;255;136;0m");
+  });
+
+  it("rejects invalid hex at render time with a TypeError", async () => {
+    let term = await createTerm({ width: 20, height: 1 });
+    let error: unknown;
+    try {
+      term.render([text("Hi", { bg: "#ff8800a" as string })]);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as Error).message).toContain("#ff8800a");
+  });
+});
+
+describe("CSS color strings", () => {
+  it("renders fg and bg from CSS color functions and names", async () => {
+    let term = await createTerm({ width: 20, height: 1 });
+    let ansi = decode(
+      term.render([
+        open("root", { layout: { width: grow(), height: grow() } }),
+        text("Hi", { color: "rebeccapurple", bg: "hsl(120 100% 50%)" }),
+        close(),
+      ]).output,
+    );
+
+    expect(ansi).toContain("\x1b[38;2;102;51;153m");
+    expect(ansi).toContain("\x1b[48;2;0;255;0m");
+  });
+
+  it("checks color string literals at compile time", () => {
+    let valid = [
+      text("a", { color: "#f80" }),
+      text("a", { color: "RebeccaPurple" }),
+      text("a", { color: "transparent" }),
+      text("a", { color: "oklch(0.7 0.1 30)" }),
+      text("a", { color: "RGB(255 0 0)" }),
+      open("a", { bg: "hsl(0 0% 0%)", border: { color: "red" } }),
+    ];
+    // @ts-expect-error invalid hex digit count
+    text("a", { color: "#ff8800a" });
+    // @ts-expect-error misspelled named color
+    text("a", { color: "rebeccapurpel" });
+    // @ts-expect-error unsupported color function
+    text("a", { color: "color(srgb 1 0 0)" });
+    // @ts-expect-error reserved system color
+    open("a", { bg: "Canvas" });
+    expect(valid).toHaveLength(6);
+  });
+});
