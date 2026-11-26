@@ -44,15 +44,14 @@ export interface Native {
   statePtr: number;
   opsBuf: number;
   /**
-   * Re-initialize renderer state for new dimensions in place
-   * (renderer-spec 7.7). Reuses this instance and memory; statePtr and
-   * opsBuf may change. Growing memory detaches prior buffer views.
+   * Rebuild dimension-dependent renderer storage in place (renderer-spec 7.7).
+   * Reuses this instance and memory; statePtr stays fixed and opsBuf may move.
+   * Growing memory detaches prior buffer views.
    */
   update(w: number, h: number): void;
   /**
    * Push capability evidence into the renderer. The renderer holds it across
-   * frames; it is re-pushed internally after any re-init so it survives
-   * resize updates. Returns true when withdrawing pointerShape leaves a
+   * frames and resize updates. Returns true when withdrawing pointerShape leaves a
    * non-default shape on screen that the caller must reset.
    */
   setCapabilities(caps: RenderCapabilities): boolean;
@@ -115,7 +114,8 @@ export async function createTermNative(
   let ct = exports as unknown as {
     __heap_base: WebAssembly.Global;
     clayterm_size(w: number, h: number): number;
-    init(mem: number, w: number, h: number): number;
+    clayterm_init(mem: number, w: number, h: number): number;
+    clayterm_resize(ct: number, w: number, h: number): void;
     reduce(
       ct: number,
       buf: number,
@@ -130,8 +130,6 @@ export async function createTermNative(
     output(ct: number): number;
     length(ct: number): number;
     set_capabilities(ct: number, caps: number): number;
-    pointer_shape(ct: number): number;
-    set_pointer_shape(ct: number, shape: number): void;
     pointer_over_count(): number;
     pointer_over_id_string_length(index: number): number;
     pointer_over_id_string_ptr(index: number): number;
@@ -151,21 +149,17 @@ export async function createTermNative(
 
   let statePtr: number | undefined;
   let opsBuf = 0;
-  let capFlags = 0;
-
-  function pushCaps(ptr: number): boolean {
-    return ct.set_capabilities(ptr, capFlags) !== 0;
-  }
-
-  function setCaps(next: RenderCapabilities): void {
-    capFlags = (next.syncOutput ? RENDER_CAP_SYNC_OUTPUT : 0) |
+  function setCaps(next: RenderCapabilities): boolean {
+    let flags = (next.syncOutput ? RENDER_CAP_SYNC_OUTPUT : 0) |
       (next.pointerShape ? RENDER_CAP_POINTER_SHAPE : 0);
+    return ct.set_capabilities(statePtr!, flags) !== 0;
   }
 
   // Renderer state and the fixed transfer buffer share linear memory as
   // [heap: state][opsBuf]; opsBuf moves when the state size changes. Memory is
   // grown to fit but never reclaimed, so a downsize keeps the high-water mark
-  // (renderer-spec 7.7).
+  // (renderer-spec 7.7). The instance is initialized once; resize rebuilds only
+  // its dimension-dependent storage.
   function layout(lw: number, lh: number): void {
     let heap = ct.__heap_base.value as number;
     let size = ct.clayterm_size(lw, lh);
@@ -175,15 +169,15 @@ export async function createTermNative(
     if (pages > current) {
       memory.grow(pages - current);
     }
-    let shape = statePtr === undefined ? 0 : ct.pointer_shape(statePtr);
-    let ptr = ct.init(heap, lw, lh);
+    if (statePtr === undefined) {
+      statePtr = ct.clayterm_init(heap, lw, lh);
+    } else {
+      ct.clayterm_resize(statePtr, lw, lh);
+    }
     opsBuf = (heap + size + 3) & ~3;
-    pushCaps(ptr);
-    ct.set_pointer_shape(ptr, shape);
-    statePtr = ptr;
   }
-  setCaps(caps);
   layout(w, h);
+  setCaps(caps);
 
   return {
     memory,
@@ -197,8 +191,7 @@ export async function createTermNative(
       layout(uw, uh);
     },
     setCapabilities(next: RenderCapabilities): boolean {
-      setCaps(next);
-      return pushCaps(statePtr!);
+      return setCaps(next);
     },
     reduce: ct.reduce,
     output: ct.output,

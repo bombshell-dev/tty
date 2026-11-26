@@ -13,12 +13,9 @@ CFLAGS = --target=wasm32 -nostdlib -O2 \
 EXPORTS = \
   -Wl,--export=__heap_base \
   -Wl,--export=clayterm_size \
-  -Wl,--export=init \
+  -Wl,--export=clayterm_init \
+  -Wl,--export=clayterm_resize \
   -Wl,--export=set_capabilities \
-  -Wl,--export=pointer_shape \
-  -Wl,--export=set_pointer_shape \
-  -Wl,--export=pointer_shape \
-  -Wl,--export=set_pointer_shape \
   -Wl,--export=reduce \
   -Wl,--export=output \
   -Wl,--export=length \
