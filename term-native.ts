@@ -51,10 +51,9 @@ export interface Native {
   update(w: number, h: number): void;
   /**
    * Push capability evidence into the renderer. The renderer holds it across
-   * frames and resize updates. Returns true when withdrawing pointerShape leaves a
-   * non-default shape on screen that the caller must reset.
+   * frames and resize updates.
    */
-  setCapabilities(caps: RenderCapabilities): boolean;
+  setCapabilities(caps: RenderCapabilities): void;
   reduce(
     ct: number,
     buf: number,
@@ -129,7 +128,7 @@ export async function createTermNative(
     ): void;
     output(ct: number): number;
     length(ct: number): number;
-    set_capabilities(ct: number, caps: number): number;
+    set_capabilities(ct: number, caps: number): void;
     pointer_over_count(): number;
     pointer_over_id_string_length(index: number): number;
     pointer_over_id_string_ptr(index: number): number;
@@ -149,10 +148,10 @@ export async function createTermNative(
 
   let statePtr: number | undefined;
   let opsBuf = 0;
-  function setCaps(next: RenderCapabilities): boolean {
+  function setCaps(next: RenderCapabilities): void {
     let flags = (next.syncOutput ? RENDER_CAP_SYNC_OUTPUT : 0) |
       (next.pointerShape ? RENDER_CAP_POINTER_SHAPE : 0);
-    return ct.set_capabilities(statePtr!, flags) !== 0;
+    ct.set_capabilities(statePtr!, flags);
   }
 
   // Renderer state and the fixed transfer buffer share linear memory as
@@ -190,8 +189,8 @@ export async function createTermNative(
     update(uw: number, uh: number): void {
       layout(uw, uh);
     },
-    setCapabilities(next: RenderCapabilities): boolean {
-      return setCaps(next);
+    setCapabilities(next: RenderCapabilities): void {
+      setCaps(next);
     },
     reduce: ct.reduce,
     output: ct.output,

@@ -105,7 +105,7 @@ await main(function* () {
         caret++;
       }
     } else if (event.type === "capability") {
-      writeStdout(term.update([event]));
+      term.update([event]);
     } else if ("x" in event) {
       pointer = {
         x: event.x,

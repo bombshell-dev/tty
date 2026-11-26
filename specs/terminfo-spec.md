@@ -89,8 +89,8 @@ renderer and input parser each receive a copy at construction.
 terminal's responses arrive on the input stream, where the input parser
 recognizes them and emits `CapabilityEvent` values alongside keys and mouse
 events. The host loop routes these events to `term.update()`, which folds them
-into the renderer's `RuntimeCapabilities` and returns any bytes to write
-immediately.
+into the renderer's `RuntimeCapabilities` synchronously. Changes are reflected
+in the next `render()` call.
 
 ### 4.2 Data flow
 
@@ -102,9 +102,11 @@ terminfo file bytes ──▶ terminfo_parse() ─▶ Capabilities (frozen)
                     createInput()           createTerm()
                          │                        │
 probe bytes ──▶ terminal ──▶ stdin                │
-                    scan() ─▶ CapabilityEvent ─▶ update() ─▶ Uint8Array (write now)
+                    scan() ─▶ CapabilityEvent ─▶ update(): void
                                                   │
                                            RuntimeCapabilities
+                                                  │
+                                      render(ops).output ─▶ Uint8Array (host writes)
 ```
 
 - `detectTerminal()` parses raw bytes into `Capabilities`. It performs no IO.
@@ -112,6 +114,7 @@ probe bytes ──▶ terminal ──▶ stdin                │
   nothing; it emits.
 - The renderer holds its own private capability state. `update()` is the only
   path that changes it.
+- Changes made by `update()` are reflected in the next `render()` call.
 - The renderer and the input parser share no memory and hold no reference to
   each other. The host loop is the only place they meet.
 
@@ -154,9 +157,8 @@ missing, oversized, or malformed terminfo file, or abort. Environmental
 conditions degrade to the §7.1 baseline. The only rejection is caller error
 (§10.1).
 
-**TINV-5. Immediate update output.** `term.update()` returns a `Uint8Array` of
-bytes to write now. It MUST NOT defer output to the next `render()` call. An
-empty array is a valid return when the update changes no rendered state.
+**TINV-5. Update effects.** `term.update()` returns `void`. The caller must
+invoke `render()` to see the effects.
 
 **TINV-6. Event-only probe surface.** The input parser MUST NOT write to any
 shared state when it recognizes a probe response. It surfaces the result as a
@@ -324,10 +326,11 @@ not merge; each response yields its own event.
 **OSC 22.** An OSC 22 reply sets `key: "pointer-shape", value: true`. The shape
 name in the reply is discarded in v1; only protocol support is recorded. The
 renderer emits pointer shapes only while `pointerShape` is `true` (Renderer
-Specification §7.10). Terminals that implement OSC 22 set but not its query
-never reply; `detectTerminal()` supplies that evidence itself from the
-known-support table (§6.1), and a caller may still override it with
-`term.update([{ type: "capability", key: "pointer-shape", value: true }])`.
+Specification §7.10). Setting `pointerShape` to `false` suppresses pointer-shape
+output; it does not reset the pointer to `default`. Terminals that implement OSC
+22 set but not its query never reply; `detectTerminal()` supplies that evidence
+itself from the known-support table (§6.1), and a caller may still override it
+with `term.update([{ type: "capability", key: "pointer-shape", value: true }])`.
 
 **DA1.** The DA1 reply is recognized internally as the probe fence and MUST NOT
 surface as a `CapabilityEvent`.
@@ -476,9 +479,10 @@ and mouse events in arrival order. The host loop routes them to `term.update()`.
 ### 9.3 Capability change over time
 
 A capability event can arrive after the renderer has already emitted frames.
-`term.update()` folds it into the runtime snapshot. Any renderer-side output
-invalidation or immediate bytes are defined by the renderer section that
-consumes that capability (Renderer Specification §7.8).
+`term.update()` folds it into the runtime snapshot synchronously. Subsequent
+renders consume that snapshot. Any renderer-side output invalidation is defined
+by the renderer section that consumes that capability (Renderer Specification
+§7.8).
 
 ---
 
@@ -566,7 +570,7 @@ When omitted, the parser uses built-in xterm key sequences.
 ```ts
 interface Term {
   render(ops: Op[], options?: RenderOptions): RenderResult;
-  update(events: readonly InputEvent[]): Uint8Array;
+  update(events: readonly InputEvent[]): void;
   readonly capabilities: RuntimeCapabilities;
 }
 ```
@@ -574,10 +578,11 @@ interface Term {
 `update()` accepts an array of `InputEvent` values. Events other than
 `ResizeEvent` and `CapabilityEvent` are no-op steps, so the full `events` array
 from `scan()` can be passed without filtering. Events are folded in order: each
-event produces the next `RuntimeCapabilities` and any bytes defined by the
-consuming feature, and the returned bytes are concatenated. The foundation
-defines no such bytes. The return value is always a `Uint8Array`; callers write
-it to their output stream when non-empty (TINV-5).
+resize updates the Term's dimensions and each capability event updates its
+`RuntimeCapabilities`. These changes take effect before `update()` returns. The
+method returns `void`; the caller must invoke `render()` to see the effects
+(TINV-5). Multiple calls contribute to the next render as defined in Renderer
+Specification §7.7.
 
 `term.capabilities` is a frozen snapshot of the current `RuntimeCapabilities`.
 
@@ -594,18 +599,27 @@ const input = await createInput({ terminfo });
 
 process.stdout.write(terminfo.probe);
 
+function draw() {
+  const { output } = term.render(view());
+  process.stdout.write(output);
+}
+
 process.stdin.on("data", (bytes: Uint8Array) => {
   const { events } = input.scan(bytes);
-  const out = term.update(events);
-  if (out.length) process.stdout.write(out);
+  term.update(events);
   for (const event of events) dispatch(event);
+  requestRender(draw);
 });
 
 process.on("SIGWINCH", () => {
-  const out = term.update([{ type: "resize", width: cols(), height: rows() }]);
-  if (out.length) process.stdout.write(out);
+  term.update([{ type: "resize", width: cols(), height: rows() }]);
+  requestRender(draw);
 });
 ```
+
+Here `view()`, `dispatch()`, and `requestRender()` belong to the host
+application. `requestRender()` schedules the supplied rendering callback; the
+host can coalesce requests into one render after a batch of events.
 
 `createTerm` and `createInput` each take `terminfo` and build their own private
 state from it. Passing the same `TerminalInfo` to both passes the same plain

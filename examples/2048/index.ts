@@ -392,9 +392,7 @@ await main(function* () {
         if (next.width !== width || next.height !== height) {
           width = next.width;
           height = next.height;
-          Deno.stdout.writeSync(
-            term.update([{ type: "resize", width, height }]),
-          );
+          term.update([{ type: "resize", width, height }]);
           Deno.stdout.writeSync(CLEAR_SCREEN);
           draw();
         }
@@ -405,9 +403,7 @@ await main(function* () {
       let e = ev as InputEvent | PointerEvent;
 
       if (e.type === "capability") {
-        Deno.stdout.writeSync(term.update([e]));
-        yield* each.next();
-        continue;
+        term.update([e]);
       }
 
       if (e.type === "keydown") {

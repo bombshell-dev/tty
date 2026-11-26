@@ -8,7 +8,6 @@ import {
 } from "./term-native.ts";
 import type { InputEvent } from "./input.ts";
 import type { Capabilities, Rgb, TerminalInfo } from "./terminfo.ts";
-import { POINTER_SHAPE_RESET } from "./pointer-shape.ts";
 
 export type { BoundingBox };
 
@@ -40,14 +39,14 @@ export interface RuntimeCapabilities extends Capabilities {
 
 /**
  * Fold one InputEvent into the current RuntimeCapabilities and return the next
- * snapshot plus any bytes to write now. Pure: performs no IO, no WASM calls.
+ * snapshot. Pure: performs no IO, no WASM calls.
  */
 function applyUpdate(
   current: RuntimeCapabilities,
   event: InputEvent,
-): { readonly next: RuntimeCapabilities; readonly bytes: Uint8Array } {
+): RuntimeCapabilities {
   if (event.type !== "capability") {
-    return { next: current, bytes: new Uint8Array(0) };
+    return current;
   }
   let next: RuntimeCapabilities;
   switch (event.key) {
@@ -86,7 +85,7 @@ function applyUpdate(
     default:
       next = current;
   }
-  return { next: Object.freeze(next), bytes: new Uint8Array(0) };
+  return Object.freeze(next);
 }
 
 function runtimeFromStatic(caps: Capabilities): RuntimeCapabilities {
@@ -153,13 +152,12 @@ export interface Term {
   render(ops: Op[], options?: RenderOptions): RenderResult;
 
   /**
-   * Fold InputEvents in order. Returns bytes to write now. An empty array is
-   * valid when no immediate output is needed (TINV-5).
+   * Fold InputEvents in order. Invoke render() to see the effects (TINV-5).
    *
    * Pass the events array from scan() directly. For an out-of-band resize,
    * pass [{ type: "resize", width, height }].
    */
-  update(events: readonly InputEvent[]): Uint8Array;
+  update(events: readonly InputEvent[]): void;
 
   /** Frozen snapshot of the current merged capability state. */
   readonly capabilities: RuntimeCapabilities;
@@ -296,11 +294,9 @@ export async function createTerm(options: TermOptions): Promise<Term> {
       return { output, events, info, errors, animating };
     },
 
-    update(events: readonly InputEvent[]): Uint8Array {
-      let out: Uint8Array[] = [];
-
+    update(events: readonly InputEvent[]): void {
       for (let c of events) {
-        let { next, bytes } = applyUpdate(currentCaps, c);
+        let next = applyUpdate(currentCaps, c);
 
         if (c.type === "resize") {
           let w = c.width;
@@ -326,25 +322,13 @@ export async function createTerm(options: TermOptions): Promise<Term> {
           next.syncOutput !== currentCaps.syncOutput ||
           next.pointerShape !== currentCaps.pointerShape
         ) {
-          let reset = native.setCapabilities({
+          native.setCapabilities({
             syncOutput: next.syncOutput,
             pointerShape: next.pointerShape,
           });
-          if (reset) out.push(POINTER_SHAPE_RESET.slice());
         }
         currentCaps = next;
-        if (bytes.length) out.push(bytes);
       }
-
-      if (out.length === 0) return new Uint8Array(0);
-      let total = out.reduce((n, b) => n + b.length, 0);
-      let result = new Uint8Array(total);
-      let offset = 0;
-      for (let b of out) {
-        result.set(b, offset);
-        offset += b.length;
-      }
-      return result;
     },
   };
 }

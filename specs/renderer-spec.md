@@ -426,11 +426,12 @@ values (see [Input Specification](input-spec.md) §5), discriminated by `type`:
   the transaction MUST throw otherwise.
 - A `CapabilityEvent` (see [Terminfo Specification](terminfo-spec.md) §6.3) — a
   capability value delivered by the input parser from a probe response.
-- Any other `InputEvent` — a no-op step. It changes no state and contributes no
-  bytes.
+- Any other `InputEvent` — a no-op step. It changes no state.
 
-The Term folds each event in array order. The returned bytes are the
-concatenation of each fold's output. An empty array is a no-op.
+The Term folds each event in array order. An empty array is a no-op.
+
+Multiple `update()` calls before the next `render()` accumulate state changes in
+call order. That render MUST use the state resulting from all those calls.
 
 A resize event whose target dimensions equal the Term's current dimensions MUST
 be a no-op for that step.
@@ -448,15 +449,13 @@ be a no-op for that step.
    emitted.
 
 **Capability semantics.** A `CapabilityEvent` step folds the event's `key` and
-`value` into the Term's private `RuntimeCapabilities`. The foundation update
-transaction emits bytes or alters renderer output as a consequence of a
-capability event only where a capability section of this specification says so
-(§7.10).
+`value` into the Term's private `RuntimeCapabilities`. The updated capabilities
+are observable through `term.capabilities` when the call returns. Their effects
+on subsequent render transactions are defined by the capability sections of this
+specification (§7.8–§7.10).
 
-**Return value.** `update()` returns a `Uint8Array` of bytes to write to the
-terminal immediately. An empty array is valid when the update changes no
-rendered state (TINV-5). The caller writes the bytes to its output stream before
-the next render.
+**Return value.** `update()` returns `void`. The caller must invoke `render()`
+to see the effects (TINV-5).
 
 **Memory.** WASM linear memory can only grow. An update to smaller dimensions
 retains the high-water-mark allocation; memory is not reclaimed until the Term
@@ -558,17 +557,17 @@ When the resolved shape differs, the render MUST append `ESC ] 22 ; <shape> ST`
 to `output` after the frame's cell bytes and record the new shape. Otherwise it
 MUST NOT emit OSC 22.
 
-**Restore.** OSC 22 set cannot pop, so the Term restores by setting `default`:
+**Updates.** Capability changes and resize MUST leave the recorded last emitted
+shape unchanged. While `pointerShape` is `false`, renders MUST NOT emit a shape
+change, including a reset to `default`. If the capability becomes `true` again,
+the next render compares its resolved shape with the recorded last emitted shape
+as defined by **Output** above.
 
-- A render that resolves `default` emits it per **Output** above.
-- An update step that changes `pointerShape` from `true` to `false` while the
-  emitted shape is not `default` MUST return `ESC ] 22 ; default ST` and record
-  `default`.
-- A resize step leaves the emitted shape unchanged.
-
-To restore before exit, the caller renders a frame without `pointer`, or passes
-`{ type: "capability", key: "pointer-shape", value: false }` to `update()`, and
-writes the result.
+**Reset to default.** OSC 22 set cannot pop, so the Term resets the pointer by
+setting `default`. While the capability is `true`, a render that resolves
+`default` emits it per **Output** above. To reset before exit, the caller
+renders a frame without `pointer` while the capability is `true` and writes the
+result's `output`.
 
 ---
 
@@ -762,7 +761,7 @@ wherever the directive model expects a color.
 ### 8.6 Term update
 
 ```
-term.update(events: readonly InputEvent[]): Uint8Array
+term.update(events: readonly InputEvent[]): void
 ```
 
 Performs an update transaction as defined in §7.7. `update()` is the universal
@@ -775,9 +774,8 @@ Every other `InputEvent` is accepted and ignored, so the full `events` array
 from `input.scan()` can be passed without filtering. Events are folded in array
 order.
 
-**Return value.** `update()` always returns a `Uint8Array`. Write it to the
-terminal immediately when non-empty. Do not wait for the next `render()`. An
-empty array means the update changed no rendered state.
+**Return value.** `update()` returns `void`. The caller must invoke `render()`
+to see the effects.
 
 **Host usage.** Events from `input.scan()` pass through directly. Resizes
 observed outside the input stream (e.g. `SIGWINCH`) are passed as a constructed
@@ -785,12 +783,16 @@ observed outside the input stream (e.g. `SIGWINCH`) are passed as a constructed
 
 ```
 const { events } = input.scan(bytes);
-const out = term.update(events);
-if (out.length) stdout.write(out);
+term.update(events);
+requestRender();
 
 // on SIGWINCH
 term.update([{ type: "resize", width: cols(), height: rows() }]);
+requestRender();
 ```
+
+Here `requestRender()` is the application's scheduling hook. Its render pass
+supplies directives to `term.render()` and writes the result's `output`.
 
 A resize to the Term's current dimensions is a no-op for that step.
 

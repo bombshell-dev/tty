@@ -772,15 +772,7 @@ void clayterm_resize(struct Clayterm *ct, int w, int h) {
   cells_fill(ct->front, w, h, 0, 0, 0);
 }
 
-int set_capabilities(struct Clayterm *ct, uint32_t caps) {
-  int withdrawn = (ct->caps & RENDER_CAP_POINTER_SHAPE) &&
-                  !(caps & RENDER_CAP_POINTER_SHAPE);
-  int restore = withdrawn && ct->pointer_shape != 0;
-  if (restore)
-    ct->pointer_shape = 0;
-  ct->caps = caps;
-  return restore;
-}
+void set_capabilities(struct Clayterm *ct, uint32_t caps) { ct->caps = caps; }
 
 void reduce(struct Clayterm *ct, uint32_t *buf, int len, int mode, int row,
             float deltaTime, float px, float py, int pointer) {

@@ -34,8 +34,8 @@ before opening a PR. PR numbers point at the original discussion.
   overloads that only tests use (#133).
 - Names carry constraints: `id` when it must be unique, not `name` (#5).
 - Static facts are fixed at `createTerm()`; dynamic changes arrive as events via
-  `term.update()`, which returns the bytes to write. Don't defer work to the
-  next `render()` (#106).
+  `term.update()`. Apply those state changes synchronously; renderer output is
+  produced by `render()`.
 - Front-load configuration at creation so each paint stays one
   `write(result.output)` (#101).
 
